@@ -6,7 +6,7 @@ import (
 
 
 {{range .}}
-func (w *responseWriter) get{{.Name}}PointsFrame() *ReadResponse_Frame_{{.Name}}Points {
+func (w *ResponseWriter) get{{.Name}}PointsFrame() *ReadResponse_Frame_{{.Name}}Points {
 	var res *ReadResponse_Frame_{{.Name}}Points
 	if len(w.buffer.{{.Name}}) > 0 {
 		i := len(w.buffer.{{.Name}}) - 1
@@ -20,13 +20,13 @@ func (w *responseWriter) get{{.Name}}PointsFrame() *ReadResponse_Frame_{{.Name}}
 	return res
 }
 
-func (w *responseWriter) put{{.Name}}PointsFrame(f *ReadResponse_Frame_{{.Name}}Points) {
+func (w *ResponseWriter) put{{.Name}}PointsFrame(f *ReadResponse_Frame_{{.Name}}Points) {
 	f.{{.Name}}Points.Timestamps = f.{{.Name}}Points.Timestamps[:0]
 	f.{{.Name}}Points.Values = f.{{.Name}}Points.Values[:0]
 	w.buffer.{{.Name}} = append(w.buffer.{{.Name}}, f)
 }
 
-func (w *responseWriter) stream{{.Name}}ArraySeries(cur tsdb.{{.Name}}ArrayCursor) {
+func (w *ResponseWriter) stream{{.Name}}ArraySeries(cur tsdb.{{.Name}}ArrayCursor) {
 	w.sf.DataType = DataType{{.Name}}
 	ss := len(w.res.Frames) - 1
 	a := cur.Next()
@@ -39,7 +39,7 @@ func (w *responseWriter) stream{{.Name}}ArraySeries(cur tsdb.{{.Name}}ArrayCurso
 	}
 }
 
-func (w *responseWriter) stream{{.Name}}ArrayPoints(cur tsdb.{{.Name}}ArrayCursor) {
+func (w *ResponseWriter) stream{{.Name}}ArrayPoints(cur tsdb.{{.Name}}ArrayCursor) {
 	w.sf.DataType = DataType{{.Name}}
 	ss := len(w.res.Frames) - 1
 
