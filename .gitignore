@@ -1,6 +1,6 @@
 # Keep editor-specific, non-project specific ignore rules in global .gitignore:
 # https://help.github.com/articles/ignoring-files/#create-a-global-gitignore
-
+/.idea
 *~
 src/
 
@@ -81,3 +81,4 @@ man/*.1.gz
 
 # vendored files
 /vendor
+/venv
