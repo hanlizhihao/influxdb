@@ -517,6 +517,9 @@
 ###
 ### Controls how continuous queries are run within InfluxDB.
 ###
+[etcd]
+  enabled = true# enabled = false
+  address = "127.0.0.1:2379"# etcd cluster address = "192.168.1.1:2379,192.168.1.2:2379"
 
 [continuous_queries]
   # Determines whether the continuous query service is enabled.
