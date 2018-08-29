@@ -14,7 +14,7 @@ const (
 	DefaultEngine = "tsm1"
 
 	// DefaultIndex is the default index for new shards
-	DefaultIndex = "inmem"
+	DefaultIndex = InmemIndexName
 
 	// tsdb/engine/wal configuration options
 
@@ -81,6 +81,9 @@ type Config struct {
 	// greater than 0 can be used to batch up multiple fsync calls.  This is useful for slower
 	// disks or when WAL write contention is seen.  A value of 0 fsyncs every write to the WAL.
 	WALFsyncDelay toml.Duration `toml:"wal-fsync-delay"`
+
+	// Enables unicode validation on series keys on write.
+	ValidateKeys bool `toml:"validate-keys"`
 
 	// Query logging
 	QueryLogEnabled bool `toml:"query-log-enabled"`
