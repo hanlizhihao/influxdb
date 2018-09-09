@@ -2,6 +2,7 @@ package run
 
 import (
 	"fmt"
+	"github.com/influxdata/influxdb/services/etcd"
 	"io/ioutil"
 	"log"
 	"os"
@@ -55,13 +56,14 @@ type Config struct {
 	CollectdInputs []collectd.Config `toml:"collectd"`
 	OpenTSDBInputs []opentsdb.Config `toml:"opentsdb"`
 	UDPInputs      []udp.Config      `toml:"udp"`
+	EtcdInputs     etcd.Config       `toml:"etcd"`
 
 	ContinuousQuery continuous_querier.Config `toml:"continuous_queries"`
 
 	// Server reporting
 	ReportingDisabled bool `toml:"reporting-disabled"`
 
-	// BindAddress is the address that all TCP services use (Raft, Snapshot, Cluster, etc.)
+	// EtcdAddress is the address that all TCP services use (Raft, Snapshot, Cluster, etc.)
 	BindAddress string `toml:"bind-address"`
 
 	// TLS provides configuration options for all https endpoints.
@@ -86,6 +88,7 @@ func NewConfig() *Config {
 	c.CollectdInputs = []collectd.Config{collectd.NewConfig()}
 	c.OpenTSDBInputs = []opentsdb.Config{opentsdb.NewConfig()}
 	c.UDPInputs = []udp.Config{udp.NewConfig()}
+	c.EtcdInputs = etcd.NewConfig()
 
 	c.ContinuousQuery = continuous_querier.NewConfig()
 	c.Retention = retention.NewConfig()

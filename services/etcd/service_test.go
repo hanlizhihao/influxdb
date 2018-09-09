@@ -1,20 +1,32 @@
-package udp
+package etcd
 
 import (
-	"errors"
-	"os"
-	"testing"
-	"time"
-
+	"context"
+	"github.com/coreos/etcd/clientv3"
 	"github.com/influxdata/influxdb/internal"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/models"
-	"github.com/influxdata/influxdb/services/meta"
+	"os"
+	"testing"
+	"time"
 )
 
 func TestService_OpenClose(t *testing.T) {
 	service := NewTestService(nil)
-
+	if err := service.Service.Open(); err != nil {
+		t.Fatal(err)
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{service.Config.EtcdAddress},
+		DialTimeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _ := cli.Get(context.TODO(), "mesh-common-normal-db-ip", clientv3.WithPrefix())
+	if value.Count == 0 {
+		t.Fatal("错误")
+	}
 	// Closing a closed service is fine.
 	if err := service.Service.Close(); err != nil {
 		t.Fatal(err)
@@ -50,78 +62,7 @@ func TestService_OpenClose(t *testing.T) {
 }
 
 func TestService_CreatesDatabase(t *testing.T) {
-	t.Parallel()
 
-	s := NewTestService(nil)
-	s.WritePointsFn = func(string, string, models.ConsistencyLevel, []models.Point) error {
-		return nil
-	}
-
-	called := make(chan struct{})
-	s.MetaClient.CreateDatabaseFn = func(name string) (*meta.DatabaseInfo, error) {
-		if name != s.Config.Database {
-			t.Errorf("\n\texp = %s\n\tgot = %s\n", s.Config.Database, name)
-		}
-		// Allow some time for the caller to return and the ready status to
-		// be set.
-		time.AfterFunc(10*time.Millisecond, func() { called <- struct{}{} })
-		return nil, errors.New("an error")
-	}
-
-	if err := s.Service.Open(); err != nil {
-		t.Fatal(err)
-	}
-
-	points, err := models.ParsePointsString(`cpu value=1`)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s.Service.batcher.In() <- points[0] // Send a point.
-	s.Service.batcher.Flush()
-	select {
-	case <-called:
-		// OK
-	case <-time.NewTimer(5 * time.Second).C:
-		t.Fatal("Service should have attempted to create database")
-	}
-
-	// ready status should not have been switched due to meta client error.
-	s.Service.mu.RLock()
-	ready := s.Service.ready
-	s.Service.mu.RUnlock()
-
-	if got, exp := ready, false; got != exp {
-		t.Fatalf("got %v, expected %v", got, exp)
-	}
-
-	// This time MC won't cause an error.
-	s.MetaClient.CreateDatabaseFn = func(name string) (*meta.DatabaseInfo, error) {
-		// Allow some time for the caller to return and the ready status to
-		// be set.
-		time.AfterFunc(10*time.Millisecond, func() { called <- struct{}{} })
-		return nil, nil
-	}
-
-	s.Service.batcher.In() <- points[0] // Send a point.
-	s.Service.batcher.Flush()
-	select {
-	case <-called:
-		// OK
-	case <-time.NewTimer(5 * time.Second).C:
-		t.Fatal("Service should have attempted to create database")
-	}
-
-	// ready status should now be true.
-	s.Service.mu.RLock()
-	ready = s.Service.ready
-	s.Service.mu.RUnlock()
-
-	if got, exp := ready, true; got != exp {
-		t.Fatalf("got %v, expected %v", got, exp)
-	}
-
-	s.Service.Close()
 }
 
 type TestService struct {

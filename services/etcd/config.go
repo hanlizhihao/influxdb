@@ -1,4 +1,4 @@
-package udp
+package etcd
 
 import (
 	"time"
@@ -8,7 +8,7 @@ import (
 )
 
 const (
-
+	DefaultEtcdIp = "127.0.0.1:2379"
 	// DefaultBindAddress is the default binding interface if none is specified.
 	DefaultBindAddress = ":8089"
 
@@ -47,7 +47,7 @@ const (
 // Config holds various configuration settings for the UDP listener.
 type Config struct {
 	Enabled     bool   `toml:"enabled"`
-	BindAddress string `toml:"bind-address"`
+	EtcdAddress string `toml:"address"`
 
 	Database        string        `toml:"database"`
 	RetentionPolicy string        `toml:"retention-policy"`
@@ -61,7 +61,8 @@ type Config struct {
 // NewConfig returns a new instance of Config with defaults.
 func NewConfig() Config {
 	return Config{
-		BindAddress:     DefaultBindAddress,
+		Enabled:         true,
+		EtcdAddress:     DefaultEtcdIp,
 		Database:        DefaultDatabase,
 		RetentionPolicy: DefaultRetentionPolicy,
 		BatchSize:       DefaultBatchSize,
@@ -74,23 +75,8 @@ func NewConfig() Config {
 // default values set.
 func (c *Config) WithDefaults() *Config {
 	d := *c
-	if d.Database == "" {
-		d.Database = DefaultDatabase
-	}
-	if d.BatchSize == 0 {
-		d.BatchSize = DefaultBatchSize
-	}
-	if d.BatchPending == 0 {
-		d.BatchPending = DefaultBatchPending
-	}
-	if d.BatchTimeout == 0 {
-		d.BatchTimeout = toml.Duration(DefaultBatchTimeout)
-	}
-	if d.Precision == "" {
-		d.Precision = DefaultPrecision
-	}
-	if d.ReadBuffer == 0 {
-		d.ReadBuffer = DefaultReadBuffer
+	if d.EtcdAddress == "" {
+		d.EtcdAddress = "127.0.0.1:2379"
 	}
 	return &d
 }
@@ -110,7 +96,7 @@ func (c Configs) Diagnostics() (*diagnostics.Diagnostics, error) {
 			continue
 		}
 
-		r := []interface{}{true, cc.BindAddress, cc.Database, cc.RetentionPolicy, cc.BatchSize, cc.BatchPending, cc.BatchTimeout, cc.Precision}
+		r := []interface{}{true, cc.EtcdAddress, cc.Database, cc.RetentionPolicy, cc.BatchSize, cc.BatchPending, cc.BatchTimeout, cc.Precision}
 		d.AddRow(r)
 	}
 

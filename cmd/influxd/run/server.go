@@ -3,6 +3,7 @@ package run
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/influxdata/influxdb/services/etcd"
 	"io"
 	"log"
 	"net"
@@ -377,6 +378,13 @@ func (s *Server) appendContinuousQueryService(c continuous_querier.Config) {
 	srv.Monitor = s.Monitor
 	s.Services = append(s.Services, srv)
 }
+func (s *Server) appendEtcdService(c etcd.Config) {
+	if !c.Enabled {
+		return
+	}
+	etcdService := etcd.NewService(c)
+	s.Services = append(s.Services, etcdService)
+}
 
 // Err returns an error channel that multiplexes all out of band errors received from all services.
 func (s *Server) Err() <-chan error { return s.err }
@@ -405,6 +413,7 @@ func (s *Server) Open() error {
 	s.appendHTTPDService(s.config.HTTPD)
 	s.appendStorageService(s.config.Storage)
 	s.appendRetentionPolicyService(s.config.Retention)
+	s.appendEtcdService(s.config.EtcdInputs)
 	for _, i := range s.config.GraphiteInputs {
 		if err := s.appendGraphiteService(i); err != nil {
 			return err
