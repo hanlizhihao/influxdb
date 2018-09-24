@@ -1,5 +1,9 @@
-v1.6.3 [unreleased]
+v1.6.3 [2018-09-14]
 -------------------
+
+### Features
+
+-	[#10280](https://github.com/influxdata/influxdb/pull/10280): Remove TSI1 HLL sketches from heap.
 
 ### Bugfixes
 
