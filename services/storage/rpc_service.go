@@ -3,21 +3,20 @@ package storage
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 
 	"github.com/gogo/protobuf/types"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/pkg/metrics"
 	"github.com/influxdata/influxdb/tsdb/engine/tsm1"
+	"github.com/influxdata/platform/storage/reads"
+	"github.com/influxdata/platform/storage/reads/datatypes"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"go.uber.org/zap"
 )
 
-//go:generate protoc -I$GOPATH/src/github.com/influxdata/influxdb/vendor -I. --gogofaster_out=Mgoogle/protobuf/empty.proto=github.com/gogo/protobuf/types,Mgoogle/protobuf/any.proto=github.com/gogo/protobuf/types,plugins=grpc:. storage_common.proto storage.proto predicate.proto
-//go:generate tmpl -data=@array_cursor.gen.go.tmpldata array_cursor.gen.go.tmpl
-//go:generate tmpl -data=@array_cursor.gen.go.tmpldata response_writer.gen.go.tmpl
+//go:generate protoc -I$GOPATH/src/github.com/influxdata/influxdb/vendor -I. --gogofaster_out=. storage.proto
 
 var (
 	ErrMissingReadSource = errors.New("missing ReadSource")
@@ -26,19 +25,19 @@ var (
 type rpcService struct {
 	loggingEnabled bool
 
-	Store  Store
+	Store  reads.Store
 	Logger *zap.Logger
 }
 
-func (r *rpcService) Capabilities(context.Context, *types.Empty) (*CapabilitiesResponse, error) {
+func (r *rpcService) Capabilities(context.Context, *types.Empty) (*datatypes.CapabilitiesResponse, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (r *rpcService) Hints(context.Context, *types.Empty) (*HintsResponse, error) {
+func (r *rpcService) Hints(context.Context, *types.Empty) (*datatypes.HintsResponse, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (r *rpcService) Read(req *ReadRequest, stream Storage_ReadServer) error {
+func (r *rpcService) Read(req *datatypes.ReadRequest, stream datatypes.Storage_ReadServer) error {
 	source, err := getReadSource(req)
 	if err != nil {
 		return err
@@ -47,11 +46,11 @@ func (r *rpcService) Read(req *ReadRequest, stream Storage_ReadServer) error {
 	// TODO(sgc): this should be available via a generic API, such as tsdb.Store
 	ctx := tsm1.NewContextWithMetricsGroup(stream.Context())
 
-	var agg Aggregate_AggregateType
+	var agg datatypes.Aggregate_AggregateType
 	if req.Aggregate != nil {
 		agg = req.Aggregate.Type
 	}
-	pred := truncateString(PredicateToExprString(req.Predicate))
+	pred := truncateString(reads.PredicateToExprString(req.Predicate))
 	groupKeys := truncateString(strings.Join(req.GroupKeys, ","))
 
 	span := opentracing.SpanFromContext(ctx)
@@ -93,22 +92,14 @@ func (r *rpcService) Read(req *ReadRequest, stream Storage_ReadServer) error {
 		)
 	}
 
-	if req.Hints.NoPoints() {
-		req.PointsLimit = -1
-	}
-
-	if req.PointsLimit == 0 {
-		req.PointsLimit = math.MaxInt64
-	}
-
-	w := NewResponseWriter(stream, req.Hints)
+	w := reads.NewResponseWriter(stream, req.Hints)
 
 	switch req.Group {
-	case GroupBy, GroupExcept:
+	case datatypes.GroupBy, datatypes.GroupExcept:
 		if len(req.GroupKeys) == 0 {
 			return errors.New("read: GroupKeys must not be empty when GroupBy or GroupExcept specified")
 		}
-	case GroupNone, GroupAll:
+	case datatypes.GroupNone, datatypes.GroupAll:
 		if len(req.GroupKeys) > 0 {
 			return errors.New("read: GroupKeys must be empty when GroupNone or GroupAll specified")
 		}
@@ -116,7 +107,7 @@ func (r *rpcService) Read(req *ReadRequest, stream Storage_ReadServer) error {
 		return errors.New("read: unexpected value for Group")
 	}
 
-	if req.Group == GroupAll {
+	if req.Group == datatypes.GroupAll {
 		r.handleRead(ctx, req, w, log)
 	} else {
 		r.handleGroupRead(ctx, req, w, log)
@@ -140,7 +131,7 @@ func (r *rpcService) Read(req *ReadRequest, stream Storage_ReadServer) error {
 	return nil
 }
 
-func (r *rpcService) handleRead(ctx context.Context, req *ReadRequest, w *ResponseWriter, log *zap.Logger) {
+func (r *rpcService) handleRead(ctx context.Context, req *datatypes.ReadRequest, w *reads.ResponseWriter, log *zap.Logger) {
 	rs, err := r.Store.Read(ctx, req)
 	if err != nil {
 		log.Error("Read failed", zap.Error(w.Err()))
@@ -159,7 +150,7 @@ func (r *rpcService) handleRead(ctx context.Context, req *ReadRequest, w *Respon
 	}
 }
 
-func (r *rpcService) handleGroupRead(ctx context.Context, req *ReadRequest, w *ResponseWriter, log *zap.Logger) {
+func (r *rpcService) handleGroupRead(ctx context.Context, req *datatypes.ReadRequest, w *reads.ResponseWriter, log *zap.Logger) {
 	rs, err := r.Store.GroupRead(ctx, req)
 	if err != nil {
 		log.Error("GroupRead failed", zap.Error(w.Err()))
