@@ -3,9 +3,7 @@ package etcd // import "github.com/influxdata/influxdb/services/etcd"
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/coreos/etcd/clientv3"
-	"github.com/influxdata/influxdb/services/util"
 	"sync"
 	"time"
 
@@ -22,16 +20,24 @@ const (
 	MaxUDPPayload = 64 * 1024
 )
 
-// statistics gathered by the UDP package.
 const (
-	etcdDbNodeKey           = "mesh-common-normal-db-ip"
-	statPointsReceived      = "pointsRx"
-	statBytesReceived       = "bytesRx"
-	statPointsParseFail     = "pointsParseFail"
-	statReadFail            = "readFail"
-	statBatchesTransmitted  = "batchesTx"
-	statPointsTransmitted   = "pointsTx"
-	statBatchesTransmitFail = "batchesTxFail"
+	// Value is a collection of all database instances.
+	TSDBCommonNodeKey = "tsdb-common-node"
+	// Value is a collection of all available cluster, every item is key of cluster
+	TSDBClustersKey = "tsdb-available-clusters"
+	// Value is the cluster that tries to connect
+	TSDBWorkKey                = "tsdb-work-cluster-"
+	TSDBRecruitClustersKey     = "tsdb-recruit-clusters"
+	TSDBRecruitClusterKey      = "tsdb-recruit-cluster"
+	TSDBClusterAutoIncrementId = "tsdb-cluster-auto-increment-id"
+	TSDBNodeAutoIncrementId    = "tsdb-node-auto-increment-id"
+	statPointsReceived         = "pointsRx"
+	statBytesReceived          = "bytesRx"
+	statPointsParseFail        = "pointsParseFail"
+	statReadFail               = "readFail"
+	statBatchesTransmitted     = "batchesTx"
+	statPointsTransmitted      = "pointsTx"
+	statBatchesTransmitFail    = "batchesTxFail"
 )
 
 // Service is a UDP service that will listen for incoming packets of line protocol.
@@ -70,31 +76,23 @@ func (s *Service) Open() (err error) {
 	if !s.closed() {
 		return nil // Already open.
 	}
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{s.config.EtcdAddress},
-		DialTimeout: 5 * time.Second,
-	})
-	defer cli.Close()
+	cli, err := GetEtcdClient(s.config)
 	if err != nil {
 		return errors.New("etcd connected failed")
 	}
-	ip, err := util.GetLocalHostIp()
+	ip, err := GetLocalHostIp()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_, err = cli.Put(ctx, etcdDbNodeKey, ip)
+	_, err = cli.Put(ctx, TSDBCommonNodeKey, ip)
 	cancel()
 	go func() {
-		cli, err := clientv3.New(clientv3.Config{
-			Endpoints:   []string{s.config.EtcdAddress},
-			DialTimeout: 5 * time.Second,
-		})
-		defer cli.Close()
+		cli, err := GetEtcdClient(s.config)
 		if err != nil {
-			fmt.Errorf("connected failed")
+			s.Logger.Error("connected failed")
 		}
-		dbNodes := cli.Watch(context.Background(), etcdDbNodeKey, clientv3.WithPrefix())
+		dbNodes := cli.Watch(context.Background(), TSDBCommonNodeKey, clientv3.WithPrefix())
 		for dbNode := range dbNodes {
 			for _, ev := range dbNode.Events {
 				s.Logger.Info("新的节点加入" + ev.Kv.String())

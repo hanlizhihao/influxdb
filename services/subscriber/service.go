@@ -237,8 +237,10 @@ func (s *Service) run() {
 	s.updateSubs(&wg)
 	for {
 		select {
+		// Monitoring the number of subscribers
 		case <-s.update:
 			s.updateSubs(&wg)
+		// Distributing requests to subscribers
 		case p, ok := <-s.points:
 			if !ok {
 				// Close out all chanWriters
@@ -246,6 +248,9 @@ func (s *Service) run() {
 				return
 			}
 			for se, cw := range s.subs {
+				// Requests contain libraries to be written and retention policies,
+				// and the observer subscribes to the specified libraries and retention policies,
+				// which match the channel through which the request is written to the specified library, ready to forward
 				if p.Database == se.db && p.RetentionPolicy == se.rp {
 					select {
 					case cw.writeRequests <- p:
@@ -294,6 +299,7 @@ func (s *Service) updateSubs(wg *sync.WaitGroup) {
 				if _, ok := s.subs[se]; ok {
 					continue
 				}
+				// si.Destinations is about host and port
 				sub, err := s.createSubscription(se, si.Mode, si.Destinations)
 				if err != nil {
 					atomic.AddInt64(&s.stats.CreateFailures, 1)

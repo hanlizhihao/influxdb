@@ -678,6 +678,7 @@ func (data *Data) Clone() *Data {
 
 	other.Databases = data.CloneDatabases()
 	other.Users = data.CloneUsers()
+	other.ClusterID = data.ClusterID
 
 	return &other
 }

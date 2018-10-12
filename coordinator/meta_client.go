@@ -17,6 +17,8 @@ type MetaClient interface {
 	CreateUser(name, password string, admin bool) (meta.User, error)
 	Database(name string) *meta.DatabaseInfo
 	Databases() []meta.DatabaseInfo
+	Data() meta.Data
+	SetData(data *meta.Data) error
 	DropShard(id uint64) error
 	DropContinuousQuery(database, name string) error
 	DropDatabase(name string) error

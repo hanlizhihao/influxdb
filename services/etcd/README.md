@@ -1,6 +1,6 @@
-# The UDP Input
+# The Etcd Input
 
-## A note on UDP/IP OS Buffer sizes
+## InfluxDB cluster base
 
 Some OSes (most notably, Linux) place very restricive limits on the performance
 of UDP protocols. It is _highly_ recommended that you increase these OS limits to
