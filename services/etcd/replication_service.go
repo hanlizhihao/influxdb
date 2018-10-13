@@ -3,7 +3,6 @@ package etcd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/influxdata/influxdb/coordinator"
 	"github.com/influxdata/influxdb/services/httpd"
@@ -58,37 +57,28 @@ func (rs *ReplicationService) Open() error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	rs.Logger.Info("Self checking measurements...")
-	dbs := rs.MetaClient.Databases()
 	metaData := rs.MetaClient.Data()
 	// Try to connect the original cluster.
 	cli, err := GetEtcdClient(rs.etcdConfig)
 	ctx, cancel := context.WithTimeout(context.Background(), RequestTimeout)
-	originClusterKey := TSDBWorkKey + string(metaData.ClusterID)
+	originClusterKey := TSDBWorkKey + strconv.FormatUint(metaData.ClusterID, 10)
 	workClusterResp, err := cli.Get(ctx, originClusterKey)
 	cancel()
-	if err != nil {
-		return err
-	}
-	for _, ev := range workClusterResp.Kvs {
-		var workCluster WorkClusterInfo
-		ParseJson(ev.Value, workCluster)
-		if workCluster.number >= workCluster.limit {
-			rs.clearHistoryData()
-			err := rs.joinClusterOrCreateCluster()
-			return err
+	if workClusterResp == nil || err != nil {
+		rs.Logger.Info("origin cluster is null by meta data clusterId")
+		rs.joinClusterOrCreateCluster()
+	} else {
+		if workClusterResp.Count != 0 {
+			var workCluster WorkClusterInfo
+			ParseJson(workClusterResp.Kvs[0].Value, &workCluster)
+			if workCluster.number >= workCluster.limit {
+				rs.clearHistoryData()
+				err := rs.joinClusterOrCreateCluster()
+				return err
+			}
+			err = rs.joinRecruitClusterByClusterId(metaData.ClusterID)
 		}
-		err = rs.joinRecruitClusterByClusterId(metaData.ClusterID)
-	}
-	if err != nil {
-		return errors.New("replication Service try to connect etcd failed")
-	}
-	var measurements = make([][][]byte, len(dbs))
-	for _, db := range dbs {
-		measures, err := rs.store.MeasurementNames(nil, db.Name, nil)
-		if err != nil {
-			return errors.New("query measurement failed")
-		}
-		measurements = append(measurements, measures)
+		rs.joinClusterOrCreateCluster()
 	}
 	rs.closed = false
 
@@ -113,6 +103,7 @@ func (rs *ReplicationService) clearHistoryData() {
 	}
 }
 func (rs *ReplicationService) joinClusterOrCreateCluster() error {
+	rs.Logger.Info("Database will join cluster or create new")
 	cli, err := GetEtcdClient(rs.etcdConfig)
 	if err != nil {
 		return err
@@ -126,7 +117,7 @@ func (rs *ReplicationService) joinClusterOrCreateCluster() error {
 	if recruit.Count == 0 {
 		recruitCluster = RecruitClusters{
 			number:     0,
-			clusterIds: make([]uint64, 0),
+			clusterIds: make([]uint64, 1),
 		}
 		cli.Put(context.Background(), TSDBRecruitClustersKey, ToJson(recruitCluster))
 		// create cluster
@@ -147,9 +138,11 @@ func (rs *ReplicationService) joinClusterOrCreateCluster() error {
 				}
 			}
 			err = rs.createCluster()
-			if err != nil {
-				return err
-			}
+			return err
+		}
+		err = rs.createCluster()
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -175,13 +168,12 @@ RetryCreate:
 		return err
 	}
 	if len(allClusterInfoResp.Kvs) == 0 {
-		var singleClusterInfo []SingleClusterInfo
-		allClusterInfo = AllClusterInfo{
-			cluster: singleClusterInfo,
-		}
-		cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))
+		allClusterInfo = rs.initAllClusterInfo(allClusterInfo, cli)
 	} else {
 		ParseJson(allClusterInfoResp.Kvs[0].Value, &allClusterInfo)
+	}
+	if allClusterInfo.cluster == nil {
+		rs.initAllClusterInfo(allClusterInfo, cli)
 	}
 	var nodes []Node
 	ip, err := GetLocalHostIp()
@@ -202,23 +194,24 @@ RetryCreate:
 		nodes:  nodes,
 	}
 	// Transaction creation cluster
-	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", allClusterInfoResp.Kvs[0].Value)
-	cmpRecruit := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", recruit.Kvs[0].Value)
+	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
+	cmpRecruit := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruit.Kvs[0].Value))
 	putAllCluster := clientv3.OpPut(TSDBClustersKey, ToJson(allClusterInfo))
 	putAllRecruit := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
-	putRecruit := clientv3.OpPut(TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 1), ToJson(recruitClusterInfo))
+	putRecruit := clientv3.OpPut(TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), ToJson(recruitClusterInfo))
 	resp, err := cli.Txn(context.Background()).If(cmpAllCluster, cmpRecruit).Then(putAllCluster, putAllRecruit, putRecruit).Commit()
 	if !resp.Succeeded {
 		goto RetryCreate
 	}
 	metaData := rs.MetaClient.Data()
 	metaData.ClusterID = clusterId
+	rs.MetaClient.SetData(&metaData)
 	go func() {
 		cli, err := GetEtcdClient(rs.etcdConfig)
 		if err != nil {
 			rs.Logger.Error("replication service connected failed")
 		}
-		dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 1), clientv3.WithPrefix())
+		dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
 		for dbNode := range dbNodes {
 			for _, ev := range dbNode.Events {
 				// todo 两个以上为可用集群
@@ -228,13 +221,22 @@ RetryCreate:
 	}()
 	return nil
 }
+
+func (rs *ReplicationService) initAllClusterInfo(allClusterInfo AllClusterInfo, cli *clientv3.Client) AllClusterInfo {
+	var singleClusterInfo []SingleClusterInfo
+	allClusterInfo = AllClusterInfo{
+		cluster: singleClusterInfo,
+	}
+	cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))
+	return allClusterInfo
+}
 func (rs *ReplicationService) joinRecruitClusterByClusterId(clusterId uint64) error {
 	cli, err := GetEtcdClient(rs.etcdConfig)
 	if err != nil {
 		return err
 	}
 	recruitClusterKey := TSDBRecruitClusterKey
-	recruitClusterKey += string(clusterId)
+	recruitClusterKey += strconv.FormatUint(clusterId, 10)
 Loop:
 	recruitClusterNodes, err := cli.Get(context.Background(), recruitClusterKey)
 	if err != nil {
@@ -277,7 +279,7 @@ Loop:
 		if err != nil {
 			rs.Logger.Error("replication service connected failed")
 		}
-		dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 1), clientv3.WithPrefix())
+		dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
 		for dbNode := range dbNodes {
 			for _, ev := range dbNode.Events {
 				// todo 两个以上为可用集群

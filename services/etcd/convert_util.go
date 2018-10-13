@@ -37,9 +37,10 @@ func ToJson(value interface{}) string {
 	}
 	return string(dataByte)
 }
-func ParseJson(data []byte, target interface{}) {
-	err := json.Unmarshal(data, &target)
+func ParseJson(data []byte, target interface{}) interface{} {
+	err := json.Unmarshal(data, target)
 	if err != nil {
 		target = nil
 	}
+	return target
 }
