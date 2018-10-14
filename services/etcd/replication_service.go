@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/coreos/etcd/clientv3"
@@ -22,6 +23,8 @@ type ReplicationService struct {
 		SetData(data *meta.Data) error
 		Databases() []meta.DatabaseInfo
 		WaitForDataChanged() chan struct{}
+		CreateSubscription(database, rp, name, mode string, destinations []string) error
+		DropSubscription(database, rp, name string) error
 	}
 	update          chan struct{}
 	stats           *Statistics
@@ -64,6 +67,11 @@ func (rs *ReplicationService) Open() error {
 	originClusterKey := TSDBWorkKey + strconv.FormatUint(metaData.ClusterID, 10)
 	workClusterResp, err := cli.Get(ctx, originClusterKey)
 	cancel()
+	dbs := rs.MetaClient.Databases()
+	for _, db := range dbs {
+		measures, _ := rs.store.MeasurementNames(nil, db.Name, nil)
+		rs.Logger.Info(string(measures[0]))
+	}
 	if workClusterResp == nil || err != nil {
 		rs.Logger.Info("origin cluster is null by meta data clusterId")
 		rs.joinClusterOrCreateCluster()
@@ -178,7 +186,6 @@ RetryCreate:
 	var nodes []Node
 	ip, err := GetLocalHostIp()
 	nodes = append(nodes, Node{
-
 		host:    ip + rs.httpConfig.BindAddress,
 		udpHost: ip + rs.udpConfig.BindAddress,
 	})
@@ -192,6 +199,7 @@ RetryCreate:
 		number: 1,
 		limit:  3,
 		nodes:  nodes,
+		master: nodes[0],
 	}
 	// Transaction creation cluster
 	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
@@ -206,20 +214,57 @@ RetryCreate:
 	metaData := rs.MetaClient.Data()
 	metaData.ClusterID = clusterId
 	rs.MetaClient.SetData(&metaData)
-	go func() {
-		cli, err := GetEtcdClient(rs.etcdConfig)
-		if err != nil {
-			rs.Logger.Error("replication service connected failed")
-		}
-		dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
-		for dbNode := range dbNodes {
-			for _, ev := range dbNode.Events {
-				// todo 两个以上为可用集群
-				rs.Logger.Info("新的节点加入" + ev.Kv.String())
+	go rs.watchClusterNodeChange(clusterId)
+	return nil
+}
+
+// Watch node of the cluster, change cluster information and change subscriber
+func (rs *ReplicationService) watchClusterNodeChange(clusterId uint64) {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		rs.Logger.Error("replication service connected failed")
+	}
+	var prevRecruitClusterInfo RecruitClusterInfo
+	var recruitClusterInfo RecruitClusterInfo
+	dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
+	for dbNode := range dbNodes {
+		for _, ev := range dbNode.Events {
+			if bytes.Equal(ev.PrevKv.Value, ev.Kv.Value) {
+				continue
+			}
+			ParseJson(ev.Kv.Value, &recruitClusterInfo)
+			ParseJson(ev.PrevKv.Value, &prevRecruitClusterInfo)
+			for _, db := range rs.MetaClient.Databases() {
+				for _, rp := range db.RetentionPolicies {
+					for _, node := range recruitClusterInfo.nodes {
+						subscriberName := db.Name + rp.Name + node.host
+						destination := make([]string, 1)
+						destination = append(destination, "http://"+node.host)
+						rs.MetaClient.CreateSubscription(db.Name, rp.Name, subscriberName, "All", destination)
+					}
+				}
+			}
+			if recruitClusterInfo.number >= 2 {
+				workClusterKey := TSDBWorkKey + strconv.FormatUint(clusterId, 10)
+				resp, err := cli.Get(context.Background(), workClusterKey)
+				if resp == nil || err != nil || resp.Count == 0 {
+					series := make([]Series, 10)
+					for _, s := range rs.store.Indexes() {
+						series = append(series, Series{
+							key: s,
+						})
+					}
+					workClusterInfo := WorkClusterInfo{
+						RecruitClusterInfo: recruitClusterInfo,
+						series:             series,
+					}
+					cli.Put(context.Background(), workClusterKey, ToJson(workClusterInfo))
+				} else {
+					// todo 当集群节点变化时，也应该改变series
+				}
 			}
 		}
-	}()
-	return nil
+	}
 }
 
 func (rs *ReplicationService) initAllClusterInfo(allClusterInfo AllClusterInfo, cli *clientv3.Client) AllClusterInfo {
@@ -274,28 +319,7 @@ Loop:
 	}
 	metaData := rs.MetaClient.Data()
 	metaData.ClusterID = clusterId
-	go func() {
-		cli, err := GetEtcdClient(rs.etcdConfig)
-		if err != nil {
-			rs.Logger.Error("replication service connected failed")
-		}
-		dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
-		for dbNode := range dbNodes {
-			for _, ev := range dbNode.Events {
-				// todo 两个以上为可用集群
-				dbs := rs.MetaClient.Databases()
-				for _, db := range dbs {
-					for _, rp := range db.RetentionPolicies {
-						for _, si := range rp.Subscriptions {
-							si.Mode = "ALL"
-							si.Name = ""
-						}
-					}
-				}
-				rs.Logger.Info("新的节点加入" + ev.Kv.String())
-			}
-		}
-	}()
+	go rs.watchClusterNodeChange(clusterId)
 	return nil
 }
 

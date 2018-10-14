@@ -4,6 +4,8 @@
 * Server的PointsWriter提供了其他服务向channel写入数据的方法，后经过subscriber分发请求，再由其他线程向各个观察者数据库写入数据
 * 底层存储如何提供服务？coordinator 的PointsWriter的方法WritePointsPrivileged
 * Database Query 核心在statement_executor，ExecuteStatement将执行一条一条的语句，executeShowMeasurementsStatement负责查询表，store下的MeasurementNames方法将负责查询
+* tsdb.Engine下的 NewInmemIndex 是真实创建Index的函数，tsdb.engine.index.inmem的meta负责底层创建measurement 和 series
+* tsdb.store.shards 下的shard保存着inmem(interface{})类型，实际类型inmem.Index 
 ### 设计
 ```
 tsdb-cluster-auto-increment-id

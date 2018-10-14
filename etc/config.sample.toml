@@ -488,7 +488,7 @@
 ###
 
 [[udp]]
-  # enabled = false
+  # enabled = true
   # bind-address = ":8089"
   # database = "udp"
   # retention-policy = ""
