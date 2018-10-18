@@ -1330,7 +1330,7 @@ func (s *Store) MeasurementSeriesCounts(database string) (measuments int, series
 	// TODO: implement me
 	return 0, 0
 }
-func (s *Store) Indexes() []string {
+func (s *Store) Series() []string {
 	seriesMap := make(map[string]interface{})
 	for _, value := range s.shards {
 		index := value.options.InmemIndex.(inmem.Index)

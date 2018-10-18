@@ -214,12 +214,12 @@ RetryCreate:
 	metaData := rs.MetaClient.Data()
 	metaData.ClusterID = clusterId
 	rs.MetaClient.SetData(&metaData)
-	go rs.watchClusterNodeChange(clusterId)
+	go rs.watchRecruitCluster(clusterId)
 	return nil
 }
 
 // Watch node of the cluster, change cluster information and change subscriber
-func (rs *ReplicationService) watchClusterNodeChange(clusterId uint64) {
+func (rs *ReplicationService) watchRecruitCluster(clusterId uint64) {
 	cli, err := GetEtcdClient(rs.etcdConfig)
 	if err != nil {
 		rs.Logger.Error("replication service connected failed")
@@ -249,7 +249,7 @@ func (rs *ReplicationService) watchClusterNodeChange(clusterId uint64) {
 				resp, err := cli.Get(context.Background(), workClusterKey)
 				if resp == nil || err != nil || resp.Count == 0 {
 					series := make([]Series, 10)
-					for _, s := range rs.store.Indexes() {
+					for _, s := range rs.store.Series() {
 						series = append(series, Series{
 							key: s,
 						})
@@ -259,11 +259,22 @@ func (rs *ReplicationService) watchClusterNodeChange(clusterId uint64) {
 						series:             series,
 					}
 					cli.Put(context.Background(), workClusterKey, ToJson(workClusterInfo))
-				} else {
-					// todo 当集群节点变化时，也应该改变series
 				}
 			}
 		}
+	}
+}
+
+// Watch node of the work cluster，update series Index
+func (rs *ReplicationService) watchWorkClusterInfo(clusterId uint64) {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		rs.Logger.Error("replication service connected failed")
+	}
+	clusterChangeEvent := cli.Watch(context.Background(), TSDBWorkKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
+	for event := range clusterChangeEvent {
+		// todo:更新series 索引
+		rs.Logger.Info("WorkClusterChanged" + string(event.Events[0].Kv.Value))
 	}
 }
 
@@ -319,7 +330,7 @@ Loop:
 	}
 	metaData := rs.MetaClient.Data()
 	metaData.ClusterID = clusterId
-	go rs.watchClusterNodeChange(clusterId)
+	go rs.watchRecruitCluster(clusterId)
 	return nil
 }
 
