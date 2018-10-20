@@ -548,7 +548,7 @@ func init() {
 				exp:     `{"results":[{"statement_id":0}]}`,
 				once:    true,
 			},
-			// 0s Shard Group Duration will normalize to the Replication Policy Duration
+			// 0s Shard Group Duration will normalize to the EtcdService Policy Duration
 			&Query{
 				name:    "create retention policy with 0s shard group duration",
 				command: `CREATE RETENTION POLICY rpzero ON db0 DURATION 1h REPLICATION 1 SHARD DURATION 0s`,

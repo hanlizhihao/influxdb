@@ -1,23 +1,21 @@
-package etcd // import "github.com/influxdata/influxdb/services/etcd"
+package etcd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/coreos/etcd/clientv3"
-	"sync"
-	"time"
-
-	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/coordinator"
+	"github.com/influxdata/influxdb/services/httpd"
 	"github.com/influxdata/influxdb/services/meta"
+	"github.com/influxdata/influxdb/services/subscriber"
+	"github.com/influxdata/influxdb/services/udp"
+	"github.com/influxdata/influxdb/tsdb"
 	"go.uber.org/zap"
-)
-
-const (
-	// Arbitrary, testing indicated that this doesn't typically get over 10
-	parserChanLen = 1000
-
-	// MaxUDPPayload is largest payload size the UDP service will accept.
-	MaxUDPPayload = 64 * 1024
+	"net/url"
+	"strconv"
+	"sync"
 )
 
 const (
@@ -40,130 +38,423 @@ const (
 	statBatchesTransmitFail    = "batchesTxFail"
 )
 
-// Service is a UDP service that will listen for incoming packets of line protocol.
 type Service struct {
-	wg sync.WaitGroup
-
-	mu    sync.RWMutex
-	ready bool          // Has the required database been created?
-	done  chan struct{} // Is the service closing or closed?
-
-	config Config
-
-	PointsWriter interface {
-		WritePointsPrivileged(database, retentionPolicy string, consistencyLevel models.ConsistencyLevel, points []models.Point) error
-	}
-
 	MetaClient interface {
-		CreateDatabase(name string) (*meta.DatabaseInfo, error)
+		Data() meta.Data
+		SetData(data *meta.Data) error
+		Databases() []meta.DatabaseInfo
+		WaitForDataChanged() chan struct{}
+		CreateSubscription(database, rp, name, mode string, destinations []string) error
+		DropSubscription(database, rp, name string) error
 	}
-
-	Logger *zap.Logger
+	update          chan struct{}
+	points          chan *coordinator.WritePointsRequest
+	wg              sync.WaitGroup
+	closed          bool
+	closing         chan struct{}
+	mu              sync.Mutex
+	subs            map[subEntry]chanWriter
+	subMu           sync.RWMutex
+	Logger          *zap.Logger
+	NewPointsWriter func(u url.URL) (subscriber.PointsWriter, error)
+	store           *tsdb.Store
+	etcdConfig      Config
+	httpConfig      httpd.Config
+	udpConfig       udp.Config
 }
 
-// NewService returns a new instance of Service.
-func NewService(c Config) *Service {
-	d := *c.WithDefaults()
-	return &Service{
-		config: d,
-		Logger: zap.NewNop(),
+func NewService(store *tsdb.Store, etcdConfig Config, httpConfig httpd.Config, udpConfig udp.Config) *Service {
+	s := &Service{
+		Logger:     zap.NewNop(),
+		closed:     true,
+		store:      store,
+		etcdConfig: etcdConfig,
+		httpConfig: httpConfig,
+		udpConfig:  udpConfig,
 	}
+	return s
 }
 
-// Open starts the service.
-func (s *Service) Open() (err error) {
-	s.Logger.Info("Starting register for ETCD service")
-	if !s.closed() {
-		return nil // Already open.
-	}
-	cli, err := GetEtcdClient(s.config)
-	if err != nil {
-		return errors.New("etcd connected failed")
-	}
-	ip, err := GetLocalHostIp()
+func (rs *Service) Open() error {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.Logger.Info("Starting register for ETCD Service...")
+	err := rs.registerToCommonNode()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	_, err = cli.Put(ctx, TSDBCommonNodeKey, ip)
+	metaData := rs.MetaClient.Data()
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	// Try to connect the original cluster.
+	ctx, cancel := context.WithTimeout(context.Background(), RequestTimeout)
+	originClusterKey := TSDBWorkKey + strconv.FormatUint(metaData.ClusterID, 10)
+	workClusterResp, err := cli.Get(ctx, originClusterKey)
 	cancel()
-	go func() {
-		cli, err := GetEtcdClient(s.config)
-		if err != nil {
-			s.Logger.Error("connected failed")
-		}
-		dbNodes := cli.Watch(context.Background(), TSDBCommonNodeKey, clientv3.WithPrefix())
-		for dbNode := range dbNodes {
-			for _, ev := range dbNode.Events {
-				s.Logger.Info("新的节点加入" + ev.Kv.String())
-			}
-		}
-	}()
-	s.done = make(chan struct{})
-	s.Logger.Info("Register successfully with etcd")
-	return nil
-}
-
-// Statistics maintains statistics for the UDP service.
-type Statistics struct {
-	PointsReceived      int64
-	BytesReceived       int64
-	PointsParseFail     int64
-	ReadFail            int64
-	BatchesTransmitted  int64
-	PointsTransmitted   int64
-	BatchesTransmitFail int64
-}
-
-// Statistics returns statistics for periodic monitoring.
-func (s *Service) Statistics(tags map[string]string) {
-}
-
-// Close closes the service and the underlying listener.
-func (s *Service) Close() error {
-	s.Logger.Info("Service closed")
-
-	return nil
-}
-
-// Closed returns true if the service is currently closed.
-func (s *Service) Closed() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closed()
-}
-
-func (s *Service) closed() bool {
-	select {
-	case <-s.done:
-		// Service is closing.
-		return true
-	default:
+	dbs := rs.MetaClient.Databases()
+	for _, db := range dbs {
+		measures, _ := rs.store.MeasurementNames(nil, db.Name, nil)
+		rs.Logger.Info(string(measures[0]))
 	}
-	return s.done == nil
-}
+	if workClusterResp == nil || err != nil {
+		rs.Logger.Info("origin cluster is null by meta data clusterId")
+		rs.joinClusterOrCreateCluster()
+	} else {
+		if workClusterResp.Count != 0 {
+			var workCluster WorkClusterInfo
+			ParseJson(workClusterResp.Kvs[0].Value, &workCluster)
+			if workCluster.number >= workCluster.limit {
+				rs.clearHistoryData()
+				err := rs.joinClusterOrCreateCluster()
+				return err
+			}
+			err = rs.joinRecruitClusterByClusterId(metaData.ClusterID)
+		}
+		rs.joinClusterOrCreateCluster()
+	}
+	rs.closed = false
 
-// createInternalStorage ensures that the required database has been created.
-func (s *Service) createInternalStorage() error {
-	s.mu.RLock()
-	ready := s.ready
-	s.mu.RUnlock()
-	if ready {
+	rs.closing = make(chan struct{})
+	rs.update = make(chan struct{})
+	rs.points = make(chan *coordinator.WritePointsRequest, 100)
+
+	rs.wg.Add(2)
+	go func() {
+		defer rs.wg.Done()
+	}()
+	go func() {
+		defer rs.wg.Done()
+	}()
+
+	rs.Logger.Info("Opened Service")
+	return nil
+}
+func (rs *Service) clearHistoryData() {
+	for _, db := range rs.MetaClient.Databases() {
+		rs.store.DeleteDatabase(db.Name)
+	}
+}
+func (rs *Service) joinClusterOrCreateCluster() error {
+	rs.Logger.Info("Database will join cluster or create new")
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		return err
+	}
+	recruit, err := cli.Get(context.Background(), TSDBRecruitClustersKey)
+	if err != nil {
+		return err
+	}
+	var recruitCluster RecruitClusters
+	// if recruitCluster key non-existent
+	if recruit.Count == 0 {
+		recruitCluster = RecruitClusters{
+			number:     0,
+			clusterIds: make([]uint64, 1),
+		}
+		cli.Put(context.Background(), TSDBRecruitClustersKey, ToJson(recruitCluster))
+		// create cluster
+		rs.createCluster()
 		return nil
 	}
-
-	if _, err := s.MetaClient.CreateDatabase(s.config.Database); err != nil {
-		return err
+	for _, kv := range recruit.Kvs {
+		err := json.Unmarshal(kv.Value, &recruitCluster)
+		if err != nil {
+			return err
+		}
+		// Logical nodes need nodes to join it.
+		if recruitCluster.number > 0 {
+			for _, id := range recruitCluster.clusterIds {
+				err = rs.joinRecruitClusterByClusterId(id)
+				if err == nil {
+					return nil
+				}
+			}
+			err = rs.createCluster()
+			return err
+		}
+		err = rs.createCluster()
+		if err != nil {
+			return err
+		}
 	}
-
-	// The service is now ready.
-	s.mu.Lock()
-	s.ready = true
-	s.mu.Unlock()
 	return nil
 }
 
-// WithLogger sets the logger on the service.
-func (s *Service) WithLogger(log *zap.Logger) {
-	s.Logger = log.With(zap.String("service", "etcd"))
+// Join cluster failed, create new cluster
+func (rs *Service) createCluster() error {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	recruit, err := cli.Get(context.Background(), TSDBRecruitClustersKey)
+	if err != nil {
+		return err
+	}
+	var recruitCluster RecruitClusters
+	err = json.Unmarshal(recruit.Kvs[0].Value, &recruitCluster)
+	if err != nil {
+		return err
+	}
+	clusterId, err := GetLatestID(rs.etcdConfig, TSDBClusterAutoIncrementId)
+	var allClusterInfo AllClusterInfo
+RetryCreate:
+	allClusterInfoResp, err := cli.Get(context.Background(), TSDBClustersKey)
+	if err != nil {
+		return err
+	}
+	if len(allClusterInfoResp.Kvs) == 0 {
+		allClusterInfo = rs.initAllClusterInfo(allClusterInfo, cli)
+	} else {
+		ParseJson(allClusterInfoResp.Kvs[0].Value, &allClusterInfo)
+	}
+	if allClusterInfo.cluster == nil {
+		rs.initAllClusterInfo(allClusterInfo, cli)
+	}
+	var nodes []Node
+	ip, err := GetLocalHostIp()
+	nodes = append(nodes, Node{
+		host:    ip + rs.httpConfig.BindAddress,
+		udpHost: ip + rs.udpConfig.BindAddress,
+	})
+	allClusterInfo.cluster = append(allClusterInfo.cluster, SingleClusterInfo{
+		clusterId: clusterId,
+		nodes:     nodes,
+	})
+	recruitCluster.clusterIds = append(recruitCluster.clusterIds, clusterId)
+	recruitCluster.number++
+	recruitClusterInfo := RecruitClusterInfo{
+		number: 1,
+		limit:  3,
+		nodes:  nodes,
+		master: nodes[0],
+	}
+	// Transaction creation cluster
+	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
+	cmpRecruit := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruit.Kvs[0].Value))
+	putAllCluster := clientv3.OpPut(TSDBClustersKey, ToJson(allClusterInfo))
+	putAllRecruit := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
+	putRecruit := clientv3.OpPut(TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), ToJson(recruitClusterInfo))
+	resp, err := cli.Txn(context.Background()).If(cmpAllCluster, cmpRecruit).Then(putAllCluster, putAllRecruit, putRecruit).Commit()
+	if !resp.Succeeded {
+		goto RetryCreate
+	}
+	metaData := rs.MetaClient.Data()
+	metaData.ClusterID = clusterId
+	rs.MetaClient.SetData(&metaData)
+	go rs.watchRecruitCluster(clusterId)
+	return nil
+}
+
+// Watch node of the cluster, change cluster information and change subscriber
+func (rs *Service) watchRecruitCluster(clusterId uint64) {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		rs.Logger.Error("replication Service connected failed")
+	}
+	var prevRecruitClusterInfo RecruitClusterInfo
+	var recruitClusterInfo RecruitClusterInfo
+	dbNodes := cli.Watch(context.Background(), TSDBRecruitClusterKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
+	for dbNode := range dbNodes {
+		for _, ev := range dbNode.Events {
+			if bytes.Equal(ev.PrevKv.Value, ev.Kv.Value) {
+				continue
+			}
+			ParseJson(ev.Kv.Value, &recruitClusterInfo)
+			ParseJson(ev.PrevKv.Value, &prevRecruitClusterInfo)
+			for _, db := range rs.MetaClient.Databases() {
+				for _, rp := range db.RetentionPolicies {
+					for _, node := range recruitClusterInfo.nodes {
+						subscriberName := db.Name + rp.Name + node.host
+						destination := make([]string, 1)
+						destination = append(destination, "http://"+node.host)
+						rs.MetaClient.CreateSubscription(db.Name, rp.Name, subscriberName, "All", destination)
+					}
+				}
+			}
+			if recruitClusterInfo.number >= 2 {
+				workClusterKey := TSDBWorkKey + strconv.FormatUint(clusterId, 10)
+				resp, err := cli.Get(context.Background(), workClusterKey)
+				if resp == nil || err != nil || resp.Count == 0 {
+					series := make([]Series, 10)
+					for _, s := range rs.store.Series() {
+						series = append(series, Series{
+							key: s,
+						})
+					}
+					workClusterInfo := WorkClusterInfo{
+						RecruitClusterInfo: recruitClusterInfo,
+						series:             series,
+					}
+					cli.Put(context.Background(), workClusterKey, ToJson(workClusterInfo))
+				}
+			}
+		}
+	}
+}
+
+func (rs *Service) registerToCommonNode() error {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		return err
+	}
+RegisterNode:
+	// Register with etcd
+	commonNodesResp, err := cli.Get(context.Background(), TSDBCommonNodeKey)
+	// TSDBCommonNodeKey is not exist
+	if commonNodesResp == nil || commonNodesResp.Count == 0 {
+		nodeId, err := GetLatestID(rs.etcdConfig, TSDBNodeAutoIncrementId)
+		if err != nil {
+			return errors.New("Get node id failed ")
+		}
+		var nodes []Node
+		ip, err := GetLocalHostIp()
+		nodes = append(nodes, Node{
+			id:      nodeId,
+			host:    ip + rs.httpConfig.BindAddress,
+			udpHost: ip + rs.udpConfig.BindAddress,
+		})
+		commonNodes := CommonNodes{
+			nodes: nodes,
+		}
+		cli.Put(context.Background(), TSDBCommonNodeKey, ToJson(commonNodes))
+	}
+	var commonNodes CommonNodes
+	ParseJson(commonNodesResp.Kvs[0].Value, &commonNodes)
+	nodeId, err := GetLatestID(rs.etcdConfig, TSDBNodeAutoIncrementId)
+	ip, err := GetLocalHostIp()
+	commonNodes.nodes = append(commonNodes.nodes, Node{
+		id:      nodeId,
+		host:    ip + rs.httpConfig.BindAddress,
+		udpHost: ip + rs.udpConfig.BindAddress,
+	})
+	cmp := clientv3.Compare(clientv3.Value(TSDBCommonNodeKey), "=", string(commonNodesResp.Kvs[0].Value))
+	put := clientv3.OpPut(TSDBCommonNodeKey, ToJson(commonNodes))
+	resp, err := cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+	if !resp.Succeeded {
+		goto RegisterNode
+	}
+	return nil
+}
+
+// Watch node of the work cluster，update series Index
+func (rs *Service) watchWorkClusterInfo(clusterId uint64) {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		rs.Logger.Error("replication Service connected failed")
+	}
+	clusterChangeEvent := cli.Watch(context.Background(), TSDBWorkKey+strconv.FormatUint(clusterId, 10), clientv3.WithPrefix())
+	for event := range clusterChangeEvent {
+		// todo:更新series 索引
+		rs.Logger.Info("WorkClusterChanged" + string(event.Events[0].Kv.Value))
+	}
+}
+
+func (rs *Service) initAllClusterInfo(allClusterInfo AllClusterInfo, cli *clientv3.Client) AllClusterInfo {
+	var singleClusterInfo []SingleClusterInfo
+	allClusterInfo = AllClusterInfo{
+		cluster: singleClusterInfo,
+	}
+	cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))
+	return allClusterInfo
+}
+func (rs *Service) joinRecruitClusterByClusterId(clusterId uint64) error {
+	cli, err := GetEtcdClient(rs.etcdConfig)
+	if err != nil {
+		return err
+	}
+	recruitClusterKey := TSDBRecruitClusterKey
+	recruitClusterKey += strconv.FormatUint(clusterId, 10)
+Loop:
+	recruitClusterNodes, err := cli.Get(context.Background(), recruitClusterKey)
+	if err != nil {
+		return err
+	}
+	for _, kv := range recruitClusterNodes.Kvs {
+		var recruitClusterInfo RecruitClusterInfo
+		err := json.Unmarshal(kv.Value, &recruitClusterInfo)
+		if err != nil {
+			return err
+		}
+		if recruitClusterInfo.number >= recruitClusterInfo.limit {
+			continue
+		}
+		cmp := clientv3.Compare(clientv3.Value(recruitClusterKey), "=", string(kv.Value))
+		ip, err := GetLocalHostIp()
+		if err != nil {
+			return err
+		}
+		recruitClusterInfo.nodes = append(recruitClusterInfo.nodes, Node{
+			host:    ip + rs.httpConfig.BindAddress,
+			udpHost: ip + rs.udpConfig.BindAddress,
+		})
+		infoByte, err := json.Marshal(recruitClusterInfo)
+		if err != nil {
+			return err
+		}
+		put := clientv3.OpPut(recruitClusterKey, string(infoByte))
+		get := clientv3.OpGet(recruitClusterKey)
+		resp, err := cli.Txn(context.Background()).If(cmp).Then(put).Else(get).Commit()
+		if !resp.Succeeded {
+			// retry
+			goto Loop
+		}
+	}
+	metaData := rs.MetaClient.Data()
+	metaData.ClusterID = clusterId
+	go rs.watchRecruitCluster(clusterId)
+	return nil
+}
+
+// close closes the existing channel writers.
+func (rs *Service) close(wg *sync.WaitGroup) {
+	rs.subMu.Lock()
+	defer rs.subMu.Unlock()
+
+	// Wait for them to finish
+	wg.Wait()
+	rs.subs = nil
+}
+func (rs *Service) Close() error {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+
+	if rs.closed {
+		return nil // Already closed.
+	}
+
+	rs.closed = true
+
+	close(rs.points)
+	close(rs.closing)
+
+	rs.wg.Wait()
+	rs.Logger.Info("Closed Service")
+	return nil
+}
+
+// WithLogger sets the logger on the Service.
+func (rs *Service) WithLogger(log *zap.Logger) {
+	rs.Logger = log.With(zap.String("replicationService", "replication"))
+}
+
+func (rs *Service) updateSubs(wg *sync.WaitGroup) {
+	rs.subMu.Lock()
+	defer rs.subMu.Unlock()
+
+	if rs.subs == nil {
+		rs.subs = make(map[subEntry]chanWriter)
+	}
+
+}
+
+// subEntry is a unique set that identifies a given subscription.
+type subEntry struct {
+	db   string
+	rp   string
+	name string
+}
+
+// chanWriter sends WritePointsRequest to a PointsWriter received over a channel.
+type chanWriter struct {
+	writeRequests chan *coordinator.WritePointsRequest
+	pw            subscriber.PointsWriter
+	pointsWritten *int64
+	failures      *int64
+	logger        *zap.Logger
 }

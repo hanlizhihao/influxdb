@@ -26,24 +26,26 @@ func GetEtcdClient(c Config) (*clientv3.Client, error) {
 	}
 	return clientInstance, nil
 }
-func GetLatestClusterID(c Config) (uint64, error) {
+
+// 获取集群及物理节点的自增id
+func GetLatestID(c Config, key string) (uint64, error) {
 	cli, err := GetEtcdClient(c)
-	latestClusterId, err := cli.Get(context.Background(), TSDBClusterAutoIncrementId)
+	latestClusterId, err := cli.Get(context.Background(), key)
 	if err != nil {
 		return 0, err
 	}
 	if latestClusterId.Count == 0 {
-		cli.Put(context.Background(), TSDBClusterAutoIncrementId, "0")
+		cli.Put(context.Background(), key, "0")
 	}
 getClusterId:
-	latestClusterId, err = cli.Get(context.Background(), TSDBClusterAutoIncrementId)
-	cmp := clientv3.Compare(clientv3.Value(TSDBClusterAutoIncrementId), "=", string(latestClusterId.Kvs[0].Value))
+	latestClusterId, err = cli.Get(context.Background(), key)
+	cmp := clientv3.Compare(clientv3.Value(key), "=", string(latestClusterId.Kvs[0].Value))
 	clusterId, err := ByteToUint64(latestClusterId.Kvs[0].Value)
 	if err != nil {
 		return 0, err
 	}
 	clusterId++
-	put := clientv3.OpPut(TSDBClusterAutoIncrementId, strconv.FormatUint(clusterId, 10))
+	put := clientv3.OpPut(key, strconv.FormatUint(clusterId, 10))
 	resp, err := cli.Txn(context.Background()).If(cmp).Then(put).Commit()
 	if !resp.Succeeded {
 		goto getClusterId

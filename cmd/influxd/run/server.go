@@ -76,7 +76,7 @@ type Server struct {
 	QueryExecutor *query.Executor
 	PointsWriter  *coordinator.PointsWriter
 	Subscriber    *subscriber.Service
-	Replication   *etcd.ReplicationService
+	EtcdService   *etcd.Service
 
 	Services []Service
 
@@ -379,15 +379,12 @@ func (s *Server) appendContinuousQueryService(c continuous_querier.Config) {
 	srv.Monitor = s.Monitor
 	s.Services = append(s.Services, srv)
 }
-func (s *Server) appendEtcdService(c etcd.Config) {
-	if !c.Enabled {
-		return
-	}
-	etcdService := etcd.NewService(c)
-	s.Services = append(s.Services, etcdService)
-}
-func (s *Server) appendReplicationService() {
-	s.Replication = etcd.NewReplicationService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0])
+
+func (s *Server) appendEtcdService() {
+	// Initialize etcd service
+	s.EtcdService = etcd.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0])
+	var statement = s.QueryExecutor.StatementExecutor.(*coordinator.StatementExecutor)
+	statement.SetEtcdService(s.EtcdService)
 }
 
 // Err returns an error channel that multiplexes all out of band errors received from all services.
@@ -434,10 +431,9 @@ func (s *Server) Open() error {
 		s.appendUDPService(i)
 	}
 	// Ensure that etcd services start after all services are started.
-	s.appendEtcdService(s.config.EtcdInputs)
-	s.appendReplicationService()
+	s.appendEtcdService()
 
-	s.Replication.MetaClient = s.MetaClient
+	s.EtcdService.MetaClient = s.MetaClient
 	s.Subscriber.MetaClient = s.MetaClient
 	s.PointsWriter.MetaClient = s.MetaClient
 	s.Monitor.MetaClient = s.MetaClient
@@ -482,8 +478,8 @@ func (s *Server) Open() error {
 			return fmt.Errorf("open service: %s", err)
 		}
 	}
-	if err := s.Replication.Open(); err != nil {
-		return fmt.Errorf("open Replication Service: %s", err)
+	if err := s.EtcdService.Open(); err != nil {
+		return fmt.Errorf("open EtcdService Service: %s", err)
 	}
 
 	// Start the reporting service, if not disabled.

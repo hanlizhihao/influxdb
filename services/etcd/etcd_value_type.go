@@ -6,9 +6,12 @@ type (
 		clusterIds []uint64 `json:"clusterIds"`
 	}
 	Node struct {
-		id      int64  `json:"id"`
+		id      uint64 `json:"id"`
 		host    string `json:"host"`
 		udpHost string `json:"udpHost"`
+	}
+	CommonNodes struct {
+		nodes []Node `json:"nodes"`
 	}
 	RecruitClusterInfo struct {
 		limit  int32  `json:"limit"`

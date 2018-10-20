@@ -162,6 +162,22 @@
 ###
 ### Controls the enforcement of retention policies for evicting old data.
 ###
+#[cluster]
+#  # The default time a write request will wait until a "timeout" error is returned to the caller.
+#    write-timeout = "5s"
+#    shard-writer-timeout = "5s"
+#    shard-mapper-timeout = "5s"
+#  # DefaultMaxRemoteWriteConnections is the maximum number of open connections
+#    max-concurrent-queries = 0
+#  #
+#    force-remote-mapping = false
+#    max-remote-write-connections = 3
+#  # The default time is a request execution time
+#    query-timeout = "0s"
+#    log-queries-after = "0s"
+#    max-select-point = 0
+#    max-select-series = 0
+#    max-select-buckets = 0
 
 [retention]
   # Determines whether retention policy enforcement enabled.
