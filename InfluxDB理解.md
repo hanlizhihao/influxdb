@@ -9,6 +9,8 @@
 * tsdb.Engine下的 NewInmemIndex 是真实创建Index的函数，tsdb.engine.index.inmem的meta负责底层创建measurement 和 series
 * tsdb.store.shards 下的shard保存着inmem(interface{})类型，实际类型inmem.Index
 * Cluster的Series不会因为节点加入或者节点退出而变化 
+* httpd handler的路由显示write只能由serveWrite来处理，不是由StatementExecutor来处理，serveWrite的主流程-MapShard查找Shard再由Shard(TSM引擎)来写入数据(与此同时，向subscriber分发请求)
+* Series可能在多个Shard上存在，Shard表示一段时间范围的数据(所有Database)，Store、Shard、Index均保存相同的*tsdb.SeriesFile，从而共享Series
 ### 设计
 ```
 tsdb-cluster-auto-increment-id

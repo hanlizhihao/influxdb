@@ -1,4 +1,4 @@
-package etcd
+package coordinator
 
 import (
 	"context"
@@ -13,7 +13,7 @@ const RequestTimeout = 10 * time.Second
 var clientInstance *clientv3.Client
 var once sync.Once
 
-func GetEtcdClient(c Config) (*clientv3.Client, error) {
+func GetEtcdClient(c EtcdConfig) (*clientv3.Client, error) {
 	var err error
 	once.Do(func() {
 		clientInstance, err = clientv3.New(clientv3.Config{
@@ -28,7 +28,7 @@ func GetEtcdClient(c Config) (*clientv3.Client, error) {
 }
 
 // 获取集群及物理节点的自增id
-func GetLatestID(c Config, key string) (uint64, error) {
+func GetLatestID(c EtcdConfig, key string) (uint64, error) {
 	cli, err := GetEtcdClient(c)
 	latestClusterId, err := cli.Get(context.Background(), key)
 	if err != nil {

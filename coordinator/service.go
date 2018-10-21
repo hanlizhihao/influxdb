@@ -1,4 +1,4 @@
-package etcd
+package coordinator
 
 import (
 	"bytes"
@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/coreos/etcd/clientv3"
-	"github.com/influxdata/influxdb/coordinator"
 	"github.com/influxdata/influxdb/services/httpd"
 	"github.com/influxdata/influxdb/services/meta"
-	"github.com/influxdata/influxdb/services/subscriber"
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tsdb"
+	"github.com/influxdata/influxdb/tsdb/index/inmem"
 	"go.uber.org/zap"
-	"net/url"
 	"strconv"
 	"sync"
 )
@@ -47,23 +45,22 @@ type Service struct {
 		CreateSubscription(database, rp, name, mode string, destinations []string) error
 		DropSubscription(database, rp, name string) error
 	}
-	update          chan struct{}
-	points          chan *coordinator.WritePointsRequest
-	wg              sync.WaitGroup
-	closed          bool
-	closing         chan struct{}
-	mu              sync.Mutex
-	subs            map[subEntry]chanWriter
-	subMu           sync.RWMutex
-	Logger          *zap.Logger
-	NewPointsWriter func(u url.URL) (subscriber.PointsWriter, error)
-	store           *tsdb.Store
-	etcdConfig      Config
-	httpConfig      httpd.Config
-	udpConfig       udp.Config
+	update  chan struct{}
+	wg      sync.WaitGroup
+	closed  bool
+	closing chan struct{}
+	mu      sync.Mutex
+	subs    map[subEntry]chanWriter
+	subMu   sync.RWMutex
+	Logger  *zap.Logger
+
+	store      *tsdb.Store
+	etcdConfig EtcdConfig
+	httpConfig httpd.Config
+	udpConfig  udp.Config
 }
 
-func NewService(store *tsdb.Store, etcdConfig Config, httpConfig httpd.Config, udpConfig udp.Config) *Service {
+func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config) *Service {
 	s := &Service{
 		Logger:     zap.NewNop(),
 		closed:     true,
@@ -115,7 +112,6 @@ func (rs *Service) Open() error {
 
 	rs.closing = make(chan struct{})
 	rs.update = make(chan struct{})
-	rs.points = make(chan *coordinator.WritePointsRequest, 100)
 
 	rs.wg.Add(2)
 	go func() {
@@ -272,7 +268,14 @@ func (rs *Service) watchRecruitCluster(clusterId uint64) {
 				resp, err := cli.Get(context.Background(), workClusterKey)
 				if resp == nil || err != nil || resp.Count == 0 {
 					series := make([]Series, 10)
-					for _, s := range rs.store.Series() {
+					seriesMap := make(map[string]interface{})
+					for _, index := range rs.store.GetInmemIndexOfShards() {
+						var inmemIndex = index.(inmem.Index)
+						for _, seriesKey := range inmemIndex.SeriesKeys() {
+							seriesMap[seriesKey] = nil
+						}
+					}
+					for s := range seriesMap {
 						series = append(series, Series{
 							key: s,
 						})
@@ -420,7 +423,6 @@ func (rs *Service) Close() error {
 
 	rs.closed = true
 
-	close(rs.points)
 	close(rs.closing)
 
 	rs.wg.Wait()
@@ -452,8 +454,6 @@ type subEntry struct {
 
 // chanWriter sends WritePointsRequest to a PointsWriter received over a channel.
 type chanWriter struct {
-	writeRequests chan *coordinator.WritePointsRequest
-	pw            subscriber.PointsWriter
 	pointsWritten *int64
 	failures      *int64
 	logger        *zap.Logger

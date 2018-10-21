@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/influxdata/influxdb/tsdb/index/inmem"
 	"io"
 	"io/ioutil"
 	"os"
@@ -1330,19 +1329,13 @@ func (s *Store) MeasurementSeriesCounts(database string) (measuments int, series
 	// TODO: implement me
 	return 0, 0
 }
-func (s *Store) Series() []string {
-	seriesMap := make(map[string]interface{})
+func (s *Store) GetInmemIndexOfShards() []interface{} {
+	var inmemIndex []interface{}
 	for _, value := range s.shards {
-		index := value.options.InmemIndex.(inmem.Index)
-		for _, seriesKey := range index.SeriesKeys() {
-			seriesMap[seriesKey] = nil
-		}
+		index := value.options.InmemIndex
+		inmemIndex = append(inmemIndex, index)
 	}
-	var seriesKeys = make([]string, len(seriesMap))
-	for s := range seriesMap {
-		seriesKeys = append(seriesKeys, s)
-	}
-	return seriesKeys
+	return inmemIndex
 }
 
 type TagKeys struct {

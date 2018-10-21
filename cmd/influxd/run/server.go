@@ -3,7 +3,6 @@ package run
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/influxdata/influxdb/services/etcd"
 	"io"
 	"log"
 	"net"
@@ -57,7 +56,7 @@ type BuildInfo struct {
 }
 
 // Server represents a container for the metadata and storage data and services.
-// It is built using a Config and it manages the startup and shutdown of all
+// It is built using a EtcdConfig and it manages the startup and shutdown of all
 // services in the proper order.
 type Server struct {
 	buildInfo BuildInfo
@@ -76,7 +75,7 @@ type Server struct {
 	QueryExecutor *query.Executor
 	PointsWriter  *coordinator.PointsWriter
 	Subscriber    *subscriber.Service
-	EtcdService   *etcd.Service
+	EtcdService   *coordinator.Service
 
 	Services []Service
 
@@ -382,7 +381,7 @@ func (s *Server) appendContinuousQueryService(c continuous_querier.Config) {
 
 func (s *Server) appendEtcdService() {
 	// Initialize etcd service
-	s.EtcdService = etcd.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0])
+	s.EtcdService = coordinator.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0])
 	var statement = s.QueryExecutor.StatementExecutor.(*coordinator.StatementExecutor)
 	statement.SetEtcdService(s.EtcdService)
 }

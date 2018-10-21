@@ -2,7 +2,6 @@ package run
 
 import (
 	"fmt"
-	"github.com/influxdata/influxdb/services/etcd"
 	"io/ioutil"
 	"log"
 	"os"
@@ -39,7 +38,7 @@ const (
 	DefaultBindAddress = "127.0.0.1:8088"
 )
 
-// Config represents the configuration format for the influxd binary.
+// EtcdConfig represents the configuration format for the influxd binary.
 type Config struct {
 	Meta        *meta.Config       `toml:"meta"`
 	Data        tsdb.Config        `toml:"data"`
@@ -47,16 +46,16 @@ type Config struct {
 	Retention   retention.Config   `toml:"retention"`
 	Precreator  precreator.Config  `toml:"shard-precreation"`
 
-	Monitor        monitor.Config    `toml:"monitor"`
-	Subscriber     subscriber.Config `toml:"subscriber"`
-	HTTPD          httpd.Config      `toml:"http"`
-	Logging        logger.Config     `toml:"logging"`
-	Storage        storage.Config    `toml:"ifql"`
-	GraphiteInputs []graphite.Config `toml:"graphite"`
-	CollectdInputs []collectd.Config `toml:"collectd"`
-	OpenTSDBInputs []opentsdb.Config `toml:"opentsdb"`
-	UDPInputs      []udp.Config      `toml:"udp"`
-	EtcdInputs     etcd.Config       `toml:"etcd"`
+	Monitor        monitor.Config         `toml:"monitor"`
+	Subscriber     subscriber.Config      `toml:"subscriber"`
+	HTTPD          httpd.Config           `toml:"http"`
+	Logging        logger.Config          `toml:"logging"`
+	Storage        storage.Config         `toml:"ifql"`
+	GraphiteInputs []graphite.Config      `toml:"graphite"`
+	CollectdInputs []collectd.Config      `toml:"collectd"`
+	OpenTSDBInputs []opentsdb.Config      `toml:"opentsdb"`
+	UDPInputs      []udp.Config           `toml:"udp"`
+	EtcdInputs     coordinator.EtcdConfig `toml:"etcd"`
 
 	ContinuousQuery continuous_querier.Config `toml:"continuous_queries"`
 
@@ -70,7 +69,7 @@ type Config struct {
 	TLS tlsconfig.Config `toml:"tls"`
 }
 
-// NewConfig returns an instance of Config with reasonable defaults.
+// NewEtcdConfig returns an instance of EtcdConfig with reasonable defaults.
 func NewConfig() *Config {
 	c := &Config{}
 	c.Meta = meta.NewConfig()
@@ -88,7 +87,7 @@ func NewConfig() *Config {
 	c.CollectdInputs = []collectd.Config{collectd.NewConfig()}
 	c.OpenTSDBInputs = []opentsdb.Config{opentsdb.NewConfig()}
 	c.UDPInputs = []udp.Config{udp.NewConfig()}
-	c.EtcdInputs = etcd.NewConfig()
+	c.EtcdInputs = coordinator.NewEtcdConfig()
 
 	c.ContinuousQuery = continuous_querier.NewConfig()
 	c.Retention = retention.NewConfig()
@@ -207,7 +206,7 @@ func (c *Config) ApplyEnvOverrides(getenv func(string) string) error {
 	return itoml.ApplyEnvOverrides(getenv, "INFLUXDB", c)
 }
 
-// Diagnostics returns a diagnostics representation of Config.
+// Diagnostics returns a diagnostics representation of EtcdConfig.
 func (c *Config) Diagnostics() (*diagnostics.Diagnostics, error) {
 	return diagnostics.RowFromMap(map[string]interface{}{
 		"reporting-disabled": c.ReportingDisabled,
@@ -216,7 +215,7 @@ func (c *Config) Diagnostics() (*diagnostics.Diagnostics, error) {
 }
 
 func (c *Config) diagnosticsClients() map[string]diagnostics.Client {
-	// Config settings that are always present.
+	// EtcdConfig settings that are always present.
 	m := map[string]diagnostics.Client{
 		"config": c,
 
@@ -233,7 +232,7 @@ func (c *Config) diagnosticsClients() map[string]diagnostics.Client {
 		"config-cqs": c.ContinuousQuery,
 	}
 
-	// Config settings that can be repeated and can be disabled.
+	// EtcdConfig settings that can be repeated and can be disabled.
 	if g := graphite.Configs(c.GraphiteInputs); g.Enabled() {
 		m["config-graphite"] = g
 	}

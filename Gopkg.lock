@@ -548,14 +548,6 @@
   revision = "32fb0ac620c32ba40a4626ddf94d90d12cce3455"
   version = "v1.14.0"
 
-[[projects]]
-  digest = "1:546db0bd0542751aff1e75052dd1fa0b0a1cee681d43bfa9ffac7c22714c1070"
-  name = "gopkg.in/fatih/pool.v2"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "010e0b745d12eaf8426c95f9c3924d81dd0b668f"
-  version = "v2.0.0"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
@@ -603,7 +595,6 @@
     "golang.org/x/text/encoding/unicode",
     "golang.org/x/text/transform",
     "golang.org/x/time/rate",
-    "gopkg.in/fatih/pool.v2",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -415,7 +415,7 @@ func TestBasicQueryClient_Query(t *testing.T) {
 
 }
 
-/// config.go
+/// etcd_config.go
 func Test_NewConfigWithFile(t *testing.T) {
 	c, err := NewConfig("stress.toml")
 	if err != nil {

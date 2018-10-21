@@ -1,4 +1,4 @@
-package etcd
+package coordinator
 
 import (
 	"time"
@@ -44,8 +44,8 @@ const (
 	DefaultReadBuffer = 0
 )
 
-// Config holds various configuration settings for the UDP listener.
-type Config struct {
+// EtcdConfig holds various configuration settings for the UDP listener.
+type EtcdConfig struct {
 	Enabled     bool   `toml:"enabled"`
 	EtcdAddress string `toml:"address"`
 
@@ -58,9 +58,9 @@ type Config struct {
 	Precision       string        `toml:"precision"`
 }
 
-// NewConfig returns a new instance of Config with defaults.
-func NewConfig() Config {
-	return Config{
+// NewEtcdConfig returns a new instance of EtcdConfig with defaults.
+func NewEtcdConfig() EtcdConfig {
+	return EtcdConfig{
 		Enabled:         true,
 		EtcdAddress:     DefaultEtcdIp,
 		Database:        DefaultDatabase,
@@ -73,7 +73,7 @@ func NewConfig() Config {
 
 // WithDefaults takes the given config and returns a new config with any required
 // default values set.
-func (c *Config) WithDefaults() *Config {
+func (c *EtcdConfig) WithDefaults() *EtcdConfig {
 	d := *c
 	if d.EtcdAddress == "" {
 		d.EtcdAddress = "127.0.0.1:2379"
@@ -81,8 +81,8 @@ func (c *Config) WithDefaults() *Config {
 	return &d
 }
 
-// Configs wraps a slice of Config to aggregate diagnostics.
-type Configs []Config
+// Configs wraps a slice of EtcdConfig to aggregate diagnostics.
+type Configs []EtcdConfig
 
 // Diagnostics returns one set of diagnostics for all of the Configs.
 func (c Configs) Diagnostics() (*diagnostics.Diagnostics, error) {
@@ -103,7 +103,7 @@ func (c Configs) Diagnostics() (*diagnostics.Diagnostics, error) {
 	return d, nil
 }
 
-// Enabled returns true if any underlying Config is Enabled.
+// Enabled returns true if any underlying EtcdConfig is Enabled.
 func (c Configs) Enabled() bool {
 	for _, cc := range c {
 		if cc.Enabled {

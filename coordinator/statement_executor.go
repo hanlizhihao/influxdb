@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/influxdata/influxdb/services/etcd"
 	"io"
 	"sort"
 	"strconv"
@@ -54,10 +53,10 @@ type StatementExecutor struct {
 	MaxSelectPointN   int
 	MaxSelectSeriesN  int
 	MaxSelectBucketsN int
-	EtcdService       *etcd.Service
+	EtcdService       *Service
 }
 
-func (e *StatementExecutor) SetEtcdService(service *etcd.Service) {
+func (e *StatementExecutor) SetEtcdService(service *Service) {
 	e.EtcdService = service
 }
 

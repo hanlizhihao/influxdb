@@ -1,4 +1,4 @@
-package etcd
+package coordinator
 
 type (
 	RecruitClusters struct {

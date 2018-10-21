@@ -38,7 +38,7 @@ type Config struct {
 	MaxSelectBucketsN    int           `toml:"max-select-buckets"`
 }
 
-// NewConfig returns an instance of Config with defaults.
+// NewEtcdConfig returns an instance of Config with defaults.
 func NewConfig() Config {
 	return Config{
 		WriteTimeout:         toml.Duration(DefaultWriteTimeout),
