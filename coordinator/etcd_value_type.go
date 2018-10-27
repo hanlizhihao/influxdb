@@ -37,13 +37,9 @@ type (
 		RecruitClusterInfo
 		series []Series `json:"series"`
 	}
-	// TSDB-Database
+	// TSDB-Database key: database name value: key: rp name value: RP
 	Databases struct {
-		database []Database `json:"database"`
-	}
-	Database struct {
-		name string `json:"name"`
-		rp   []Rp   `json:"rp"`
+		database map[string]map[string]Rp `json:"database"`
 	}
 	Rp struct {
 		name               string        `json:"name"`

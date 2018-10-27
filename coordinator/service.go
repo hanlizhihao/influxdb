@@ -39,14 +39,14 @@ type Service struct {
 		CreateSubscription(database, rp, name, mode string, destinations []string) error
 		DropSubscription(database, rp, name string) error
 	}
-	update      chan struct{}
-	wg          sync.WaitGroup
-	closed      bool
-	closing     chan struct{}
-	mu          sync.Mutex
-	databaseMap map[string]map[string]interface{}
-	subMu       sync.RWMutex
-	Logger      *zap.Logger
+	update        chan struct{}
+	wg            sync.WaitGroup
+	closed        bool
+	closing       chan struct{}
+	mu            sync.Mutex
+	subMu         sync.RWMutex
+	Logger        *zap.Logger
+	subscriptions []meta.SubscriptionInfo
 
 	store      *tsdb.Store
 	etcdConfig EtcdConfig
@@ -139,78 +139,67 @@ func (s *Service) watchClusterDatabaseInfo() {
 				continue
 			}
 			var databases Databases
-			ParseJson(db.Kv.Value, databases)
-			if s.databaseMap == nil {
-				s.databaseMap = make(map[string]map[string]interface{})
-				// Add new database and retention policy
-				for _, metaDatabase := range databases.database {
-					s.databaseMap[metaDatabase.name] = make(map[string]interface{})
-					s.MetaClient.Data().CreateDatabase(metaDatabase.name)
-					for _, metaRP := range metaDatabase.rp {
-						s.MetaClient.Data().CreateRetentionPolicy(metaDatabase.name, &meta.RetentionPolicyInfo{
-							Name:               metaRP.name,
-							ReplicaN:           metaRP.replica,
-							Duration:           metaRP.duration,
-							ShardGroupDuration: metaRP.shardGroupDuration,
-						}, false)
-						s.databaseMap[metaDatabase.name][metaRP.name] = ""
-						if metaRP.needUpdate {
-							s.MetaClient.Data().UpdateRetentionPolicy(metaDatabase.name, metaRP.name, &meta.RetentionPolicyUpdate{
-								Duration:           &metaRP.duration,
-								ReplicaN:           &metaRP.replica,
-								ShardGroupDuration: &metaRP.shardGroupDuration,
-							}, false)
-						}
-					}
-				}
-				// Delete local additional database and retention policy
-				for _, localDB := range s.MetaClient.Databases() {
-					var rpInfo map[string]interface{}
-					if rpInfo = s.databaseMap[localDB.Name]; rpInfo == nil {
-						s.MetaClient.Data().DropDatabase(localDB.Name)
-						continue
-					}
-					for _, localRP := range localDB.RetentionPolicies {
-						if rpInfo[localRP.Name] == nil {
-							s.MetaClient.Data().DropRetentionPolicy(localDB.Name, localRP.Name)
-						}
-					}
-				}
-				continue
-			}
-			for _, metaDB := range databases.database {
-				if s.databaseMap[metaDB.name] == nil {
-					s.MetaClient.Data().CreateDatabase(metaDB.name)
-					s.databaseMap[metaDB.name] = map[string]interface{}{}
-					for _, metaRP := range metaDB.rp {
-						if rpMap := s.databaseMap[metaDB.name]; rpMap[metaRP.name] == nil {
-							rpMap[metaRP.name] = ""
-							s.MetaClient.Data().CreateRetentionPolicy(metaDB.name, &meta.RetentionPolicyInfo{
-								Name:               metaRP.name,
-								ReplicaN:           metaRP.replica,
-								Duration:           metaRP.duration,
-								ShardGroupDuration: metaRP.shardGroupDuration,
-							}, false)
-						}
-						if metaRP.needUpdate {
-							s.MetaClient.Data().UpdateRetentionPolicy(metaDB.name, metaRP.name, &meta.RetentionPolicyUpdate{
-								Duration:           &metaRP.duration,
-								ReplicaN:           &metaRP.replica,
-								ShardGroupDuration: &metaRP.shardGroupDuration,
-							}, false)
-						}
-					}
-				}
-			}
+			localDBInfo := make(map[string]map[string]Rp, len(s.MetaClient.Databases()))
+			ParseJson(db.Kv.Value, &databases)
+			// Add new database and retention policy
 			for _, localDB := range s.MetaClient.Databases() {
-				var rpInfo map[string]interface{}
-				if rpInfo = s.databaseMap[localDB.Name]; rpInfo == nil {
+				rps := databases.database[localDB.Name]
+				if rps == nil {
 					s.MetaClient.Data().DropDatabase(localDB.Name)
 					continue
 				}
+				// Local information is up to date.
+				//localDBInfo[localDB.Name] = make(map[string]Rp, len(localDB.RetentionPolicies))
+				rpInfo := make(map[string]Rp, len(localDB.RetentionPolicies))
 				for _, localRP := range localDB.RetentionPolicies {
-					if rpInfo[localRP.Name] == nil {
+					if s.subscriptions == nil || len(s.subscriptions) == 0 {
+						s.subscriptions = localRP.Subscriptions
+					}
+					latestRP := rps[localRP.Name]
+					if &latestRP == nil {
 						s.MetaClient.Data().DropRetentionPolicy(localDB.Name, localRP.Name)
+						continue
+					}
+					if latestRP.needUpdate {
+						s.MetaClient.Data().UpdateRetentionPolicy(localDB.Name, localRP.Name, &meta.RetentionPolicyUpdate{
+							Duration:           &latestRP.duration,
+							ReplicaN:           &latestRP.replica,
+							ShardGroupDuration: &latestRP.shardGroupDuration,
+						}, false)
+					}
+					// Save RP that has been completed.
+					rpInfo[localRP.Name] = latestRP
+					// Delete RP that has been completed
+					delete(rps, localRP.Name)
+				}
+				// rps will only save new rp
+				for _, value := range rps {
+					s.MetaClient.Data().CreateRetentionPolicy(localDB.Name, &meta.RetentionPolicyInfo{
+						Name:               value.name,
+						ReplicaN:           value.replica,
+						Duration:           value.duration,
+						ShardGroupDuration: value.shardGroupDuration,
+					}, false)
+					for _, sub := range s.subscriptions {
+						s.MetaClient.Data().CreateSubscription(localDB.Name, value.name, sub.Name, sub.Mode, sub.Destinations)
+					}
+				}
+				// save DB that has been completed
+				localDBInfo[localDB.Name] = rpInfo
+				delete(databases.database, localDB.Name)
+			}
+			// add new database
+			for key, value := range databases.database {
+				s.MetaClient.Data().CreateDatabase(key)
+				for _, rpValue := range value {
+					s.MetaClient.Data().CreateRetentionPolicy(key, &meta.RetentionPolicyInfo{
+						Name:               rpValue.name,
+						ReplicaN:           rpValue.replica,
+						Duration:           rpValue.duration,
+						ShardGroupDuration: rpValue.shardGroupDuration,
+					}, false)
+					for _, sub := range s.subscriptions {
+						s.MetaClient.Data().CreateSubscription(key, rpValue.name, sub.Name, sub.Mode, sub.Destinations)
 					}
 				}
 			}
@@ -218,25 +207,44 @@ func (s *Service) watchClusterDatabaseInfo() {
 	}
 }
 
+func (s *Service) GetLatestDatabaseInfo() (*Databases, error) {
+	cli, err := GetEtcdClient(s.etcdConfig)
+	if err != nil {
+		return nil, err
+	}
+	var databases Databases
+	databasesInfoResp, err := cli.Get(context.Background(), TSDBDatabase)
+	if err != nil {
+		return nil, err
+	}
+	ParseJson(databasesInfoResp.Kvs[0].Value, &databases)
+	return &databases, nil
+}
+func (s *Service) PutDatabaseInfo(database *Databases) error {
+	cli, err := GetEtcdClient(s.etcdConfig)
+	if err != nil {
+		return err
+	}
+	_, errs := cli.Put(context.Background(), TSDBDatabase, ToJson(*database))
+	return errs
+}
+
 func (s *Service) toDatabaseInfo(databaseInfo []meta.DatabaseInfo) Databases {
-	var database []Database
+	var databases = make(map[string]map[string]Rp, len(databaseInfo))
 	for _, db := range databaseInfo {
-		var rps []Rp
+		var rps = make(map[string]Rp, len(db.RetentionPolicies))
 		for _, rp := range db.RetentionPolicies {
-			rps = append(rps, Rp{
+			rps[rp.Name] = Rp{
 				name:               rp.Name,
 				replica:            rp.ReplicaN,
 				duration:           rp.Duration,
 				shardGroupDuration: rp.ShardGroupDuration,
-			})
+			}
 		}
-		database = append(database, Database{
-			name: db.Name,
-			rp:   rps,
-		})
+		databases[db.Name] = rps
 	}
 	return Databases{
-		database: database,
+		database: databases,
 	}
 }
 func (s *Service) clearHistoryData() {
@@ -303,7 +311,7 @@ func (s *Service) createCluster() error {
 		return err
 	}
 	clusterId, err := GetLatestID(s.etcdConfig, TSDBClusterAutoIncrementId)
-	var allClusterInfo AllClusterInfo
+	var allClusterInfo *AllClusterInfo
 RetryCreate:
 	allClusterInfoResp, err := cli.Get(context.Background(), TSDBClustersKey)
 	if err != nil {
@@ -463,9 +471,9 @@ func (s *Service) watchWorkClusterInfo(clusterId uint64) {
 	}
 }
 
-func (s *Service) initAllClusterInfo(allClusterInfo AllClusterInfo, cli *clientv3.Client) AllClusterInfo {
+func (s *Service) initAllClusterInfo(allClusterInfo *AllClusterInfo, cli *clientv3.Client) *AllClusterInfo {
 	var singleClusterInfo []SingleClusterInfo
-	allClusterInfo = AllClusterInfo{
+	allClusterInfo = &AllClusterInfo{
 		cluster: singleClusterInfo,
 	}
 	cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))

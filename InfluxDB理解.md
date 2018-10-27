@@ -28,4 +28,5 @@ tsdb-continuous-queries          [{name:, series. clusterId:}]
 watch database变化
 ```
 ## 隐藏问题
-* Database and retention policy data are consistent 来自元数据，由于网络通信延迟可能出现创建的数据库与保留策略尚不一致，已经接受到写入新数据库的请求
+* Database and retention policy data are consistent 来自元数据，由于网络通信延迟可能出现创建的数据库与保留策略尚不一致，已经接受到写入新数据库的请求：解决办法是经过算法得到的集群是同一个
+* master 节点挂掉，暂时没有选举功能
