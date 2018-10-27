@@ -21,5 +21,11 @@ tsdb-recruit-clusters           正在招募节点value,"{number:0, clusterIds:[
 tsdb-work-cluster-{id}          可以提供服务的集群key,按照id获取，value是{limit:1,number, nodes:[{id:1,host:192.168.119}], series:[{key:hashkey,size}]}
 tsdb-work-cluster-lock-{id}     值是特定cluster的节点的数量
 tsdb-recruit-cluster-{id}       正在招募的集群value是集群信息：{number:1,limit:1, nodes:[{id:,host:,udpHost:}]}
+tsdb-databases                  {database: [{name: string, rp: {name: string, replica: *int, duration: *time.Duration, shardGroupDuration: time.Duration}}]}
+tsdb-continuous-queries          [{name:, series. clusterId:}]           
+
 节点加入以后注意判断是否为可用
+watch database变化
 ```
+## 隐藏问题
+* Database and retention policy data are consistent 来自元数据，由于网络通信延迟可能出现创建的数据库与保留策略尚不一致，已经接受到写入新数据库的请求

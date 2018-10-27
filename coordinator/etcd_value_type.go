@@ -1,5 +1,7 @@
 package coordinator
 
+import "time"
+
 type (
 	RecruitClusters struct {
 		number     int32    `json:"number"`
@@ -34,5 +36,19 @@ type (
 	WorkClusterInfo struct {
 		RecruitClusterInfo
 		series []Series `json:"series"`
+	}
+	// TSDB-Database
+	Databases struct {
+		database []Database `json:"database"`
+	}
+	Database struct {
+		name string `json:"name"`
+		rp   []Rp   `json:"rp"`
+	}
+	Rp struct {
+		name               string        `json:"name"`
+		replica            int           `json:"replica"`
+		duration           time.Duration `json:"duration"`
+		shardGroupDuration time.Duration `json:"shard_group_duration"`
 	}
 )
