@@ -50,5 +50,6 @@ type (
 		replica            int           `json:"replica"`
 		duration           time.Duration `json:"duration"`
 		shardGroupDuration time.Duration `json:"shard_group_duration"`
+		needUpdate         bool          `json:"need_update"`
 	}
 )

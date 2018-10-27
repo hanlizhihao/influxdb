@@ -146,14 +146,21 @@ func (s *Service) watchClusterDatabaseInfo() {
 				for _, metaDatabase := range databases.database {
 					s.databaseMap[metaDatabase.name] = make(map[string]interface{})
 					s.MetaClient.Data().CreateDatabase(metaDatabase.name)
-					for _, metaRp := range metaDatabase.rp {
+					for _, metaRP := range metaDatabase.rp {
 						s.MetaClient.Data().CreateRetentionPolicy(metaDatabase.name, &meta.RetentionPolicyInfo{
-							Name:               metaRp.name,
-							ReplicaN:           metaRp.replica,
-							Duration:           metaRp.duration,
-							ShardGroupDuration: metaRp.shardGroupDuration,
+							Name:               metaRP.name,
+							ReplicaN:           metaRP.replica,
+							Duration:           metaRP.duration,
+							ShardGroupDuration: metaRP.shardGroupDuration,
 						}, false)
-						s.databaseMap[metaDatabase.name][metaRp.name] = ""
+						s.databaseMap[metaDatabase.name][metaRP.name] = ""
+						if metaRP.needUpdate {
+							s.MetaClient.Data().UpdateRetentionPolicy(metaDatabase.name, metaRP.name, &meta.RetentionPolicyUpdate{
+								Duration:           &metaRP.duration,
+								ReplicaN:           &metaRP.replica,
+								ShardGroupDuration: &metaRP.shardGroupDuration,
+							}, false)
+						}
 					}
 				}
 				// Delete local additional database and retention policy
@@ -183,6 +190,13 @@ func (s *Service) watchClusterDatabaseInfo() {
 								ReplicaN:           metaRP.replica,
 								Duration:           metaRP.duration,
 								ShardGroupDuration: metaRP.shardGroupDuration,
+							}, false)
+						}
+						if metaRP.needUpdate {
+							s.MetaClient.Data().UpdateRetentionPolicy(metaDB.name, metaRP.name, &meta.RetentionPolicyUpdate{
+								Duration:           &metaRP.duration,
+								ReplicaN:           &metaRP.replica,
+								ShardGroupDuration: &metaRP.shardGroupDuration,
 							}, false)
 						}
 					}
