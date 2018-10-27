@@ -24,6 +24,9 @@ const (
 	TSI1IndexName  = "tsi1"
 )
 
+// ErrIndexClosing can be returned to from an Index method if the index is currently closing.
+var ErrIndexClosing = errors.New("index is closing")
+
 type Index interface {
 	Open() error
 	Close() error
@@ -1296,7 +1299,11 @@ func (is IndexSet) MeasurementNamesByExpr(auth query.Authorizer, expr influxql.E
 
 	// Return filtered list if expression exists.
 	if expr != nil {
-		return is.measurementNamesByExpr(auth, expr)
+		names, err := is.measurementNamesByExpr(auth, expr)
+		if err != nil {
+			return nil, err
+		}
+		return slices.CopyChunkedByteSlices(names, 1000), nil
 	}
 
 	itr, err := is.measurementIterator()
