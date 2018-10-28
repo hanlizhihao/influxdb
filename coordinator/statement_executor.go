@@ -248,7 +248,8 @@ func (e *StatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.
 		rp.shardGroupDuration = *stmt.ShardGroupDuration
 		rps[stmt.Name] = rp
 		databases.database[stmt.Database] = rps
-		e.EtcdService.PutDatabaseInfo(databases)
+		go e.EtcdService.PutDatabaseInfo(databases)
+		return nil
 	}
 	e.EtcdService.Logger.Error("StatementExecutor get database failed")
 	rpu := &meta.RetentionPolicyUpdate{

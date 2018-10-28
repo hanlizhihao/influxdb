@@ -4,6 +4,7 @@
 * Server的PointsWriter提供了其他服务向channel写入数据的方法，后经过subscriber分发请求，再由其他线程向各个观察者数据库写入数据
 * 底层存储如何提供服务？coordinator 的PointsWriter的方法WritePointsPrivileged
 * Database Query 核心在statement_executor，ExecuteStatement将执行一条一条的语句，executeShowMeasurementsStatement负责查询表，store下的MeasurementNames方法将负责查询指标名称
+* SelectStatement执行过程，通过Executor的ExecuteQuery得到Result的通道，Result简单表示为一行数据，对于通道数据的处理有异步和同步两种方式
 * statement_executor也是集群的基础，读(转发，分发请求后合并结果集)，写(转发-合理的分配series所在节点)
 * statement_executor.executeSelectStatement涉及query.SelectOptions(添加了属性，并没有初始化)以及query.ExecutionContext(添加，未初始化)
 * tsdb.Engine下的 NewInmemIndex 是真实创建Index的函数，tsdb.engine.index.inmem的meta负责底层创建measurement 和 series
@@ -30,3 +31,5 @@ watch database变化
 ## 隐藏问题
 * Database and retention policy data are consistent 来自元数据，由于网络通信延迟可能出现创建的数据库与保留策略尚不一致，已经接受到写入新数据库的请求：解决办法是经过算法得到的集群是同一个
 * master 节点挂掉，暂时没有选举功能
+* DML没有集群化
+* 

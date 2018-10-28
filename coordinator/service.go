@@ -38,6 +38,12 @@ type Service struct {
 		WaitForDataChanged() chan struct{}
 		CreateSubscription(database, rp, name, mode string, destinations []string) error
 		DropSubscription(database, rp, name string) error
+		CreateContinuousQuery(database, name, query string) error
+		CreateDatabase(name string) (*meta.DatabaseInfo, error)
+		DropDatabase(name string) error
+		UpdateRetentionPolicy(database, name string, rpu *meta.RetentionPolicyUpdate, makeDefault bool) error
+		CreateRetentionPolicy(database string, spec *meta.RetentionPolicySpec, makeDefault bool) (*meta.RetentionPolicyInfo, error)
+		DropRetentionPolicy(database, name string) error
 	}
 	update        chan struct{}
 	wg            sync.WaitGroup
@@ -145,7 +151,7 @@ func (s *Service) watchClusterDatabaseInfo() {
 			for _, localDB := range s.MetaClient.Databases() {
 				rps := databases.database[localDB.Name]
 				if rps == nil {
-					s.MetaClient.Data().DropDatabase(localDB.Name)
+					s.MetaClient.DropDatabase(localDB.Name)
 					continue
 				}
 				// Local information is up to date.
@@ -157,11 +163,11 @@ func (s *Service) watchClusterDatabaseInfo() {
 					}
 					latestRP := rps[localRP.Name]
 					if &latestRP == nil {
-						s.MetaClient.Data().DropRetentionPolicy(localDB.Name, localRP.Name)
+						s.MetaClient.DropRetentionPolicy(localDB.Name, localRP.Name)
 						continue
 					}
 					if latestRP.needUpdate {
-						s.MetaClient.Data().UpdateRetentionPolicy(localDB.Name, localRP.Name, &meta.RetentionPolicyUpdate{
+						s.MetaClient.UpdateRetentionPolicy(localDB.Name, localRP.Name, &meta.RetentionPolicyUpdate{
 							Duration:           &latestRP.duration,
 							ReplicaN:           &latestRP.replica,
 							ShardGroupDuration: &latestRP.shardGroupDuration,
@@ -174,14 +180,14 @@ func (s *Service) watchClusterDatabaseInfo() {
 				}
 				// rps will only save new rp
 				for _, value := range rps {
-					s.MetaClient.Data().CreateRetentionPolicy(localDB.Name, &meta.RetentionPolicyInfo{
+					s.MetaClient.CreateRetentionPolicy(localDB.Name, &meta.RetentionPolicySpec{
 						Name:               value.name,
-						ReplicaN:           value.replica,
-						Duration:           value.duration,
+						ReplicaN:           &value.replica,
+						Duration:           &value.duration,
 						ShardGroupDuration: value.shardGroupDuration,
 					}, false)
 					for _, sub := range s.subscriptions {
-						s.MetaClient.Data().CreateSubscription(localDB.Name, value.name, sub.Name, sub.Mode, sub.Destinations)
+						s.MetaClient.CreateSubscription(localDB.Name, value.name, sub.Name, sub.Mode, sub.Destinations)
 					}
 				}
 				// save DB that has been completed
@@ -190,16 +196,16 @@ func (s *Service) watchClusterDatabaseInfo() {
 			}
 			// add new database
 			for key, value := range databases.database {
-				s.MetaClient.Data().CreateDatabase(key)
+				s.MetaClient.CreateDatabase(key)
 				for _, rpValue := range value {
-					s.MetaClient.Data().CreateRetentionPolicy(key, &meta.RetentionPolicyInfo{
+					s.MetaClient.CreateRetentionPolicy(key, &meta.RetentionPolicySpec{
 						Name:               rpValue.name,
-						ReplicaN:           rpValue.replica,
-						Duration:           rpValue.duration,
+						ReplicaN:           &rpValue.replica,
+						Duration:           &rpValue.duration,
 						ShardGroupDuration: rpValue.shardGroupDuration,
 					}, false)
 					for _, sub := range s.subscriptions {
-						s.MetaClient.Data().CreateSubscription(key, rpValue.name, sub.Name, sub.Mode, sub.Destinations)
+						s.MetaClient.CreateSubscription(key, rpValue.name, sub.Name, sub.Mode, sub.Destinations)
 					}
 				}
 			}
