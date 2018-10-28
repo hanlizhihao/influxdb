@@ -172,6 +172,7 @@ func newScannerCursorBase(scan scannerFunc, fields []*influxql.Field, loc *time.
 }
 
 func (cur *scannerCursorBase) Scan(row *Row) bool {
+	// scan方法就是下面的scan方法
 	ts, name, tags := cur.scan(cur.m)
 	if ts == ZeroTime {
 		return false
