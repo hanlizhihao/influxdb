@@ -209,7 +209,7 @@ func NewHandler(c Config) *Handler {
 
 	if !c.FluxEnabled {
 		fluxRoute.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "Flux query service disabled. Verify flux-enabled=true in the [http] section of the InfluxDB config.", http.StatusNotFound)
+			http.Error(w, "Flux query service disabled. Verify flux-enabled=true in the [http] section of the InfluxDB config.", http.StatusForbidden)
 		}
 	} else {
 		fluxRoute.HandlerFunc = h.serveFluxQuery
@@ -1710,7 +1710,6 @@ func (h *Handler) recovery(inner http.Handler, name string) http.Handler {
 // Store describes the behaviour of the storage packages Store type.
 type Store interface {
 	Read(ctx context.Context, req *datatypes.ReadRequest) (reads.ResultSet, error)
-	WithLogger(log *zap.Logger)
 }
 
 // Response represents a list of statement results.

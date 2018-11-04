@@ -811,7 +811,7 @@ func TestHandler_Flux_DisabledByDefault(t *testing.T) {
 
 	body := bytes.NewBufferString(`from(bucket:"db/rp") |> range(start:-1h) |> last()`)
 	h.ServeHTTP(w, MustNewRequest("POST", "/api/v2/query", body))
-	if got := w.Code; !cmp.Equal(got, http.StatusNotFound) {
+	if got := w.Code; !cmp.Equal(got, http.StatusForbidden) {
 		t.Fatalf("unexpected status: %d", got)
 	}
 
@@ -1408,7 +1408,6 @@ func NewHandlerWithConfig(config httpd.Config) *Handler {
 	if testing.Verbose() {
 		l := logger.New(os.Stdout)
 		h.Handler.Logger = l
-		h.Handler.Store.WithLogger(l)
 	}
 
 	return h
