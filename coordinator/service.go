@@ -55,11 +55,16 @@ type Service struct {
 	Logger        *zap.Logger
 	subscriptions []meta.SubscriptionInfo
 
+	httpd      *httpd.Service
 	store      *tsdb.Store
 	etcdConfig EtcdConfig
 	httpConfig httpd.Config
 	udpConfig  udp.Config
 	cli        *clientv3.Client
+	// other cluster's key:MeasurementName value: ip Array
+	measurements map[string][]string
+	// local cluster's measurements
+	localMeasurement map[string]interface{}
 }
 
 func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config) *Service {
@@ -72,6 +77,9 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		udpConfig:  udpConfig,
 	}
 	return s
+}
+func (s *Service) SetHttpdService(httpd *httpd.Service) {
+	s.httpd = httpd
 }
 
 func (s *Service) Open() error {
@@ -308,39 +316,40 @@ func (s *Service) createCluster() error {
 	if err != nil {
 		return err
 	}
-	var allClusterInfo *WorkClusterInfo
+	var workClusterInfo *AvailableClusterInfo
 RetryCreate:
 	allClusterInfoResp, err := s.cli.Get(context.Background(), TSDBClustersKey)
 	if err != nil {
 		return err
 	}
-	if allClusterInfoResp.Count == 0 || allClusterInfo.nodes == nil {
-		s.initAllClusterInfo(allClusterInfo)
+	if allClusterInfoResp == nil || allClusterInfoResp.Count == 0 {
+		s.initAllClusterInfo(workClusterInfo)
 	} else {
-		ParseJson(allClusterInfoResp.Kvs[0].Value, allClusterInfo)
+		ParseJson(allClusterInfoResp.Kvs[0].Value, workClusterInfo)
 	}
-	recruitCluster.clusterIds = append(recruitCluster.clusterIds, allClusterInfo.clusterId)
+	latestClusterInfo := workClusterInfo.clusters[len(workClusterInfo.clusters)-1]
+	recruitCluster.clusterIds = append(recruitCluster.clusterIds, latestClusterInfo.clusterId)
 	recruitCluster.number++
 	recruitClusterInfo := RecruitClusterInfo{
 		number: 1,
 		limit:  3,
-		nodes:  allClusterInfo.nodes,
-		master: allClusterInfo.nodes[0],
+		nodes:  latestClusterInfo.nodes,
+		master: latestClusterInfo.nodes[0],
 	}
 	// Transaction creation cluster
 	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
 	cmpRecruit := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruit.Kvs[0].Value))
-	putAllCluster := clientv3.OpPut(TSDBClustersKey, ToJson(allClusterInfo))
+	putAllCluster := clientv3.OpPut(TSDBClustersKey, ToJson(workClusterInfo))
 	putAllRecruit := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
-	putRecruit := clientv3.OpPut(TSDBRecruitClusterKey+strconv.FormatUint(allClusterInfo.clusterId, 10), ToJson(recruitClusterInfo))
+	putRecruit := clientv3.OpPut(TSDBRecruitClusterKey+strconv.FormatUint(latestClusterInfo.clusterId, 10), ToJson(recruitClusterInfo))
 	resp, err := s.cli.Txn(context.Background()).If(cmpAllCluster, cmpRecruit).Then(putAllCluster, putAllRecruit, putRecruit).Commit()
 	if !resp.Succeeded {
 		goto RetryCreate
 	}
 	metaData := s.MetaClient.Data()
-	metaData.ClusterID = allClusterInfo.clusterId
+	metaData.ClusterID = latestClusterInfo.clusterId
 	s.MetaClient.SetData(&metaData)
-	go s.watchRecruitCluster(allClusterInfo.clusterId)
+	go s.watchRecruitCluster(latestClusterInfo.clusterId)
 	return nil
 }
 
@@ -374,7 +383,7 @@ func (s *Service) watchRecruitCluster(clusterId uint64) {
 				workClusterKey := TSDBWorkKey + strconv.FormatUint(clusterId, 10)
 				resp, err := cli.Get(context.Background(), workClusterKey)
 				if resp == nil || err != nil || resp.Count == 0 {
-					series := make([]Series, 10)
+					series := make([]string, 10)
 					seriesMap := make(map[string]interface{})
 					for _, index := range s.store.GetInmemIndexOfShards() {
 						var inmemIndex = index.(inmem.Index)
@@ -383,9 +392,7 @@ func (s *Service) watchRecruitCluster(clusterId uint64) {
 						}
 					}
 					for s := range seriesMap {
-						series = append(series, Series{
-							key: s,
-						})
+						series = append(series, s)
 					}
 					workClusterInfo := WorkClusterInfo{
 						RecruitClusterInfo: recruitClusterInfo,
@@ -443,18 +450,22 @@ RegisterNode:
 
 // Watch node of the work cluster，update series Index
 func (s *Service) watchWorkClusterInfo() {
-	cli, err := GetEtcdClient(s.etcdConfig)
+	availableResp, err := s.cli.Get(context.Background(), TSDBClustersKey)
 	if err != nil {
-		s.Logger.Error("Etcd Service connected failed")
+		s.Logger.Error("Get information of cluster from etcd error")
+	} else {
+		s.buildMeasurementIndex(availableResp.Kvs[0].Value)
 	}
-	workClustersResp := cli.Watch(context.Background(), TSDBClustersKey, clientv3.WithPrefix())
+	workClustersResp := s.cli.Watch(context.Background(), TSDBClustersKey, clientv3.WithPrefix())
 	for event := range workClustersResp {
-		// todo:更新series 索引
+		for _, value := range event.Events {
+			s.buildMeasurementIndex(value.Kv.Value)
+		}
 		s.Logger.Info("WorkClusterChanged" + string(event.Events[0].Kv.Value))
 	}
 }
 
-func (s *Service) initAllClusterInfo(allClusterInfo *WorkClusterInfo) error {
+func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) error {
 	clusterId, err := GetLatestID(s.etcdConfig, TSDBClusterAutoIncrementId)
 	if err != nil {
 		return err
@@ -465,15 +476,14 @@ func (s *Service) initAllClusterInfo(allClusterInfo *WorkClusterInfo) error {
 		host:    ip + s.httpConfig.BindAddress,
 		udpHost: ip + s.udpConfig.BindAddress,
 	})
-	allClusterInfo = &WorkClusterInfo{
-		RecruitClusterInfo: RecruitClusterInfo{
-			clusterId: clusterId,
-			nodes:     nodes,
-			limit:     3,
-			number:    len(nodes),
-			master:    nodes[0],
-		},
-		series: make([]Series, 0),
+	var workClusterInfo []WorkClusterInfo
+	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
+		RecruitClusterInfo: RecruitClusterInfo{clusterId: clusterId, nodes: nodes, limit: 3, number: len(nodes), master: nodes[0]},
+		series:             make([]string, 0),
+		measurements:       make([]string, 0),
+	})
+	allClusterInfo = &AvailableClusterInfo{
+		clusters: workClusterInfo,
 	}
 	s.cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))
 	return nil
@@ -556,8 +566,30 @@ func (s *Service) WithLogger(log *zap.Logger) {
 	s.Logger = log.With(zap.String("replicationService", "replication"))
 }
 
-// Core implementation of Select cluster execution
-func (s *Service) buildClusterSeriesIndex() {
+// Build Index for balance
+func (s *Service) buildMeasurementIndex(data []byte) {
+	var availableClusterInfo AvailableClusterInfo
+	ParseJson(data, &availableClusterInfo)
+	if s.measurements == nil {
+		s.measurements = make(map[string][]string, len(availableClusterInfo.clusters))
+	}
+	// measurement may be save in cluster(a) and cluster(b), every cluster will be forwarded to the request
+	for _, cluster := range availableClusterInfo.clusters {
+		if cluster.clusterId == s.MetaClient.Data().ClusterID {
+			for _, m := range cluster.measurements {
+				s.localMeasurement[m] = ""
+			}
+			continue
+		}
+		var ips []string
+		for _, node := range cluster.nodes {
+			ips = append(ips, node.host)
+		}
+		for _, measurement := range cluster.measurements {
+			s.measurements[measurement] = ips
+		}
+	}
+	s.httpd.Handler.Balancing.SetMeasurementMapIndex(s.measurements, s.localMeasurement)
 }
 func (s *Service) clusterSelect(wg *sync.WaitGroup, stmt *influxql.SelectStatement, ctx *query.ExecutionContext) {
 

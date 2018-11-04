@@ -575,6 +575,7 @@ func (e *StatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPassw
 func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *query.ExecutionContext) error {
 	var wg sync.WaitGroup
 	wg.Add(1)
+	go e.EtcdService.clusterSelect(&wg, stmt, ctx)
 	cur, err := e.createIterators(ctx, stmt, ctx.ExecutionOptions)
 	if err != nil {
 		return err

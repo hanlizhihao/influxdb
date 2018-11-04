@@ -28,7 +28,12 @@ type (
 	}
 	WorkClusterInfo struct {
 		RecruitClusterInfo
-		series []Series `json:"series"`
+		series       []string `json:"series"`
+		measurements []string `json:"measurements"`
+	}
+	// tsdb-available-clusters
+	AvailableClusterInfo struct {
+		clusters []WorkClusterInfo `json:"clusters"`
 	}
 	// TSDB-Database key: database name value: key: rp name value: RP
 	Databases struct {

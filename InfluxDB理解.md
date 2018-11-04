@@ -31,11 +31,13 @@ tsdb-recruit-cluster-{id}       正在招募的集群value是集群信息：{num
 tsdb-databases                  {database: [{name: string, rp: {name: string, replica: *int, duration: *time.Duration, shardGroupDuration: time.Duration}}]}
 tsdb-continuous-queries          [{name:, series. clusterId:}]           
 
-节点加入以后注意判断是否为可用
-watch database变化
+快速判断condition是否命中外部Series
+tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
+简单实现：一个表下的series进行分片，500个series以内单组，500至1000两组，1000到6000三组，6000以上全组
+在handler层，只需要判断查询是否命中本组的表，不是本组表，则balance负载均衡，是本组表结果集合并处理流程
 ```
 ## 隐藏问题
-* Database and retention policy data are consistent 来自元数据，由于网络通信延迟可能出现创建的数据库与保留策略尚不一致，已经接受到写入新数据库的请求：解决办法是经过算法得到的集群是同一个
+* Data consistency is achieved through distributed locks, which applies the database, retention policy and series
 * master 节点挂掉，暂时没有选举功能
 * DML没有集群化
 * 

@@ -110,7 +110,8 @@ type Handler struct {
 		WritePoints(database, retentionPolicy string, consistencyLevel models.ConsistencyLevel, user meta.User, points []models.Point) error
 	}
 
-	Store Store
+	Store     Store
+	Balancing Balance
 
 	Config    *Config
 	Logger    *zap.Logger
@@ -132,6 +133,7 @@ func NewHandler(c Config) *Handler {
 		Store:          storage.NewStore(),
 		stats:          &Statistics{},
 		requestTracker: NewRequestTracker(),
+		Balancing:      NewBalance(),
 	}
 
 	// Limit the number of concurrent & enqueued write requests.
@@ -484,6 +486,10 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	} else {
 		// Auth is disabled, so allow everything.
 		opts.Authorizer = query.OpenAuthorizer
+	}
+	// balance http request, forward the request which need the other node's data
+	if ok, _ := h.Balancing.balance(&w, q, r); ok {
+		return
 	}
 
 	// Make sure if the client disconnects we signal the query to abort

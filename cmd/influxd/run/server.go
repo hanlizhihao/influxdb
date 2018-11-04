@@ -293,6 +293,7 @@ func (s *Server) appendHTTPDService(c httpd.Config) {
 	storageStore.MetaClient = s.MetaClient
 	storageStore.TSDBStore = s.TSDBStore
 	srv.Handler.Store = storageStore
+	s.EtcdService.SetHttpdService(srv)
 
 	s.Services = append(s.Services, srv)
 }
@@ -410,6 +411,7 @@ func (s *Server) Open() error {
 	s.appendPrecreatorService(s.config.Precreator)
 	s.appendSnapshotterService()
 	s.appendContinuousQueryService(s.config.ContinuousQuery)
+	s.appendEtcdService()
 	s.appendHTTPDService(s.config.HTTPD)
 	s.appendStorageService(s.config.Storage)
 	s.appendRetentionPolicyService(s.config.Retention)
@@ -429,8 +431,6 @@ func (s *Server) Open() error {
 	for _, i := range s.config.UDPInputs {
 		s.appendUDPService(i)
 	}
-	// Ensure that etcd services start after all services are started.
-	s.appendEtcdService()
 
 	s.EtcdService.MetaClient = s.MetaClient
 	s.Subscriber.MetaClient = s.MetaClient
