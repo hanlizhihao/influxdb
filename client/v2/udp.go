@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"time"
 )
 
@@ -58,11 +57,6 @@ func (uc *udpclient) Close() error {
 type udpclient struct {
 	conn        io.WriteCloser
 	payloadSize int
-}
-
-// Balance
-func (c *udpclient) Balance(clientResponse *http.ResponseWriter, clientRequest *http.Request) {
-	// todo
 }
 
 func (uc *udpclient) Write(bp BatchPoints) error {

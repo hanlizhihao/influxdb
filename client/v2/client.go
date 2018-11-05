@@ -80,9 +80,6 @@ type Client interface {
 
 	// Close releases any resources a Client may be using.
 	Close() error
-
-	// balance
-	Balance(clientResponse *http.ResponseWriter, clientRequest *http.Request)
 }
 
 // NewHTTPClient returns a new Client from the provided config.
@@ -172,20 +169,6 @@ func (c *client) Ping(timeout time.Duration) (time.Duration, string, error) {
 func (c *client) Close() error {
 	c.transport.CloseIdleConnections()
 	return nil
-}
-
-// Balance
-func (c *client) Balance(clientResponse *http.ResponseWriter, clientRequest *http.Request) {
-	w := *clientResponse
-	resp, err := c.httpClient.Do(clientRequest)
-	if err != nil {
-		w.WriteHeader(500)
-		w.Write([]byte(err.Error()))
-		return
-	}
-	w.WriteHeader(resp.StatusCode)
-	resp.Write(w)
-	defer resp.Body.Close()
 }
 
 // client is safe for concurrent use as the fields are all read-only
