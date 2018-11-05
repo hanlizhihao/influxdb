@@ -377,6 +377,10 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	var qr io.Reader
 	// Attempt to read the form value from the "q" form value.
 	if qp := strings.TrimSpace(r.FormValue("q")); qp != "" {
+		// balance http request, forward the request which need the other node's data
+		if ok, _ := h.Balancing.balance(&w, qp, r); ok {
+			return
+		}
 		qr = strings.NewReader(qp)
 	} else if r.MultipartForm != nil && r.MultipartForm.File != nil {
 		// If we have a multipart/form-data, try to retrieve a file from 'q'.
@@ -486,10 +490,6 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	} else {
 		// Auth is disabled, so allow everything.
 		opts.Authorizer = query.OpenAuthorizer
-	}
-	// balance http request, forward the request which need the other node's data
-	if ok, _ := h.Balancing.balance(&w, q, r); ok {
-		return
 	}
 
 	// Make sure if the client disconnects we signal the query to abort

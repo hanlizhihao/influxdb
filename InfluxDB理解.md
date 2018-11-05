@@ -40,4 +40,4 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * Data consistency is achieved through distributed locks, which applies the database, retention policy and series
 * master 节点挂掉，暂时没有选举功能
 * DML没有集群化
-* 
+* 负载均衡测试
