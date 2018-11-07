@@ -68,18 +68,6 @@ func (qb *QueryBalance) balance(w *http.ResponseWriter, q string, r *http.Reques
 	if qb.localMeasurement[key] != nil {
 		return false, nil
 	}
-	//var i int
-	//for ; i < len(q.Statements); i++ {
-	//	if qr, ok := q.Statements[i].(*influxql.SelectStatement); ok {
-	//		for _, measurement := range qr.Sources.Measurements() {
-	//			// If the measurement querying for any statement exists and is local, no load balancing will be performed.
-	//			if qb.localMeasurement[measurement.Name] != nil {
-	//				return false, nil
-	//			}
-	//		}
-	//	}
-	//}
-	// All request statements select data on other nodes.
 	go qb.forwardRequest(key, w, r)
 	return true, nil
 }

@@ -19,6 +19,7 @@ Emitter的Emit方法中cursor.Scan方法将得到值，Cursor为数据的来源�
 * Cluster的Series不会因为节点加入或者节点退出而变化 
 * httpd handler的路由显示write只能由serveWrite来处理，不是由StatementExecutor来处理，serveWrite的主流程-MapShard查找Shard再由Shard(TSM引擎)来写入数据(与此同时，向subscriber分发请求)
 * Series可能在多个Shard上存在，Shard表示一段时间范围的数据(所有Database)，Store、Shard、Index均保存相同的*tsdb.SeriesFile，从而共享Series
+* shard.validateSeriesAndFields调用engine.createSeriesListIfNotExist->index.createSeriesListIfNotExist->partition.createExist->log_file
 ### 设计
 ```
 tsdb-cluster-auto-increment-id
@@ -40,4 +41,4 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * Data consistency is achieved through distributed locks, which applies the database, retention policy and series
 * master 节点挂掉，暂时没有选举功能
 * DML没有集群化
-* 负载均衡测试
+* 写转发与存在判断问题，读转发并集合并，

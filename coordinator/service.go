@@ -316,16 +316,19 @@ func (s *Service) createCluster() error {
 	if err != nil {
 		return err
 	}
-	var workClusterInfo *AvailableClusterInfo
+	var workClusterInfo AvailableClusterInfo
 RetryCreate:
 	allClusterInfoResp, err := s.cli.Get(context.Background(), TSDBClustersKey)
 	if err != nil {
 		return err
 	}
 	if allClusterInfoResp == nil || allClusterInfoResp.Count == 0 {
-		s.initAllClusterInfo(workClusterInfo)
+		s.initAllClusterInfo(&workClusterInfo)
 	} else {
-		ParseJson(allClusterInfoResp.Kvs[0].Value, workClusterInfo)
+		ParseJson(allClusterInfoResp.Kvs[0].Value, &workClusterInfo)
+		if workClusterInfo.clusters == nil {
+			s.initAllClusterInfo(&workClusterInfo)
+		}
 	}
 	latestClusterInfo := workClusterInfo.clusters[len(workClusterInfo.clusters)-1]
 	recruitCluster.clusterIds = append(recruitCluster.clusterIds, latestClusterInfo.clusterId)
@@ -476,13 +479,13 @@ func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) error
 		host:    ip + s.httpConfig.BindAddress,
 		udpHost: ip + s.udpConfig.BindAddress,
 	})
-	var workClusterInfo []WorkClusterInfo
+	var workClusterInfo = make([]WorkClusterInfo, 0)
 	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
 		RecruitClusterInfo: RecruitClusterInfo{clusterId: clusterId, nodes: nodes, limit: 3, number: len(nodes), master: nodes[0]},
 		series:             make([]string, 0),
 		measurements:       make([]string, 0),
 	})
-	allClusterInfo = &AvailableClusterInfo{
+	*allClusterInfo = AvailableClusterInfo{
 		clusters: workClusterInfo,
 	}
 	s.cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))
