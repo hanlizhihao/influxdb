@@ -64,7 +64,7 @@ type Service struct {
 	// other cluster's key:MeasurementName value: ip Array
 	measurements map[string][]string
 	// local cluster's measurements
-	localMeasurement map[string]interface{}
+	localMeasurement map[string][]string
 }
 
 func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config) *Service {
@@ -578,15 +578,15 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 	}
 	// measurement may be save in cluster(a) and cluster(b), every cluster will be forwarded to the request
 	for _, cluster := range availableClusterInfo.clusters {
-		if cluster.clusterId == s.MetaClient.Data().ClusterID {
-			for _, m := range cluster.measurements {
-				s.localMeasurement[m] = ""
-			}
-			continue
-		}
 		var ips []string
 		for _, node := range cluster.nodes {
 			ips = append(ips, node.host)
+		}
+		if cluster.clusterId == s.MetaClient.Data().ClusterID {
+			for _, m := range cluster.measurements {
+				s.localMeasurement[m] = ips
+			}
+			continue
 		}
 		for _, measurement := range cluster.measurements {
 			s.measurements[measurement] = ips

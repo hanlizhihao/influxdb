@@ -32,13 +32,15 @@ tsdb-recruit-cluster-{id}       正在招募的集群value是集群信息：{num
 tsdb-databases                  {database: [{name: string, rp: {name: string, replica: *int, duration: *time.Duration, shardGroupDuration: time.Duration}}]}
 tsdb-continuous-queries          [{name:, series. clusterId:}]           
 
-快速判断condition是否命中外部Series
+1.快速判断condition是否命中外部Series
 tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
-简单实现：一个表下的series进行分片，500个series以内单组，500至1000两组，1000到6000三组，6000以上全组
+1.1简单实现：一个表下的series进行分片，500个series以内单组，500至1000两组，1000到6000三组，6000以上全组
 在handler层，只需要判断查询是否命中本组的表，不是本组表，则balance负载均衡，是本组表结果集合并处理流程
+2.1分布式索引是指，在小组内均衡索引数据，使用每个节点的一定内存来存储索引，通过简单的Http接口小组互相访问索引，以解决内存占用过大，保存在磁盘上响应速度较慢的问题
+2.2分布式索引的均衡可以通过一致性Hash算法来解决，整体的实现方式类似memached
+3.1核心读合并结果集的实现是全组转发，Single Cluster
 ```
 ## 隐藏问题
 * Data consistency is achieved through distributed locks, which applies the database, retention policy and series
 * master 节点挂掉，暂时没有选举功能
 * DML没有集群化
-* 写转发与存在判断问题，读转发并集合并，

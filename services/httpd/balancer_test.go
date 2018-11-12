@@ -23,8 +23,8 @@ func TestNewBalance(t *testing.T) {
 	http.ListenAndServe(":8080", &testBalance{
 		b: balance,
 	})
-	//go func(balance *QueryBalance) {
-	//}(balance)
+	//go func(queryBalance *HttpBalance) {
+	//}(queryBalance)
 }
 
 type hello struct {
@@ -36,7 +36,7 @@ func (h *hello) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type testBalance struct {
-	b *QueryBalance
+	b *HttpBalance
 }
 
 func (h *testBalance) ServeHTTP(w http.ResponseWriter, r *http.Request) {

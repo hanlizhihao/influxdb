@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"errors"
 	"github.com/influxdata/influxdb/client/v2"
+	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/services/httpd/consistent"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"io/ioutil"
@@ -21,44 +23,54 @@ const (
 )
 
 type Balance interface {
-	SetMeasurementMapIndex(remote map[string][]string, local map[string]interface{})
-	balance(w *http.ResponseWriter, q string, r *http.Request) (bool, error)
+	SetMeasurementMapIndex(remote map[string][]string, local map[string][]string)
+	queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error)
+	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point) ([]models.Point, error)
 }
 
-type QueryBalance struct {
+type HttpBalance struct {
 	// other cluster's key:MeasurementName value: ip Array
 	measurements map[string][]string
 	// local cluster's measurements
-	localMeasurement map[string]interface{}
+	localMeasurement map[string][]string
 	rw               sync.RWMutex
-	c                map[string]*client.Client
+	clients          map[string]*client.Client
 	clientConfig     client.HTTPConfig
 	Logger           *zap.Logger
 	transport        http.Transport
+	// Consistent Hash
+	ConsistentHash *consistent.Consistent
+	rwc            sync.RWMutex
 }
 
-func NewBalance() *QueryBalance {
-	return &QueryBalance{
+func NewBalance() *HttpBalance {
+	return &HttpBalance{
 		Logger:           zap.NewNop(),
 		measurements:     make(map[string][]string, 0),
-		localMeasurement: make(map[string]interface{}, 0),
+		localMeasurement: make(map[string][]string, 0),
 		clientConfig: client.HTTPConfig{
 			Timeout:            timeout,
 			InsecureSkipVerify: false,
 		},
-		c: make(map[string]*client.Client, 0),
+		clients: make(map[string]*client.Client, 0),
 	}
 }
 
-func (qb *QueryBalance) SetMeasurementMapIndex(remote map[string][]string, local map[string]interface{}) {
+func (qb *HttpBalance) SetMeasurementMapIndex(remote map[string][]string, local map[string][]string) {
 	qb.rw.Lock()
 	defer qb.rw.Unlock()
 	qb.localMeasurement = local
 	qb.measurements = remote
 }
 
+func (qb *HttpBalance) SetConsistent(ch *consistent.Consistent) {
+	qb.rwc.Lock()
+	defer qb.rwc.Unlock()
+	qb.ConsistentHash = ch
+}
+
 // return true, the request will be forward, return false, the request will be not forward
-func (qb *QueryBalance) balance(w *http.ResponseWriter, q string, r *http.Request) (bool, error) {
+func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error) {
 	key, err := GetMeasurementFromInfluxQL(q)
 	if err != nil {
 		return false, err
@@ -71,7 +83,7 @@ func (qb *QueryBalance) balance(w *http.ResponseWriter, q string, r *http.Reques
 	go qb.forwardRequest(key, w, r)
 	return true, nil
 }
-func (qb *QueryBalance) forwardRequest(measurement string, response *http.ResponseWriter, r *http.Request) {
+func (qb *HttpBalance) forwardRequest(measurement string, response *http.ResponseWriter, r *http.Request) {
 	var err error
 	qb.rw.RLock()
 	defer qb.rw.RUnlock()
@@ -81,6 +93,7 @@ func (qb *QueryBalance) forwardRequest(measurement string, response *http.Respon
 		qb.Logger.Error("Balance error !!! Measurement does not exist in any node " +
 			"in the cluster, the name of measurement is " + measurement)
 		w.WriteHeader(404)
+		w.Write([]byte("Measurement don't exist, Please try again later"))
 		w.Write([]byte("\n"))
 		return
 	}
@@ -103,6 +116,42 @@ func (qb *QueryBalance) forwardRequest(measurement string, response *http.Respon
 		return
 	}
 	w.Write(p)
+}
+
+// 如果是client则写入本地，不是则负载均衡
+func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point) ([]models.Point, error) {
+
+	if userAgent := r.Header.Get("User-Agent"); "InfluxDBClient" == userAgent {
+		return points, nil
+	}
+	pointsWriteToContainLocalCluster := make([]models.Point, len(points))
+	// otherClusterPoints contain new measurement and measurement belonging to other clusters
+	otherClusterPoints := make(map[string][]models.Point)
+	for _, point := range points {
+		name := string(point.Name())
+		if ips := qb.localMeasurement[name]; ips == nil {
+			points = otherClusterPoints[name]
+			if points == nil {
+				points = make([]models.Point, 5)
+				points = append(points, point)
+			} else {
+				points = append(points, point)
+			}
+			otherClusterPoints[name] = points
+			continue
+		}
+		pointsWriteToContainLocalCluster = append(pointsWriteToContainLocalCluster, point)
+	}
+	// process otherClusterPoints
+	go func(otherClusterPoints map[string][]models.Point) {
+
+	}(otherClusterPoints)
+	// 1.一致性hash看是否能get到本集群master，如果可以，过，否则，create
+	// consistent hash algorithm create new Series
+
+	//
+
+	return pointsWriteToContainLocalCluster, nil
 }
 
 var (

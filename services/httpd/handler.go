@@ -377,8 +377,8 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	var qr io.Reader
 	// Attempt to read the form value from the "q" form value.
 	if qp := strings.TrimSpace(r.FormValue("q")); qp != "" {
-		// balance http request, forward the request which need the other node's data
-		if ok, _ := h.Balancing.balance(&w, qp, r); ok {
+		// queryBalance http request, forward the request which need the other node's data
+		if ok, _ := h.Balancing.queryBalance(&w, qp, r); ok {
 			return
 		}
 		qr = strings.NewReader(qp)
