@@ -11,6 +11,7 @@ v1.7.0 [unreleased]
 -	[#9996](https://github.com/influxdata/influxdb/pull/9996): Ensure read service regexes get optimised.
 -	[#10408](https://github.com/influxdata/influxdb/pull/10408): Add Flux support to the influx CLI command.
 -	[#10257](https://github.com/influxdata/influxdb/issues/10257): Add chunked query into the Go client v2.
+-	[#9509](https://github.com/influxdata/influxdb/pull/9509): Add an access log filter for the access log.
 
 ### Bugfixes
 
@@ -95,6 +96,7 @@ v1.6.0 [2018-07-05]
 -	[#10299](https://github.com/influxdata/influxdb/pull/10299): Fix TSM1 panic on reader error.
 -	[#9884](https://github.com/influxdata/influxdb/pull/9884): Add -series-file flag to dumptsi command help.
 -	[#10423](https://github.com/influxdata/influxdb/pull/10423): Fix panic in IndexSet.
+-	[#10494](https://github.com/influxdata/influxdb/pull/10494): Fix ApplyEnvOverrides when a type that implements Unmarshaler is in a slice.
 
 v1.5.4 [2018-06-21]
 -------------------

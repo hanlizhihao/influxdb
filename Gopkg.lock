@@ -396,8 +396,7 @@
   version = "v0.3.6"
 
 [[projects]]
-  branch = "master"
-  digest = "1:db259befab0f4a14c66cacffd6a9e95df0353681173f8213334812384e4886fb"
+  digest = "1:d5919f2880c18c7932e0a65208389b58d40ec7b5cb313bfde56b4ca791bfa380"
   name = "github.com/influxdata/flux"
   packages = [
     ".",
@@ -415,6 +414,7 @@
     "interpreter",
     "iocounter",
     "lang",
+    "memory",
     "options",
     "parser",
     "plan",
@@ -423,7 +423,8 @@
     "values",
   ]
   pruneopts = "UT"
-  revision = "ad320b7fd3f6f3c83f5d034be952673a2e419b09"
+  revision = "adb2411fee9ccc65d671d4ce29861eb387174f6b"
+  version = "v0.7.1"
 
 [[projects]]
   branch = "master"
@@ -446,7 +447,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:57ecd8b98585a91397d7f1da30c9f19fc3f64e1fe46fb2de72f068e8bf04875e"
+  digest = "1:423e244b01a2d7c36072f68f589643a41b814c1868865c2009b7bee49983ab04"
   name = "github.com/influxdata/platform"
   packages = [
     ".",
@@ -455,23 +456,22 @@
     "pkg/binaryutil",
     "pkg/bytesutil",
     "pkg/escape",
-    "pkg/limiter",
     "pkg/mmap",
     "pkg/rhh",
+    "pkg/slices",
     "pkg/snowflake",
+    "query",
     "query/functions/inputs/storage",
     "storage/reads",
     "storage/reads/datatypes",
     "telegraf/plugins",
     "telegraf/plugins/inputs",
     "telegraf/plugins/outputs",
-    "toml",
     "tsdb",
     "tsdb/cursors",
-    "tsdb/defaults",
   ]
   pruneopts = "UT"
-  revision = "56510ba0dc84e9522fe3b993cca39a177aedad37"
+  revision = "dc5616e3f9ed409490e465a02ee3f1da50ad2e13"
 
 [[projects]]
   branch = "master"
@@ -666,11 +666,10 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:f97482f69f8d8e853db82a02f036dfad1ba6250d29d870fdebca4683deaa117c"
+  digest = "1:c48feb65fcd3ba2f41af6d7b91a7543aa4524de0e03f275f437161478a588b17"
   name = "github.com/opentracing/opentracing-go"
   packages = [
     ".",
-    "ext",
     "log",
   ]
   pruneopts = "UT"
@@ -1067,6 +1066,7 @@
     "github.com/influxdata/flux/functions/outputs",
     "github.com/influxdata/flux/functions/transformations",
     "github.com/influxdata/flux/lang",
+    "github.com/influxdata/flux/memory",
     "github.com/influxdata/flux/options",
     "github.com/influxdata/flux/plan",
     "github.com/influxdata/flux/repl",
@@ -1084,7 +1084,6 @@
     "github.com/klauspost/pgzip",
     "github.com/mattn/go-isatty",
     "github.com/opentracing/opentracing-go",
-    "github.com/opentracing/opentracing-go/ext",
     "github.com/paulbellamy/ratecounter",
     "github.com/peterh/liner",
     "github.com/pkg/errors",

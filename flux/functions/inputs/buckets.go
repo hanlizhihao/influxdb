@@ -6,6 +6,7 @@ import (
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/functions/inputs"
+	"github.com/influxdata/flux/memory"
 	"github.com/influxdata/flux/plan"
 	"github.com/influxdata/flux/values"
 	"github.com/influxdata/influxdb/services/meta"
@@ -18,7 +19,7 @@ func init() {
 
 type BucketsDecoder struct {
 	deps  BucketDependencies
-	alloc *execute.Allocator
+	alloc *memory.Allocator
 }
 
 func (bd *BucketsDecoder) Connect() error {
@@ -95,6 +96,7 @@ func createBucketsSource(prSpec plan.ProcedureSpec, dsid execute.DatasetID, a ex
 
 type MetaClient interface {
 	Databases() []meta.DatabaseInfo
+	Database(name string) *meta.DatabaseInfo
 }
 
 type BucketDependencies MetaClient

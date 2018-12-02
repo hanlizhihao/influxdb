@@ -34,6 +34,7 @@ import (
 	"github.com/influxdata/influxdb/prometheus/remote"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/meta"
+	"github.com/influxdata/influxdb/services/storage"
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxdb/uuid"
 	"github.com/influxdata/influxql"
@@ -120,11 +121,12 @@ type Handler struct {
 	CompilerMappings flux.CompilerMappings
 	registered       bool
 
-	Config    *Config
-	Logger    *zap.Logger
-	CLFLogger *log.Logger
-	accessLog *os.File
-	stats     *Statistics
+	Config           *Config
+	Logger           *zap.Logger
+	CLFLogger        *log.Logger
+	accessLog        *os.File
+	accessLogFilters StatusFilters
+	stats            *Statistics
 
 	requestTracker *RequestTracker
 	writeThrottler *Throttler
@@ -235,6 +237,7 @@ func (h *Handler) Open() {
 		}
 		h.Logger.Info("opened HTTP access log", zap.String("path", path))
 	}
+	h.accessLogFilters = StatusFilters(h.Config.AccessLogStatusFilters)
 
 	if h.Config.FluxEnabled {
 		h.registered = true
@@ -246,6 +249,7 @@ func (h *Handler) Close() {
 	if h.accessLog != nil {
 		h.accessLog.Close()
 		h.accessLog = nil
+		h.accessLogFilters = nil
 	}
 
 	if h.registered {
@@ -1150,8 +1154,15 @@ func (h *Handler) serveFluxQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+	if val := r.FormValue("node_id"); val != "" {
+		if nodeID, err := strconv.ParseUint(val, 10, 64); err == nil {
+			ctx = storage.NewContextWithReadOptions(ctx, &storage.ReadOptions{NodeID: nodeID})
+		}
+	}
+
 	pr := req.ProxyRequest()
-	q, err := h.Controller.Query(r.Context(), pr.Compiler)
+	q, err := h.Controller.Query(ctx, pr.Compiler)
 	if err != nil {
 		h.httpError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1160,12 +1171,6 @@ func (h *Handler) serveFluxQuery(w http.ResponseWriter, r *http.Request) {
 		q.Cancel()
 		q.Done()
 	}()
-
-	// Setup headers
-	//stats, hasStats := results.(flux.Statisticser)
-	//if hasStats {
-	//	w.Header().Set("Trailer", statsTrailer)
-	//}
 
 	// NOTE: We do not write out the headers here.
 	// It is possible that if the encoding step fails
@@ -1188,23 +1193,13 @@ func (h *Handler) serveFluxQuery(w http.ResponseWriter, r *http.Request) {
 		results := flux.NewResultIteratorFromQuery(q)
 		n, err := encoder.Encode(w, results)
 		if err != nil {
-			results.Cancel()
+			results.Release()
 			if n == 0 {
 				// If the encoder did not write anything, we can write an error header.
 				h.httpError(w, err.Error(), http.StatusInternalServerError)
 			}
 		}
 	}
-
-	//if hasStats {
-	//	data, err := json.Marshal(stats.Statistics())
-	//	if err != nil {
-	//		h.Logger.Info("Failed to encode statistics", zap.Error(err))
-	//		return
-	//	}
-	//	// Write statisitcs trailer
-	//	w.Header().Set(statsTrailer, string(data))
-	//}
 }
 
 // serveExpvar serves internal metrics in /debug/vars format over HTTP.
@@ -1651,7 +1646,10 @@ func (h *Handler) logging(inner http.Handler, name string) http.Handler {
 		start := time.Now()
 		l := &responseLogger{w: w}
 		inner.ServeHTTP(l, r)
-		h.CLFLogger.Println(buildLogLine(l, r, start))
+
+		if h.accessLogFilters.Match(l.Status()) {
+			h.CLFLogger.Println(buildLogLine(l, r, start))
+		}
 
 		// Log server errors.
 		if l.Status()/100 == 5 {
