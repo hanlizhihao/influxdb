@@ -11,11 +11,11 @@ import (
 const RequestTimeout = 10 * time.Second
 
 var clientInstance *clientv3.Client
-var once sync.Once
+var Once sync.Once
 
 func GetEtcdClient(c EtcdConfig) (*clientv3.Client, error) {
 	var err error
-	once.Do(func() {
+	Once.Do(func() {
 		clientInstance, err = clientv3.New(clientv3.Config{
 			Endpoints:   []string{c.EtcdAddress},
 			DialTimeout: 5 * time.Second,

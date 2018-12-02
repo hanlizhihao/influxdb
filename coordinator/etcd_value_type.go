@@ -4,46 +4,67 @@ import "time"
 
 type (
 	RecruitClusters struct {
-		number     int32    `json:"number"`
-		clusterIds []uint64 `json:"clusterIds"`
+		Number     int32    `json:"number"`
+		ClusterIds []uint64 `json:"clusterIds"`
 	}
 	Node struct {
-		id      uint64 `json:"id"`
-		host    string `json:"host"`
-		udpHost string `json:"udpHost"`
+		Id      uint64 `json:"id"`
+		Host    string `json:"host"`
+		UdpHost string `json:"udpHost"`
+		// consistent hash weight
+		Weight int `json:"weight"`
 	}
 	CommonNodes struct {
-		nodes []Node `json:"nodes"`
+		Nodes []Node `json:"nodes"`
 	}
-	RecruitClusterInfo struct {
-		clusterId uint64 `json:"cluster_id"`
-		limit     int    `json:"limit"`
-		number    int    `json:"number"`
-		master    Node   `json:"master"`
-		nodes     []Node `json:"nodes"`
+	RecruitCluster struct {
+		ClusterId uint64 `json:"cluster_id"`
+		Limit     int    `json:"limit"`
+		Number    int    `json:"number"`
+		Master    Node   `json:"master"`
+		Nodes     []Node `json:"nodes"`
 	}
 	//[{id:1, nodes:[{id:1,host:,udpHost:}]}]
 	Series struct {
-		key string `json:"key"`
+		Key string `json:"key"`
 	}
 	WorkClusterInfo struct {
-		RecruitClusterInfo
-		series       []string `json:"series"`
-		measurements []string `json:"measurements"`
+		RecruitCluster
+		Series  []string `json:"series"`
+		ClassId uint64   `json:"class_id"`
 	}
 	// tsdb-available-clusters
 	AvailableClusterInfo struct {
-		clusters []WorkClusterInfo `json:"clusters"`
+		Clusters []WorkClusterInfo `json:"clusters"`
 	}
 	// TSDB-Database key: database name value: key: rp name value: RP
 	Databases struct {
-		database map[string]map[string]Rp `json:"database"`
+		Database map[string]map[string]Rp `json:"database"`
 	}
 	Rp struct {
-		name               string        `json:"name"`
-		replica            int           `json:"replica"`
-		duration           time.Duration `json:"duration"`
-		shardGroupDuration time.Duration `json:"shard_group_duration"`
-		needUpdate         bool          `json:"need_update"`
+		Name               string        `json:"name"`
+		Replica            int           `json:"replica"`
+		Duration           time.Duration `json:"duration"`
+		ShardGroupDuration time.Duration `json:"shard_group_duration"`
+		NeedUpdate         bool          `json:"need_update"`
+	}
+	// TSDB-Class
+	Classes []Class
+	// every update need clear last newMeasurement and deleteMeasurement
+	Class struct {
+		ClassId    uint64   `json:"class_id"`
+		Limit      int      `json:"limit"`
+		ClusterIds []uint64 `json:"cluster_ids"`
+		// latest measurement
+		Measurements []string `json:"measurements"`
+		// Incremental measurement
+		NewMeasurement []string `json:"new_measurement"`
+		// Incremental delete measurement
+		DeleteMeasurement []string `json:"delete_measurement"`
+	}
+	// clusters:[{id,masterNode:{id,host,weight}}], measurements: [name]
+	ClassDetail struct {
+		Clusters     []WorkClusterInfo `json:"clusters"`
+		Measurements []string          `json:"measurements"`
 	}
 )

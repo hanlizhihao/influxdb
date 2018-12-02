@@ -50,6 +50,7 @@ type Data struct {
 
 	MaxShardGroupID uint64
 	MaxShardID      uint64
+	ClassID         uint64
 }
 
 // Database returns a DatabaseInfo by the database name.

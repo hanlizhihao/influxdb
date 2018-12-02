@@ -75,19 +75,19 @@ func (uc *udpclient) Write(bp BatchPoints) error {
 	}
 
 	for _, p := range bp.Points() {
-		p.pt.Round(d)
-		pointSize := p.pt.StringSize() + 1 // include newline in size
-		//point := p.pt.RoundedString(d) + "\n"
+		p.Pt.Round(d)
+		pointSize := p.Pt.StringSize() + 1 // include newline in size
+		//point := p.Pt.RoundedString(d) + "\n"
 
 		checkBuffer(pointSize)
 
 		if p.Time().IsZero() || pointSize <= uc.payloadSize {
-			b = p.pt.AppendString(b)
+			b = p.Pt.AppendString(b)
 			b = append(b, '\n')
 			continue
 		}
 
-		points := p.pt.Split(uc.payloadSize - 1) // account for newline character
+		points := p.Pt.Split(uc.payloadSize - 1) // account for newline character
 		for _, sp := range points {
 			checkBuffer(sp.StringSize() + 1)
 			b = sp.AppendString(b)

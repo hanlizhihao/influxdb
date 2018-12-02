@@ -25,14 +25,14 @@ func (c HashRing) Swap(i, j int) {
 }
 
 type Node struct {
-	Id       int
+	Id       uint64
 	Ip       string
 	Port     int
 	HostName string
 	Weight   int
 }
 
-func NewNode(id int, ip string, port int, name string, weight int) *Node {
+func NewNode(id uint64, ip string, port int, name string, weight int) *Node {
 	return &Node{
 		Id:       id,
 		Ip:       ip,
@@ -45,7 +45,7 @@ func NewNode(id int, ip string, port int, name string, weight int) *Node {
 type Consistent struct {
 	Nodes     map[uint32]Node
 	numReps   int
-	Resources map[int]bool
+	Resources map[uint64]bool
 	ring      HashRing
 	sync.RWMutex
 }
@@ -54,7 +54,7 @@ func NewConsistent() *Consistent {
 	return &Consistent{
 		Nodes:     make(map[uint32]Node),
 		numReps:   DefaultReplicas,
-		Resources: make(map[int]bool),
+		Resources: make(map[uint64]bool),
 		ring:      HashRing{},
 	}
 }
@@ -69,7 +69,7 @@ func (c *Consistent) Add(node *Node) bool {
 
 	count := c.numReps * node.Weight
 	for i := 0; i < count; i++ {
-		str := c.joinStr(i, node)
+		str := c.joinStr(uint64(i), node)
 		c.Nodes[c.hashStr(str)] = *(node)
 	}
 	c.Resources[node.Id] = true
@@ -85,10 +85,10 @@ func (c *Consistent) sortHashRing() {
 	sort.Sort(c.ring)
 }
 
-func (c *Consistent) joinStr(i int, node *Node) string {
+func (c *Consistent) joinStr(i uint64, node *Node) string {
 	return node.Ip + "*" + strconv.Itoa(node.Weight) +
-		"-" + strconv.Itoa(i) +
-		"-" + strconv.Itoa(node.Id)
+		"-" + strconv.FormatUint(i, 10) +
+		"-" + strconv.FormatUint(i, 10)
 }
 
 // MurMurHash算法 :https://github.com/spaolacci/murmur3
@@ -132,7 +132,7 @@ func (c *Consistent) Remove(node *Node) {
 
 	count := c.numReps * node.Weight
 	for i := 0; i < count; i++ {
-		str := c.joinStr(i, node)
+		str := c.joinStr(uint64(i), node)
 		delete(c.Nodes, c.hashStr(str))
 	}
 	c.sortHashRing()
@@ -144,7 +144,7 @@ func main() {
 
 	for i := 0; i < 10; i++ {
 		si := fmt.Sprintf("%d", i)
-		cHashRing.Add(NewNode(i, "172.18.1."+si, 8080, "host_"+si, 1))
+		cHashRing.Add(NewNode(uint64(i), "172.18.1."+si, 8080, "host_"+si, 1))
 	}
 
 	for k, v := range cHashRing.Nodes {

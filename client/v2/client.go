@@ -291,7 +291,7 @@ func (bp *batchpoints) SetRetentionPolicy(rp string) {
 
 // Point represents a single data point.
 type Point struct {
-	pt models.Point
+	Pt models.Point
 }
 
 // NewPoint returns a point with the given timestamp. If a timestamp is not
@@ -314,49 +314,49 @@ func NewPoint(
 		return nil, err
 	}
 	return &Point{
-		pt: pt,
+		Pt: pt,
 	}, nil
 }
 
 // String returns a line-protocol string of the Point.
 func (p *Point) String() string {
-	return p.pt.String()
+	return p.Pt.String()
 }
 
 // PrecisionString returns a line-protocol string of the Point,
 // with the timestamp formatted for the given precision.
 func (p *Point) PrecisionString(precision string) string {
-	return p.pt.PrecisionString(precision)
+	return p.Pt.PrecisionString(precision)
 }
 
 // Name returns the measurement name of the point.
 func (p *Point) Name() string {
-	return string(p.pt.Name())
+	return string(p.Pt.Name())
 }
 
 // Tags returns the tags associated with the point.
 func (p *Point) Tags() map[string]string {
-	return p.pt.Tags().Map()
+	return p.Pt.Tags().Map()
 }
 
 // Time return the timestamp for the point.
 func (p *Point) Time() time.Time {
-	return p.pt.Time()
+	return p.Pt.Time()
 }
 
 // UnixNano returns timestamp of the point in nanoseconds since Unix epoch.
 func (p *Point) UnixNano() int64 {
-	return p.pt.UnixNano()
+	return p.Pt.UnixNano()
 }
 
 // Fields returns the fields for the point.
 func (p *Point) Fields() (map[string]interface{}, error) {
-	return p.pt.Fields()
+	return p.Pt.Fields()
 }
 
 // NewPointFrom returns a point from the provided models.Point.
 func NewPointFrom(pt models.Point) *Point {
-	return &Point{pt: pt}
+	return &Point{Pt: pt}
 }
 
 func (c *client) Write(bp BatchPoints) error {
@@ -366,7 +366,7 @@ func (c *client) Write(bp BatchPoints) error {
 		if p == nil {
 			continue
 		}
-		if _, err := b.WriteString(p.pt.PrecisionString(bp.Precision())); err != nil {
+		if _, err := b.WriteString(p.Pt.PrecisionString(bp.Precision())); err != nil {
 			return err
 		}
 

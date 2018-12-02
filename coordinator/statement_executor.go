@@ -225,7 +225,7 @@ func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx *query
 func (e *StatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.AlterRetentionPolicyStatement) error {
 	databases, err := e.EtcdService.GetLatestDatabaseInfo()
 	if databases != nil && err == nil {
-		rps := databases.database[stmt.Database]
+		rps := databases.Database[stmt.Database]
 		if rps == nil {
 			return influxdb.ErrRetentionPolicyNotFound(stmt.Database)
 		}
@@ -238,17 +238,17 @@ func (e *StatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.
 		}
 		if (stmt.Duration != nil && *stmt.Duration > 0 &&
 			((stmt.ShardGroupDuration != nil && *stmt.Duration < *stmt.ShardGroupDuration) ||
-				(stmt.ShardGroupDuration == nil && *stmt.Duration < rp.shardGroupDuration))) ||
-			(stmt.Duration == nil && rp.duration > 0 &&
-				stmt.ShardGroupDuration != nil && rp.duration < *stmt.ShardGroupDuration) {
+				(stmt.ShardGroupDuration == nil && *stmt.Duration < rp.ShardGroupDuration))) ||
+			(stmt.Duration == nil && rp.Duration > 0 &&
+				stmt.ShardGroupDuration != nil && rp.Duration < *stmt.ShardGroupDuration) {
 			return meta.ErrIncompatibleDurations
 		}
-		rp.duration = *stmt.Duration
-		rp.needUpdate = true
-		rp.replica = *stmt.Replication
-		rp.shardGroupDuration = *stmt.ShardGroupDuration
+		rp.Duration = *stmt.Duration
+		rp.NeedUpdate = true
+		rp.Replica = *stmt.Replication
+		rp.ShardGroupDuration = *stmt.ShardGroupDuration
 		rps[stmt.Name] = rp
-		databases.database[stmt.Database] = rps
+		databases.Database[stmt.Database] = rps
 		go e.EtcdService.PutDatabaseInfo(databases)
 		return nil
 	}

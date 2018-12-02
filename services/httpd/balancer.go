@@ -7,6 +7,7 @@ import (
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/services/httpd/consistent"
+	"github.com/influxdata/influxdb/services/meta"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"io/ioutil"
@@ -14,8 +15,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
-	"sync"
 )
 
 const (
@@ -23,50 +24,80 @@ const (
 )
 
 type Balance interface {
-	SetMeasurementMapIndex(remote map[string][]string, local map[string][]string)
+	SetMeasurementMapIndex(measurement map[string]interface{}, otherMeasurement map[string]uint64, classIpMap map[uint64][]string)
+	SetConsistent(consistent *consistent.Consistent)
+	SetMasterNode(node *consistent.Node)
 	queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error)
-	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point) ([]models.Point, error)
+	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string, rp string, user meta.User) ([]models.Point, error)
+	GetNewPointChan() chan *NewMeasurementPoint
+	// 数据库连接池
+	GetClient(ip string, agent string) (client.Client, error)
+	GetClientByClassId(agent string, classId uint64) (client.Client, error)
+	ForwardPoint(c client.Client, points []models.Point) error
+}
+
+type NewMeasurementPoint struct {
+	Points []models.Point
+	DB     string
+	Rp     string
+	User   meta.User
 }
 
 type HttpBalance struct {
-	// other cluster's key:MeasurementName value: ip Array
-	measurements map[string][]string
-	// local cluster's measurements
-	localMeasurement map[string][]string
-	rw               sync.RWMutex
-	clients          map[string]*client.Client
-	clientConfig     client.HTTPConfig
-	Logger           *zap.Logger
-	transport        http.Transport
+	// local class's measurements
+	measurement map[string]interface{}
+	// other class's measurement
+	otherMeasurement map[string]uint64
+	// if there is point transfer to class, will need ip
+	classIpMap map[uint64][]string
+	// local cluster's master node
+	masterNode   *consistent.Node
+	clients      map[string]client.Client
+	clientConfig client.HTTPConfig
+	Logger       *zap.Logger
+	transport    http.Transport
 	// Consistent Hash
 	ConsistentHash *consistent.Consistent
-	rwc            sync.RWMutex
+
+	newPointChan chan *NewMeasurementPoint
 }
 
 func NewBalance() *HttpBalance {
 	return &HttpBalance{
-		Logger:           zap.NewNop(),
-		measurements:     make(map[string][]string, 0),
-		localMeasurement: make(map[string][]string, 0),
+		Logger: zap.NewNop(),
 		clientConfig: client.HTTPConfig{
 			Timeout:            timeout,
 			InsecureSkipVerify: false,
 		},
-		clients: make(map[string]*client.Client, 0),
+		clients:      make(map[string]client.Client, 0),
+		newPointChan: make(chan *NewMeasurementPoint),
 	}
 }
 
-func (qb *HttpBalance) SetMeasurementMapIndex(remote map[string][]string, local map[string][]string) {
-	qb.rw.Lock()
-	defer qb.rw.Unlock()
-	qb.localMeasurement = local
-	qb.measurements = remote
+func (qb *HttpBalance) GetNewPointChan() chan *NewMeasurementPoint {
+	return qb.newPointChan
+}
+
+func (qb *HttpBalance) SetMeasurementMapIndex(measurement map[string]interface{}, otherMeasurement map[string]uint64, classIpMap map[uint64][]string) {
+	if qb.measurement == nil {
+		qb.measurement = measurement
+	}
+	if qb.otherMeasurement == nil {
+		qb.otherMeasurement = otherMeasurement
+	}
+	if qb.classIpMap == nil {
+		qb.classIpMap = classIpMap
+	}
 }
 
 func (qb *HttpBalance) SetConsistent(ch *consistent.Consistent) {
-	qb.rwc.Lock()
-	defer qb.rwc.Unlock()
-	qb.ConsistentHash = ch
+	if ch != qb.ConsistentHash {
+		qb.ConsistentHash = ch
+	}
+}
+
+func (qb *HttpBalance) SetMasterNode(node *consistent.Node) {
+	qb.masterNode = node
 }
 
 // return true, the request will be forward, return false, the request will be not forward
@@ -75,9 +106,7 @@ func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Re
 	if err != nil {
 		return false, err
 	}
-	qb.rw.RLock()
-	defer qb.rw.RUnlock()
-	if qb.localMeasurement[key] != nil {
+	if qb.measurement[key] != nil {
 		return false, nil
 	}
 	go qb.forwardRequest(key, w, r)
@@ -85,16 +114,16 @@ func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Re
 }
 func (qb *HttpBalance) forwardRequest(measurement string, response *http.ResponseWriter, r *http.Request) {
 	var err error
-	qb.rw.RLock()
-	defer qb.rw.RUnlock()
-	ips := qb.measurements[measurement]
+	ips := qb.classIpMap[qb.otherMeasurement[measurement]]
 	w := *response
 	if ips == nil || len(ips) == 0 {
 		qb.Logger.Error("Balance error !!! Measurement does not exist in any node " +
 			"in the cluster, the name of measurement is " + measurement)
 		w.WriteHeader(404)
-		w.Write([]byte("Measurement don't exist, Please try again later"))
-		w.Write([]byte("\n"))
+		_, err = w.Write([]byte("Measurement don't exist, Please try again later \n"))
+		if err != nil {
+			qb.Logger.Error("Forward Request failed, error message is" + err.Error())
+		}
 		return
 	}
 	var index int
@@ -115,43 +144,159 @@ func (qb *HttpBalance) forwardRequest(measurement string, response *http.Respons
 		qb.Logger.Error("read body error\n", zapcore.Field{Interface: err})
 		return
 	}
-	w.Write(p)
+	var retryTime = -1
+RetryWriteResponse:
+	retryTime++
+	_, err = w.Write(p)
+	if retryTime < 3 {
+		qb.Logger.Error("!!!! Query Balance process response of the forward request error, will try 3 times")
+		goto RetryWriteResponse
+	}
 }
 
 // 如果是client则写入本地，不是则负载均衡
-func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point) ([]models.Point, error) {
-
+func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string,
+	rp string, user meta.User) ([]models.Point, error) {
 	if userAgent := r.Header.Get("User-Agent"); "InfluxDBClient" == userAgent {
 		return points, nil
 	}
-	pointsWriteToContainLocalCluster := make([]models.Point, len(points))
-	// otherClusterPoints contain new measurement and measurement belonging to other clusters
-	otherClusterPoints := make(map[string][]models.Point)
+	localClassPoint := make([]models.Point, len(points))
+	// otherClassPoint need forward other class to be process
+	otherClassPoint := make(map[uint64][]models.Point)
+	newMeasurementPoint := make([]models.Point, 0)
 	for _, point := range points {
 		name := string(point.Name())
-		if ips := qb.localMeasurement[name]; ips == nil {
-			points = otherClusterPoints[name]
+		if qb.measurement[name] == nil {
+			classId := qb.otherMeasurement[name]
+			// todo: check map value uint64
+			if &classId == nil {
+				newMeasurementPoint = append(newMeasurementPoint, point)
+				continue
+			}
+			points = otherClassPoint[classId]
 			if points == nil {
 				points = make([]models.Point, 5)
 				points = append(points, point)
 			} else {
 				points = append(points, point)
 			}
-			otherClusterPoints[name] = points
+			otherClassPoint[classId] = points
 			continue
 		}
-		pointsWriteToContainLocalCluster = append(pointsWriteToContainLocalCluster, point)
+		localClassPoint = append(localClassPoint, point)
 	}
-	// process otherClusterPoints
-	go func(otherClusterPoints map[string][]models.Point) {
+	// process otherClassPoint
+	go func(otherClassPoint map[uint64][]models.Point) {
+		processFailedKeys := make([]string, 0)
+		retryTime := -1
+	RetryForward:
+		retryTime++
+		for classId, otherClassPoints := range otherClassPoint {
+			otherClassClient, err := qb.GetClientByClassId("InfluxForwardClient", classId)
+			err = qb.ForwardPoint(*otherClassClient, otherClassPoints)
+			if err != nil {
+				qb.Logger.Error("Failure to retrieve client for forwarding write request, will try again")
+			}
+		}
+		if retryTime < 3 && len(processFailedKeys) != 0 {
+			goto RetryForward
+		}
+	}(otherClassPoint)
+	// process new measurement
+	go func(newMeasurementPoint []models.Point) {
+		qb.newPointChan <- &NewMeasurementPoint{Points: newMeasurementPoint, DB: db, Rp: rp, User: user}
+	}(newMeasurementPoint)
+	// process point belong local class
+	pointWriteOtherCluster := make(map[string][]models.Point)
+	localNodePoint := make([]models.Point, 0)
+	for _, localPoint := range localClassPoint {
+		node := qb.ConsistentHash.Get(string(localPoint.Key()))
+		if node.Id == qb.masterNode.Id {
+			localNodePoint = append(localNodePoint, localPoint)
+			continue
+		}
+		if tempPoints := pointWriteOtherCluster[node.Ip]; tempPoints == nil {
+			pointWriteOtherCluster[node.Ip] = []models.Point{localPoint}
+		} else {
+			pointWriteOtherCluster[node.Ip] = append(tempPoints, localPoint)
+		}
+	}
+	// process point belong local class, but belong other cluster
+	go func() {
+		processFailedKeys := make([]string, 0)
+		retryTime := -1
+	RetryForward:
+		retryTime++
+		for ip, value := range pointWriteOtherCluster {
+			httpClient, forwardError := qb.GetClient(ip, "")
+			forwardError = qb.ForwardPoint(*httpClient, value)
+			if forwardError != nil {
+				processFailedKeys = append(processFailedKeys, ip)
+			}
+		}
+		if retryTime < 3 && len(processFailedKeys) != 0 {
+			goto RetryForward
+		}
+	}()
+	// process belong local cluster
+	return localNodePoint, nil
+}
 
-	}(otherClusterPoints)
-	// 1.一致性hash看是否能get到本集群master，如果可以，过，否则，create
-	// consistent hash algorithm create new Series
+func (qb *HttpBalance) GetClient(ip string, agent string) (*client.Client, error) {
+	var err error
+	httpClient := qb.clients[ip]
+	if httpClient == nil {
+		var httpConfig = qb.clientConfig
+		httpConfig.Addr = ip
+		httpConfig.UserAgent = agent
+		httpClient, err = client.NewHTTPClient(httpConfig)
+		if err != nil {
+			qb.Logger.Error("Initial http client error")
+			return nil, err
+		}
+	}
+	return &httpClient, nil
+}
 
-	//
+func (qb *HttpBalance) GetClientByClassId(agent string, classId uint64) (*client.Client, error) {
+	var err error
+RetryGetClient:
+	ips := qb.classIpMap[classId]
+	httpClient := qb.clients[ips[0]]
+	if httpClient == nil {
+		var httpConfig = qb.clientConfig
+		httpConfig.Addr = ips[0]
+		httpConfig.UserAgent = agent
+		httpClient, err = client.NewHTTPClient(httpConfig)
+		if err != nil {
+			qb.Logger.Error("Initial http client error, class id " + strconv.FormatUint(classId, 10) +
+				"ip is" + ips[0])
+			qb.classIpMap[classId] = append(ips[:1], ips[1:]...)
+			if len(ips) != 1 {
+				goto RetryGetClient
+			}
+			qb.Logger.Error("Get http client for class id" + strconv.FormatUint(classId, 10) + "failed")
+			return nil, err
+		}
+	}
+	return &httpClient, nil
+}
 
-	return pointsWriteToContainLocalCluster, nil
+func (qb *HttpBalance) ForwardPoint(c client.Client, points []models.Point) error {
+	if c == nil {
+		return errors.New("Client is nil ")
+	}
+	bp, err := client.NewBatchPoints(client.BatchPointsConfig{})
+	if err != nil {
+		qb.Logger.Error("Unexpected error, new batch point error")
+		return err
+	}
+	for _, pointForward := range points {
+		bp.AddPoint(&client.Point{
+			Pt: pointForward,
+		})
+	}
+	return c.Write(bp)
 }
 
 var (
