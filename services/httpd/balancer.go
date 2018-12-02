@@ -31,8 +31,8 @@ type Balance interface {
 	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string, rp string, user meta.User) ([]models.Point, error)
 	GetNewPointChan() chan *NewMeasurementPoint
 	// 数据库连接池
-	GetClient(ip string, agent string) (client.Client, error)
-	GetClientByClassId(agent string, classId uint64) (client.Client, error)
+	GetClient(ip string, agent string) (*client.Client, error)
+	GetClientByClassId(agent string, classId uint64) (*client.Client, error)
 	ForwardPoint(c client.Client, points []models.Point) error
 }
 

@@ -130,7 +130,8 @@ func (s *Service) processNewMeasurement() {
 				}
 				return nil
 			}
-			httpClient, err := s.httpd.Handler.Balancing.GetClient(node.Ip, "")
+			httpClientP, err := s.httpd.Handler.Balancing.GetClient(node.Ip, "")
+			var httpClient = *httpClientP
 			// cluster's master node crash
 			if err = s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point}); err != nil {
 				s.Logger.Error(err.Error())
@@ -141,7 +142,8 @@ func (s *Service) processNewMeasurement() {
 			return nil
 		}
 		if classId := s.otherMeasurement[string(point.Name())]; &classId != nil {
-			httpClient, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient", classId)
+			httpClientP, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient", classId)
+			var httpClient = *httpClientP
 			if err = s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point}); err != nil {
 				s.Logger.Error(err.Error())
 			}
