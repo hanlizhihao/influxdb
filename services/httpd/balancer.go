@@ -3,11 +3,14 @@ package httpd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/httpd/consistent"
 	"github.com/influxdata/influxdb/services/meta"
+	"github.com/influxdata/influxql"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"io/ioutil"
@@ -17,6 +20,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 const (
@@ -28,12 +33,14 @@ type Balance interface {
 	SetConsistent(consistent *consistent.Consistent)
 	SetMasterNode(node *consistent.Node)
 	queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error)
+	distributeQuery(r *http.Request, resultChan chan *query.Result, finished chan interface{}) bool
 	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string, rp string, user meta.User) ([]models.Point, error)
 	GetNewPointChan() chan *NewMeasurementPoint
 	// 数据库连接池
 	GetClient(ip string, agent string) (*client.Client, error)
 	GetClientByClassId(agent string, classId uint64) (*client.Client, error)
 	ForwardPoint(c client.Client, points []models.Point) error
+	SetMetaData(me *meta.Client)
 }
 
 type NewMeasurementPoint struct {
@@ -44,6 +51,9 @@ type NewMeasurementPoint struct {
 }
 
 type HttpBalance struct {
+	MetaClient interface {
+		Data() meta.Data
+	}
 	// local class's measurements
 	measurement map[string]interface{}
 	// other class's measurement
@@ -74,6 +84,10 @@ func NewBalance() *HttpBalance {
 	}
 }
 
+func (qb *HttpBalance) SetMetaData(me *meta.Client) {
+	qb.MetaClient = me
+}
+
 func (qb *HttpBalance) GetNewPointChan() chan *NewMeasurementPoint {
 	return qb.newPointChan
 }
@@ -100,8 +114,74 @@ func (qb *HttpBalance) SetMasterNode(node *consistent.Node) {
 	qb.masterNode = node
 }
 
+func (qb *HttpBalance) queryBooster(q *influxql.Query, resultChan chan *query.Result, finished chan interface{}) {
+
+}
+
+func (qb *HttpBalance) distributeQuery(r *http.Request, resultChan chan *query.Result, finished chan interface{}) bool {
+	// If there is not distribute in http header, execute distribute query
+	if d := r.Header.Get("distribute"); &d == nil {
+		go func() {
+			p := context.Background()
+			finishedCount := int32(0)
+			count := 0
+			tc, cancel := context.WithTimeout(p, time.Second*2)
+			for _, node := range qb.ConsistentHash.Nodes {
+				if node.Id != qb.masterNode.Id {
+					count++
+					go qb.query(&finishedCount, r, resultChan, node.Ip)
+				}
+			}
+			select {
+			case <-tc.Done():
+				finished <- true
+				break
+			default:
+				if finishedCount >= int32(count) {
+					finished <- true
+					break
+				}
+			}
+			cancel()
+		}()
+		return true
+	}
+	return false
+}
+
+func (qb *HttpBalance) query(c *int32, r *http.Request, resultChan chan *query.Result, ip string) {
+	var err error
+	r.URL, err = url.Parse("http://" + ip + "/query?" + r.Form.Encode())
+	r.Header.Add("distribute", "")
+	r.Header.Add("balance", "")
+	resp, err := qb.transport.RoundTrip(r)
+	defer resp.Body.Close()
+	if err != nil {
+		qb.Logger.Error("Distribute query for ip failed, error message is" + err.Error())
+		return
+	}
+	var response = Response{}
+	respByte, err := ioutil.ReadAll(resp.Body)
+	err = response.UnmarshalJSON(respByte)
+	if err != nil || resp.StatusCode != http.StatusOK || response.Error() == nil {
+		qb.Logger.Error("Execute distributed query error, host ip:" + ip + "JSON decode error message:" + err.Error() +
+			"response error message:" + response.Error().Error())
+		return
+	}
+	for _, result := range response.Results {
+		resultChan <- result
+	}
+	atomic.AddInt32(c, 1)
+}
+
 // return true, the request will be forward, return false, the request will be not forward
 func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error) {
+	if agent := r.UserAgent(); agent == "InfluxDBClient" {
+		return false, nil
+	}
+	if headerBalance := r.Header.Get("balance"); &headerBalance != nil {
+		return false, nil
+	}
 	key, err := GetMeasurementFromInfluxQL(q)
 	if err != nil {
 		return false, err
@@ -132,8 +212,8 @@ func (qb *HttpBalance) forwardRequest(measurement string, response *http.Respons
 	} else {
 		index = rand.Intn(len(ips) - 1)
 	}
-	qb.clientConfig.Addr = "http://" + ips[index]
-	r.URL, err = url.Parse(qb.clientConfig.Addr + "/query?" + r.Form.Encode())
+	r.URL, err = url.Parse("http://" + ips[index] + "/query?" + r.Form.Encode())
+	r.Header.Add("balance", "")
 	resp, err := qb.transport.RoundTrip(r)
 	if err != nil {
 		qb.Logger.Error("Balance error !!! ")

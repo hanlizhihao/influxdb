@@ -35,6 +35,10 @@ tsdb-continuous-queries          [{name:, series. clusterId:}]
 tsdb-classes-info                 [{classId, limit, clusterIds:[1,2,3]}]  1有无该节点，2有该节点，遍历数组，尝试将clusterId加入
 tsdb-class-id                     {clusters:[{id,masterNode:{id,host,weight}}], measurements: [name]}
 
+注意：etcd key 要考虑租约影响，etcd server在client租约失效后，会删除client创建的所有key
+cluster's master node can change cluster info, class[0] is master of cluster, cluster master node change class info
+every cluster's master node watch class's cluster crash event, other node ignore the event
+
 node->cluster->class  节点组成cluster，cluster组成class，每个class将负责多个表的全部数据
 1.快速判断condition是否命中外部Series
 tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
@@ -48,18 +52,18 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
     负载均衡器识别特定请求头后，将不做分析，直接写入本地硬盘存储。
     (3)对于分发写入请求的节点，等待所有被分发写请求完成以后，删除内存数据，写入失败的，写入本地磁盘，等待重试，
     两次以上写入失败的写入磁盘，注意，写请求，如果不负载均衡的情况下，立即响应写入完成，如果负载均衡，等待转发后的响应结果
-    
+读：
+    (1)如果agent为InfluxDbClient或者请求头包含balance，不进行负载均衡，直接进行分布式查询，负载均衡的请求agent为InfluxDBClient
+    (2)分布式查询首先判断是否请求头包含distribute，若不包含，进行分布式查询，请求头带distribute；若包含distribute，跳过分布式查询，直接判断是否进行local booster查询
 2.1分布式索引是指，在小组内均衡索引数据，使用每个节点的一定内存来存储索引，通过简单的Http接口小组互相访问索引，以解决内存占用过大，保存在磁盘上响应速度较慢的问题
 2.2分布式索引的均衡可以通过一致性Hash算法来解决，整体的实现方式类似memached
 3.1核心读合并结果集的实现是全组转发，Single Cluster Booster 直接基于time进行分配，将有效加速BigSql查询，提高数倍磁盘IO性能
 ```
 ## 隐藏问题
-* master 节点挂掉，暂时没有选举功能
 * DML没有集群化
 * metaData如何保存在磁盘上的
-* 先创建RecruitCluster，在节点数量大于2后，创建worker，在转变可用集群以后，加入class
-* 对于新的表名，需要向class注册
 * classIpMap，当ip数组数量小于等于1，重新build，使用map索引时，出现失效，则删除数组元素 - 待验证
 * 属于本地class，但series不属于本地的数据处理失败，暂时未作处理，只是重试3次
 * 异步EtcdSerivce写入本地失败，暂时未处理
-*
+* 连接池设计
+* 单个class挂掉，暂不处理

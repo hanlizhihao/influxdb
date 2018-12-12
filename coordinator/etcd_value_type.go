@@ -14,9 +14,7 @@ type (
 		// consistent hash weight
 		Weight int `json:"weight"`
 	}
-	CommonNodes struct {
-		Nodes []Node `json:"nodes"`
-	}
+	CommonNodes    []Node
 	RecruitCluster struct {
 		ClusterId uint64 `json:"cluster_id"`
 		Limit     int    `json:"limit"`
@@ -63,6 +61,7 @@ type (
 		DeleteMeasurement []string `json:"delete_measurement"`
 	}
 	// clusters:[{id,masterNode:{id,host,weight}}], measurements: [name]
+
 	ClassDetail struct {
 		Clusters     []WorkClusterInfo `json:"clusters"`
 		Measurements []string          `json:"measurements"`
