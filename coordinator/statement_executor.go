@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/influxdata/influxdb"
@@ -573,9 +572,6 @@ func (e *StatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPassw
 }
 
 func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *query.ExecutionContext) error {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go e.EtcdService.clusterSelect(&wg, stmt, ctx)
 	cur, err := e.createIterators(ctx, stmt, ctx.ExecutionOptions)
 	if err != nil {
 		return err
@@ -657,8 +653,6 @@ func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatemen
 			Series: make([]*models.Row, 0),
 		})
 	}
-
-	wg.Wait()
 	return nil
 }
 

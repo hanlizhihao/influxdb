@@ -383,9 +383,12 @@ func (s *Server) appendContinuousQueryService(c continuous_querier.Config) {
 
 func (s *Server) appendEtcdService() {
 	// Initialize etcd service
-	s.EtcdService = coordinator.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0])
-	var statement = s.QueryExecutor.StatementExecutor.(*coordinator.StatementExecutor)
+	statement := s.QueryExecutor.StatementExecutor.(*coordinator.StatementExecutor)
+	s.EtcdService = coordinator.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0],
+		&statement.ShardMapper)
 	statement.SetEtcdService(s.EtcdService)
+	shardMapper := statement.ShardMapper.(*coordinator.LocalShardMapper)
+	shardMapper.SetEtcdService(s.EtcdService)
 }
 
 // Err returns an error channel that multiplexes all out of band errors received from all services.

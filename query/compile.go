@@ -1133,6 +1133,7 @@ func (c *compiledStatement) Prepare(shardMapper ShardMapper, sopt SelectOptions)
 		}
 	}
 
+	// 重点关注
 	// Create an iterator creator based on the shards in the cluster.
 	shards, err := shardMapper.MapShards(c.stmt.Sources, timeRange, sopt)
 	if err != nil {

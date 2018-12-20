@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tsdb"
-	"github.com/influxdata/influxql"
 	"go.uber.org/zap"
 	"strconv"
 	"strings"
@@ -87,18 +86,25 @@ type Service struct {
 	ch          *consistent.Consistent
 	classDetail *ClassDetail
 
-	masterNode *consistent.Node
+	masterNode   *consistent.Node
+	clusterNodes *[]Node
+	rpcQuery     *RpcService
+	ip           string
 }
 
-func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config) *Service {
+func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config,
+	mapper *query.ShardMapper) *Service {
+	nodes := make([]Node, 0)
 	s := &Service{
-		Logger:      zap.NewNop(),
-		closed:      true,
-		store:       store,
-		etcdConfig:  etcdConfig,
-		httpConfig:  httpConfig,
-		udpConfig:   udpConfig,
-		classDetail: &ClassDetail{},
+		Logger:       zap.NewNop(),
+		closed:       true,
+		store:        store,
+		etcdConfig:   etcdConfig,
+		httpConfig:   httpConfig,
+		udpConfig:    udpConfig,
+		classDetail:  &ClassDetail{},
+		clusterNodes: &nodes,
+		rpcQuery:     NewRpcService(mapper, &nodes),
 	}
 	return s
 }
@@ -140,12 +146,12 @@ func (s *Service) Open() error {
 		DialKeepAliveTime:    20 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
 	})
-	lease, err := s.cli.Grant(context.Background(), 30)
-	ch, err := s.cli.KeepAlive(context.Background(), lease.ID)
-	if err != nil {
+	if err != nil || s.cli == nil {
 		s.Logger.Error("Get etcd client failed, error message " + err.Error())
 		return err
 	}
+	lease, err := s.cli.Grant(context.Background(), 30)
+	ch, err := s.cli.KeepAlive(context.Background(), lease.ID)
 	s.lease = lease
 	go func() {
 		for resp := range ch {
@@ -163,11 +169,23 @@ func (s *Service) Open() error {
 		return err
 	}
 	err = s.joinClusterOrCreateCluster()
+	if err != nil {
+		return err
+	}
 	go s.watchClusterDatabaseInfo()
 	go s.watchClassesInfo()
 	go s.processNewMeasurement()
 	s.closed = false
 	s.Logger.Info("Opened Service")
+	// cluster query rpc process
+	s.rpcQuery.WithLogger(s.Logger)
+	s.rpcQuery.MetaClient = s.MetaClient
+	ip, err := GetLocalHostIp()
+	if err != nil {
+		return err
+	}
+	s.ip = ip
+	err = s.rpcQuery.Open()
 	return err
 }
 
@@ -267,7 +285,6 @@ func (s *Service) watchClassesInfo() {
 	}
 }
 
-//
 // Every node of cluster may create database and retention policy, So focus on and respond to changes in database
 // information in metadata. So that each node's database and reservation policy data are consistent.
 func (s *Service) watchClusterDatabaseInfo() {
@@ -409,14 +426,11 @@ RetryJoinOriginalCluster:
 		ParseJson(workClusterResp.Kvs[0].Value, &originWorkCluster)
 		if originWorkCluster.Number < originWorkCluster.Limit {
 			originWorkCluster.Number++
-			ip, err := GetLocalHostIp()
-			if err != nil {
-				return err
-			}
 			originWorkCluster.Nodes = append(originWorkCluster.Nodes, Node{
 				Id:      s.MetaClient.Data().NodeID,
-				Host:    ip + s.httpConfig.BindAddress,
-				UdpHost: ip + s.udpConfig.BindAddress,
+				Host:    s.ip + s.httpConfig.BindAddress,
+				UdpHost: s.ip + s.udpConfig.BindAddress,
+				Ip:      s.ip,
 			})
 			cmpWorkCluster := clientv3.Compare(clientv3.Value(originClusterKey), "=", string(workClusterResp.Kvs[0].Value))
 			putWorkCluster := clientv3.OpPut(originClusterKey, ToJson(originWorkCluster))
@@ -427,6 +441,11 @@ RetryJoinOriginalCluster:
 				metaData.ClassID = originWorkCluster.ClassId
 				// if class id is null, it is exception
 				err = s.MetaClient.SetData(&metaData)
+				s.masterNode = &consistent.Node{
+					Id:       originWorkCluster.Master.Id,
+					HostName: originWorkCluster.Master.Host,
+				}
+				s.clusterNodes = &originWorkCluster.Nodes
 			} else {
 				goto RetryJoinOriginalCluster
 			}
@@ -478,13 +497,17 @@ func (s *Service) putWorkNodeKey(nodes []Node) {
 		_, err := s.cli.Put(context.Background(), TSDBWorkNode+strconv.FormatUint(
 			s.MetaClient.Data().ClusterID, 10)+"-node-master"+strconv.FormatUint(
 			nodes[len(nodes)-1].Id, 10), ToJson(nodes[len(nodes)-1]), clientv3.WithLease(s.lease.ID))
-		s.Logger.Error("Create work node failed, error message:" + err.Error())
+		if err != nil {
+			s.Logger.Error("Create work node failed, error message:" + err.Error())
+		}
 		return
 	}
 	_, err := s.cli.Put(context.Background(), TSDBWorkNode+strconv.FormatUint(
 		s.MetaClient.Data().ClusterID, 10)+"-node-"+strconv.FormatUint(
 		nodes[len(nodes)-1].Id, 10), ToJson(nodes[len(nodes)-1]), clientv3.WithLease(s.lease.ID))
-	s.Logger.Error("Create work node failed, error message:" + err.Error())
+	if err != nil {
+		s.Logger.Error("Create work node failed, error message:" + err.Error())
+	}
 }
 
 // Join cluster failed, create new cluster
@@ -533,6 +556,7 @@ RetryCreate:
 	if err != nil {
 		return err
 	}
+	s.updateClusterNodeInfo(workClusterInfo)
 	s.putWorkNodeKey(workClusterInfo.Nodes)
 	go s.watchWorkCluster(latestClusterInfo.ClusterId)
 	// if class is nil, create class
@@ -576,6 +600,15 @@ RetryCreateClass:
 		return err
 	}
 	return nil
+}
+
+func (s *Service) updateClusterNodeInfo(workClusterInfo WorkClusterInfo) {
+	s.clusterNodes = &workClusterInfo.Nodes
+	s.masterNode = &consistent.Node{
+		Id:       workClusterInfo.Master.Id,
+		Ip:       s.ip,
+		HostName: workClusterInfo.Master.Host,
+	}
 }
 
 func (s *Service) changeWorkCluster(t mvccpb.Event_EventType, node Node) {
@@ -911,6 +944,7 @@ RegisterNode:
 		_, err = s.cli.Put(context.Background(), TSDBCommonNodesKey, ToJson(nodes))
 		_, err = s.cli.Put(context.Background(), TSDBCommonNodeIdKey+strconv.FormatUint(nodeId, 10),
 			ToJson(nodes[len(nodes)-1]), clientv3.WithLease(s.lease.ID))
+		return err
 	}
 	var nodes CommonNodes
 	ParseJson(commonNodesResp.Kvs[0].Value, &nodes)
@@ -983,6 +1017,7 @@ RetryJoinTarget:
 			return err
 		}
 		workClusterInfo.Nodes = append(workClusterInfo.Nodes, Node{
+			Id:      s.MetaClient.Data().NodeID,
 			Host:    ip + s.httpConfig.BindAddress,
 			UdpHost: ip + s.udpConfig.BindAddress,
 		})
@@ -992,6 +1027,7 @@ RetryJoinTarget:
 			// retry
 			goto RetryJoinTarget
 		}
+		s.updateClusterNodeInfo(workClusterInfo)
 		joinSuccess = true
 		break
 	}
@@ -1105,8 +1141,4 @@ func (s *Service) buildConsistentHash() {
 	Once.Do(func() {
 		s.httpd.Handler.Balancing.SetConsistent(s.ch)
 	})
-}
-
-func (s *Service) clusterSelect(wg *sync.WaitGroup, stmt *influxql.SelectStatement, ctx *query.ExecutionContext) {
-
 }

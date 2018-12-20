@@ -237,10 +237,6 @@ func (e *Executor) ExecuteQuery(query *influxql.Query, opt ExecutionOptions, clo
 	return results
 }
 
-func (e *Executor) ExecuteQueryByChan(query *influxql.Query, opt ExecutionOptions, closing chan struct{}, ch chan *Result) {
-	go e.executeQuery(query, opt, closing, ch)
-}
-
 func (e *Executor) executeQuery(query *influxql.Query, opt ExecutionOptions, closing <-chan struct{}, results chan *Result) {
 	defer close(results)
 	defer e.recover(query, results)
@@ -262,6 +258,7 @@ func (e *Executor) executeQuery(query *influxql.Query, opt ExecutionOptions, clo
 		return
 	}
 	defer detach()
+	// Add
 
 	// Setup the execution context that will be used when executing statements.
 	ctx.Results = results

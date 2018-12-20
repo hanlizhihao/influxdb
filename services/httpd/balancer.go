@@ -3,14 +3,12 @@ package httpd
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"github.com/influxdata/influxdb/client/v2"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/httpd/consistent"
 	"github.com/influxdata/influxdb/services/meta"
-	"github.com/influxdata/influxql"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"io/ioutil"
@@ -21,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
 )
 
 const (
@@ -33,7 +30,6 @@ type Balance interface {
 	SetConsistent(consistent *consistent.Consistent)
 	SetMasterNode(node *consistent.Node)
 	queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error)
-	distributeQuery(r *http.Request, resultChan chan *query.Result, finished chan interface{}) bool
 	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string, rp string, user meta.User) ([]models.Point, error)
 	GetNewPointChan() chan *NewMeasurementPoint
 	// 数据库连接池
@@ -112,41 +108,6 @@ func (qb *HttpBalance) SetConsistent(ch *consistent.Consistent) {
 
 func (qb *HttpBalance) SetMasterNode(node *consistent.Node) {
 	qb.masterNode = node
-}
-
-func (qb *HttpBalance) queryBooster(q *influxql.Query, resultChan chan *query.Result, finished chan interface{}) {
-
-}
-
-func (qb *HttpBalance) distributeQuery(r *http.Request, resultChan chan *query.Result, finished chan interface{}) bool {
-	// If there is not distribute in http header, execute distribute query
-	if d := r.Header.Get("distribute"); &d == nil {
-		go func() {
-			p := context.Background()
-			finishedCount := int32(0)
-			count := 0
-			tc, cancel := context.WithTimeout(p, time.Second*2)
-			for _, node := range qb.ConsistentHash.Nodes {
-				if node.Id != qb.masterNode.Id {
-					count++
-					go qb.query(&finishedCount, r, resultChan, node.Ip)
-				}
-			}
-			select {
-			case <-tc.Done():
-				finished <- true
-				break
-			default:
-				if finishedCount >= int32(count) {
-					finished <- true
-					break
-				}
-			}
-			cancel()
-		}()
-		return true
-	}
-	return false
 }
 
 func (qb *HttpBalance) query(c *int32, r *http.Request, resultChan chan *query.Result, ip string) {
@@ -234,7 +195,6 @@ RetryWriteResponse:
 	}
 }
 
-// 如果是client则写入本地，不是则负载均衡
 func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string,
 	rp string, user meta.User) ([]models.Point, error) {
 	if userAgent := r.Header.Get("User-Agent"); "InfluxDBClient" == userAgent {

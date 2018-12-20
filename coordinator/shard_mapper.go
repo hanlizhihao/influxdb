@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"io"
+	"net/rpc"
 	"time"
 
 	"github.com/influxdata/influxdb/query"
@@ -27,12 +28,14 @@ type LocalShardMapper struct {
 	TSDBStore interface {
 		ShardGroup(ids []uint64) tsdb.ShardGroup
 	}
+	service *Service
 }
 
 // MapShards maps the sources to the appropriate shards into an IteratorCreator.
 func (e *LocalShardMapper) MapShards(sources influxql.Sources, t influxql.TimeRange, opt query.SelectOptions) (query.ShardGroup, error) {
 	a := &LocalShardMapping{
 		ShardMap: make(map[Source]tsdb.ShardGroup),
+		s:        e.service,
 	}
 
 	tmin := time.Unix(0, t.MinTimeNano())
@@ -83,6 +86,10 @@ func (e *LocalShardMapper) mapShards(a *LocalShardMapping, sources influxql.Sour
 	return nil
 }
 
+func (e *LocalShardMapper) SetEtcdService(s *Service) {
+	e.service = s
+}
+
 // ShardMapper maps data sources to a list of shard information.
 type LocalShardMapping struct {
 	ShardMap map[Source]tsdb.ShardGroup
@@ -96,6 +103,8 @@ type LocalShardMapping struct {
 	// Any attempt to use a time after this one will automatically result in using
 	// this time instead.
 	MaxTime time.Time
+
+	s *Service
 }
 
 func (a *LocalShardMapping) FieldDimensions(m *influxql.Measurement) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
@@ -164,6 +173,31 @@ func (a *LocalShardMapping) MapType(m *influxql.Measurement, field string) influ
 }
 
 func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
+	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
+	count := 0
+	resultCh := make(chan query.Iterator)
+	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
+	defer cancel()
+	for _, node := range a.s.ch.Nodes {
+		if node.Id != a.s.masterNode.Id {
+			count++
+			client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
+			if err != nil {
+				return nil, err
+			}
+			go func() {
+				var it *query.Iterator
+				err = client.Call("RpcService.BoosterQuery", RpcParam{
+					source:    *m,
+					timeRange: timeRange,
+					opt:       opt,
+				}, it)
+				if err != nil {
+					resultCh <- *it
+				}
+			}()
+		}
+	}
 	source := Source{
 		Database:        m.Database,
 		RetentionPolicy: m.RetentionPolicy,
@@ -205,7 +239,24 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 
 		return query.Iterators(inputs).Merge(opt)
 	}
-	return sg.CreateIterator(ctx, m, opt)
+	itrs := make([]query.Iterator, count)
+	localIterator, err := sg.CreateIterator(ctx, m, opt)
+	if err != nil {
+		return localIterator, err
+	}
+	itrs = append(itrs, localIterator)
+	for i := range resultCh {
+		count--
+		itrs = append(itrs, i)
+		if count == 0 {
+			cancel()
+			break
+		}
+	}
+	select {
+	case <-ctxTimeOut.Done():
+		return query.Iterators(itrs).Merge(opt)
+	}
 }
 
 func (a *LocalShardMapping) IteratorCost(m *influxql.Measurement, opt query.IteratorOptions) (query.IteratorCost, error) {

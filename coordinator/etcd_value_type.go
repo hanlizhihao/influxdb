@@ -12,7 +12,8 @@ type (
 		Host    string `json:"host"`
 		UdpHost string `json:"udpHost"`
 		// consistent hash weight
-		Weight int `json:"weight"`
+		Weight int    `json:"weight"`
+		Ip     string `json:"ip"`
 	}
 	CommonNodes    []Node
 	RecruitCluster struct {

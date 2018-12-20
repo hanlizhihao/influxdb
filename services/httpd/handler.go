@@ -374,19 +374,12 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	// Retrieve the node id the query should be executed on.
 	nodeID, _ := strconv.ParseUint(r.FormValue("node_id"), 10, 64)
 
-	results := make(chan *query.Result)
-	var distributeQueryFinished chan interface{}
-	isDistributeQuery := false
 	var qr io.Reader
 	// Attempt to read the form value from the "q" form value.
 	if qp := strings.TrimSpace(r.FormValue("q")); qp != "" {
 		// queryBalance http request, forward the request which need the other node's data
 		if ok, _ := h.Balancing.queryBalance(&w, qp, r); ok {
 			return
-		} else {
-			distributeQueryFinished = make(chan interface{})
-			defer close(distributeQueryFinished)
-			isDistributeQuery = h.Balancing.distributeQuery(r, results, distributeQueryFinished)
 		}
 		qr = strings.NewReader(qp)
 	} else if r.MultipartForm != nil && r.MultipartForm.File != nil {
@@ -451,11 +444,6 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	if err != nil {
 		h.httpError(rw, "error parsing query: "+err.Error(), http.StatusBadRequest)
 		return
-	}
-	// local query booster
-	if !isDistributeQuery {
-		distributeQueryFinished = make(chan interface{})
-
 	}
 
 	// Check authorization.
@@ -532,16 +520,7 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	}
 
 	// Execute query.
-	//results := h.QueryExecutor.ExecuteQuery(q, opts, closing)
-
-	h.QueryExecutor.ExecuteQueryByChan(q, opts, closing, results)
-	// Process results after distribute query
-	if distributeQueryFinished != nil {
-		select {
-		case <-distributeQueryFinished:
-			break
-		}
-	}
+	results := h.QueryExecutor.ExecuteQuery(q, opts, closing)
 
 	// If we are running in async mode, open a goroutine to drain the results
 	// and return with a StatusNoContent.
