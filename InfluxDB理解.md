@@ -102,4 +102,4 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 属于本地class，但series不属于本地的数据处理失败，暂时未作处理，只是重试3次
 * 异步EtcdSerivce写入本地失败，暂时未处理
 * 连接池设计
-* 分布式查询子查询、group by、聚合函数
+* Continues Query 全局生效

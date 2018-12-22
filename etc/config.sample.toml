@@ -128,6 +128,9 @@
 ###
 
 [coordinator]
+  # The cluster enabled default is true
+  # cluster = true
+
   # The default time a write request will wait until a "timeout" error is returned to the caller.
   # write-timeout = "10s"
 

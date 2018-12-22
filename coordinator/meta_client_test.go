@@ -7,7 +7,7 @@ import (
 	"github.com/influxdata/influxql"
 )
 
-// MetaClient is a mockable implementation of cluster.MetaClient.
+// MetaClient is a mockable implementation of Cluster.MetaClient.
 type MetaClient struct {
 	CreateContinuousQueryFn             func(database, name, query string) error
 	CreateDatabaseFn                    func(name string) (*meta.DatabaseInfo, error)

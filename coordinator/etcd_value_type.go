@@ -1,6 +1,10 @@
 package coordinator
 
-import "time"
+import (
+	"github.com/influxdata/influxdb/services/meta"
+	"github.com/influxdata/influxql"
+	"time"
+)
 
 type (
 	RecruitClusters struct {
@@ -40,7 +44,9 @@ type (
 	Databases struct {
 		Database map[string]map[string]Rp `json:"database"`
 	}
-	Rp struct {
+	// key: database name, value Cq Array
+	Cqs map[string][]meta.ContinuousQueryInfo
+	Rp  struct {
 		Name               string        `json:"name"`
 		Replica            int           `json:"replica"`
 		Duration           time.Duration `json:"duration"`
@@ -66,5 +72,12 @@ type (
 	ClassDetail struct {
 		Clusters     []WorkClusterInfo `json:"clusters"`
 		Measurements []string          `json:"measurements"`
+	}
+	Users map[string]User
+	User  struct {
+		Name       string                        `json:"name"`
+		Password   string                        `json:"password"`
+		Admin      bool                          `json:"admin"`
+		Privileges map[string]influxql.Privilege `json:"privileges"`
 	}
 )

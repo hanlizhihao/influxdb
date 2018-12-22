@@ -1,19 +1,15 @@
 package coordinator
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/models"
-	"github.com/influxdata/influxdb/monitor"
 	"github.com/influxdata/influxdb/pkg/tracing"
 	"github.com/influxdata/influxdb/pkg/tracing/fields"
 	"github.com/influxdata/influxdb/query"
@@ -24,46 +20,14 @@ import (
 
 // ErrDatabaseNameRequired is returned when executing statements that require a database,
 // when a database has not been provided.
-var ErrDatabaseNameRequired = errors.New("database name required")
-
-type pointsWriter interface {
-	WritePointsInto(*IntoWriteRequest) error
-}
 
 // StatementExecutor executes a statement in the query.
-type StatementExecutor struct {
-	MetaClient MetaClient
-
-	// TaskManager holds the StatementExecutor that handles task-related commands.
-	TaskManager query.StatementExecutor
-
-	// TSDB storage for local node.
-	TSDBStore TSDBStore
-
-	// ShardMapper for mapping shards when executing a SELECT statement.
-	ShardMapper query.ShardMapper
-
-	// Holds monitoring data for SHOW STATS and SHOW DIAGNOSTICS.
-	Monitor *monitor.Monitor
-
-	// Used for rewriting points back into system for SELECT INTO statements.
-	PointsWriter interface {
-		WritePointsInto(*IntoWriteRequest) error
-	}
-
-	// Select statement limits
-	MaxSelectPointN   int
-	MaxSelectSeriesN  int
-	MaxSelectBucketsN int
-	EtcdService       *Service
-}
-
-func (e *StatementExecutor) SetEtcdService(service *Service) {
-	e.EtcdService = service
+type ClusterStatementExecutor struct {
+	StatementExecutor
 }
 
 // ExecuteStatement executes the given statement with the given execution context.
-func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx *query.ExecutionContext) error {
+func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx *query.ExecutionContext) error {
 	// Select statements are handled separately so that they can be streamed.
 	if stmt, ok := stmt.(*influxql.SelectStatement); ok {
 		return e.executeSelectStatement(stmt, ctx)
@@ -223,18 +187,37 @@ func (e *StatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx *query
 	})
 }
 
-func (e *StatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.AlterRetentionPolicyStatement) error {
-	rpu := &meta.RetentionPolicyUpdate{
-		Duration:           stmt.Duration,
-		ReplicaN:           stmt.Replication,
-		ShardGroupDuration: stmt.ShardGroupDuration,
+func (e *ClusterStatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.AlterRetentionPolicyStatement) error {
+	e.EtcdService.dbsMu.Lock()
+	defer e.EtcdService.dbsMu.Unlock()
+	rps := e.EtcdService.databases.Database[stmt.Database]
+	if rps == nil {
+		return influxdb.ErrRetentionPolicyNotFound(stmt.Database)
 	}
-
-	// Update the retention policy.
-	return e.MetaClient.UpdateRetentionPolicy(stmt.Database, stmt.Name, rpu, stmt.Default)
+	rp := rps[stmt.Name]
+	if &rp == nil {
+		return influxdb.ErrRetentionPolicyNotFound(stmt.Name)
+	}
+	if stmt.Duration != nil && *stmt.Duration < time.Hour && *stmt.Duration != 0 {
+		return meta.ErrRetentionPolicyDurationTooLow
+	}
+	if (stmt.Duration != nil && *stmt.Duration > 0 &&
+		((stmt.ShardGroupDuration != nil && *stmt.Duration < *stmt.ShardGroupDuration) ||
+			(stmt.ShardGroupDuration == nil && *stmt.Duration < rp.ShardGroupDuration))) ||
+		(stmt.Duration == nil && rp.Duration > 0 &&
+			stmt.ShardGroupDuration != nil && rp.Duration < *stmt.ShardGroupDuration) {
+		return meta.ErrIncompatibleDurations
+	}
+	rp.Duration = *stmt.Duration
+	rp.NeedUpdate = true
+	rp.Replica = *stmt.Replication
+	rp.ShardGroupDuration = *stmt.ShardGroupDuration
+	rps[stmt.Name] = rp
+	e.EtcdService.databases.Database[stmt.Database] = rps
+	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
 }
 
-func (e *StatementExecutor) executeCreateContinuousQueryStatement(q *influxql.CreateContinuousQueryStatement) error {
+func (e *ClusterStatementExecutor) executeCreateContinuousQueryStatement(q *influxql.CreateContinuousQueryStatement) error {
 	// Verify that retention policies exist.
 	var err error
 	verifyRPFn := func(n influxql.Node) {
@@ -260,68 +243,96 @@ func (e *StatementExecutor) executeCreateContinuousQueryStatement(q *influxql.Cr
 		return err
 	}
 
-	return e.MetaClient.CreateContinuousQuery(q.Database, q.Name, q.String())
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBcq)
+	if resp.Count == 0 || err != nil {
+		return errors.New("Get meta data from etcd failed ")
+	}
+	var cqs Cqs
+	ParseJson(resp.Kvs[0].Value, &cqs)
+	dbCqs := cqs[q.Database]
+	if dbCqs == nil {
+		return influxdb.ErrDatabaseNotFound(q.Database)
+	}
+	for _, cq := range dbCqs {
+		if cq.Name == q.Database {
+			return meta.ErrContinuousQueryExists
+		}
+	}
+	dbCqs = append(dbCqs, meta.ContinuousQueryInfo{Name: q.Name, Query: q.String()})
+	return e.EtcdService.PutMetaDataForEtcd(cqs, TSDBcq)
 }
 
-func (e *StatementExecutor) executeCreateDatabaseStatement(stmt *influxql.CreateDatabaseStatement) error {
+func (e *ClusterStatementExecutor) executeCreateDatabaseStatement(stmt *influxql.CreateDatabaseStatement) error {
+	e.EtcdService.dbsMu.Lock()
+	defer e.EtcdService.dbsMu.Unlock()
 	if !meta.ValidName(stmt.Name) {
 		// TODO This should probably be in `(*meta.Data).CreateDatabase`
 		// but can't go there until 1.1 is used everywhere
 		return meta.ErrInvalidName
 	}
-
-	if !stmt.RetentionPolicyCreate {
-		_, err := e.MetaClient.CreateDatabase(stmt.Name)
-		return err
+	if e.EtcdService.databases.Database[stmt.Name] != nil {
+		return errors.New("Database " + stmt.Name + "exist")
 	}
-
-	// If we're doing, for example, CREATE DATABASE "db" WITH DURATION 1d then
-	// the name will not yet be set. We only need to validate non-empty
-	// retention policy names, such as in the statement:
-	// 	CREATE DATABASE "db" WITH DURATION 1d NAME "xyz"
-	if stmt.RetentionPolicyName != "" && !meta.ValidName(stmt.RetentionPolicyName) {
-		return meta.ErrInvalidName
+	if stmt.RetentionPolicyCreate {
+		if stmt.RetentionPolicyName != "" && !meta.ValidName(stmt.RetentionPolicyName) {
+			return meta.ErrInvalidName
+		}
+		rp := make(map[string]Rp, 1)
+		rp[stmt.RetentionPolicyName] = Rp{
+			Name:               stmt.RetentionPolicyName,
+			Duration:           *stmt.RetentionPolicyDuration,
+			Replica:            *stmt.RetentionPolicyReplication,
+			ShardGroupDuration: stmt.RetentionPolicyShardGroupDuration,
+		}
+	} else {
+		e.EtcdService.databases.Database[stmt.Name] = make(map[string]Rp)
 	}
-
-	spec := meta.RetentionPolicySpec{
-		Name:               stmt.RetentionPolicyName,
-		Duration:           stmt.RetentionPolicyDuration,
-		ReplicaN:           stmt.RetentionPolicyReplication,
-		ShardGroupDuration: stmt.RetentionPolicyShardGroupDuration,
-	}
-	_, err := e.MetaClient.CreateDatabaseWithRetentionPolicy(stmt.Name, &spec)
-	return err
+	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
 }
-
-func (e *StatementExecutor) executeCreateRetentionPolicyStatement(stmt *influxql.CreateRetentionPolicyStatement) error {
+func (e *ClusterStatementExecutor) executeCreateRetentionPolicyStatement(stmt *influxql.CreateRetentionPolicyStatement) error {
+	e.EtcdService.dbsMu.Lock()
+	defer e.EtcdService.dbsMu.Unlock()
 	if !meta.ValidName(stmt.Name) {
 		// TODO This should probably be in `(*meta.Data).CreateRetentionPolicy`
 		// but can't go there until 1.1 is used everywhere
 		return meta.ErrInvalidName
 	}
-
-	spec := meta.RetentionPolicySpec{
-		Name:               stmt.Name,
-		Duration:           &stmt.Duration,
-		ReplicaN:           &stmt.Replication,
-		ShardGroupDuration: stmt.ShardGroupDuration,
+	if &stmt.Duration != nil && stmt.Duration < meta.MinRetentionPolicyDuration && stmt.Duration != 0 {
+		return meta.ErrRetentionPolicyDurationTooLow
 	}
-
-	// Create new retention policy.
-	_, err := e.MetaClient.CreateRetentionPolicy(stmt.Database, &spec, stmt.Default)
-	return err
+	rps := e.EtcdService.databases.Database[stmt.Database]
+	if rp := rps[stmt.Name]; &rp != nil {
+		return meta.ErrContinuousQueryExists
+	}
+	rps[stmt.Database] = Rp{
+		Name:               stmt.Name,
+		Duration:           stmt.Duration,
+		ShardGroupDuration: stmt.ShardGroupDuration,
+		Replica:            stmt.Replication,
+		NeedUpdate:         false,
+	}
+	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
 }
 
-func (e *StatementExecutor) executeCreateSubscriptionStatement(q *influxql.CreateSubscriptionStatement) error {
+func (e *ClusterStatementExecutor) executeCreateSubscriptionStatement(q *influxql.CreateSubscriptionStatement) error {
 	return e.MetaClient.CreateSubscription(q.Database, q.RetentionPolicy, q.Name, q.Mode, q.Destinations)
 }
 
-func (e *StatementExecutor) executeCreateUserStatement(q *influxql.CreateUserStatement) error {
-	_, err := e.MetaClient.CreateUser(q.Name, q.Password, q.Admin)
-	return err
+func (e *ClusterStatementExecutor) executeCreateUserStatement(q *influxql.CreateUserStatement) error {
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+	if user := e.EtcdService.latestUsers[q.Name]; &user != nil {
+		return meta.ErrUserExists
+	}
+	e.EtcdService.latestUsers[q.Name] = User{
+		Name:     q.Name,
+		Password: q.Password,
+		Admin:    q.Admin,
+	}
+	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.latestUsers, TSDBUsers)
 }
 
-func (e *StatementExecutor) executeDeleteSeriesStatement(stmt *influxql.DeleteSeriesStatement, database string) error {
+func (e *ClusterStatementExecutor) executeDeleteSeriesStatement(stmt *influxql.DeleteSeriesStatement, database string) error {
 	if dbi := e.MetaClient.Database(database); dbi == nil {
 		return query.ErrDatabaseNotFound(database)
 	}
@@ -333,14 +344,14 @@ func (e *StatementExecutor) executeDeleteSeriesStatement(stmt *influxql.DeleteSe
 	return e.TSDBStore.DeleteSeries(database, stmt.Sources, stmt.Condition)
 }
 
-func (e *StatementExecutor) executeDropContinuousQueryStatement(q *influxql.DropContinuousQueryStatement) error {
+func (e *ClusterStatementExecutor) executeDropContinuousQueryStatement(q *influxql.DropContinuousQueryStatement) error {
 	return e.MetaClient.DropContinuousQuery(q.Database, q.Name)
 }
 
-// executeDropDatabaseStatement drops a database from the cluster.
+// executeDropDatabaseStatement drops a database from the Cluster.
 // It does not return an error if the database was not found on any of
 // the nodes, or in the Meta store.
-func (e *StatementExecutor) executeDropDatabaseStatement(stmt *influxql.DropDatabaseStatement) error {
+func (e *ClusterStatementExecutor) executeDropDatabaseStatement(stmt *influxql.DropDatabaseStatement) error {
 	if e.MetaClient.Database(stmt.Name) == nil {
 		return nil
 	}
@@ -354,7 +365,7 @@ func (e *StatementExecutor) executeDropDatabaseStatement(stmt *influxql.DropData
 	return e.MetaClient.DropDatabase(stmt.Name)
 }
 
-func (e *StatementExecutor) executeDropMeasurementStatement(stmt *influxql.DropMeasurementStatement, database string) error {
+func (e *ClusterStatementExecutor) executeDropMeasurementStatement(stmt *influxql.DropMeasurementStatement, database string) error {
 	if dbi := e.MetaClient.Database(database); dbi == nil {
 		return query.ErrDatabaseNotFound(database)
 	}
@@ -363,7 +374,7 @@ func (e *StatementExecutor) executeDropMeasurementStatement(stmt *influxql.DropM
 	return e.TSDBStore.DeleteMeasurement(database, stmt.Name)
 }
 
-func (e *StatementExecutor) executeDropSeriesStatement(stmt *influxql.DropSeriesStatement, database string) error {
+func (e *ClusterStatementExecutor) executeDropSeriesStatement(stmt *influxql.DropSeriesStatement, database string) error {
 	if dbi := e.MetaClient.Database(database); dbi == nil {
 		return query.ErrDatabaseNotFound(database)
 	}
@@ -377,7 +388,7 @@ func (e *StatementExecutor) executeDropSeriesStatement(stmt *influxql.DropSeries
 	return e.TSDBStore.DeleteSeries(database, stmt.Sources, stmt.Condition)
 }
 
-func (e *StatementExecutor) executeDropShardStatement(stmt *influxql.DropShardStatement) error {
+func (e *ClusterStatementExecutor) executeDropShardStatement(stmt *influxql.DropShardStatement) error {
 	// Locally delete the shard.
 	if err := e.TSDBStore.DeleteShard(stmt.ID); err != nil {
 		return err
@@ -387,7 +398,7 @@ func (e *StatementExecutor) executeDropShardStatement(stmt *influxql.DropShardSt
 	return e.MetaClient.DropShard(stmt.ID)
 }
 
-func (e *StatementExecutor) executeDropRetentionPolicyStatement(stmt *influxql.DropRetentionPolicyStatement) error {
+func (e *ClusterStatementExecutor) executeDropRetentionPolicyStatement(stmt *influxql.DropRetentionPolicyStatement) error {
 	dbi := e.MetaClient.Database(stmt.Database)
 	if dbi == nil {
 		return nil
@@ -405,15 +416,15 @@ func (e *StatementExecutor) executeDropRetentionPolicyStatement(stmt *influxql.D
 	return e.MetaClient.DropRetentionPolicy(stmt.Database, stmt.Name)
 }
 
-func (e *StatementExecutor) executeDropSubscriptionStatement(q *influxql.DropSubscriptionStatement) error {
+func (e *ClusterStatementExecutor) executeDropSubscriptionStatement(q *influxql.DropSubscriptionStatement) error {
 	return e.MetaClient.DropSubscription(q.Database, q.RetentionPolicy, q.Name)
 }
 
-func (e *StatementExecutor) executeDropUserStatement(q *influxql.DropUserStatement) error {
+func (e *ClusterStatementExecutor) executeDropUserStatement(q *influxql.DropUserStatement) error {
 	return e.MetaClient.DropUser(q.Name)
 }
 
-func (e *StatementExecutor) executeExplainStatement(q *influxql.ExplainStatement, ctx *query.ExecutionContext) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeExplainStatement(q *influxql.ExplainStatement, ctx *query.ExecutionContext) (models.Rows, error) {
 	opt := query.SelectOptions{
 		NodeID:      ctx.ExecutionOptions.NodeID,
 		MaxSeriesN:  e.MaxSelectSeriesN,
@@ -444,7 +455,7 @@ func (e *StatementExecutor) executeExplainStatement(q *influxql.ExplainStatement
 	return models.Rows{row}, nil
 }
 
-func (e *StatementExecutor) executeExplainAnalyzeStatement(q *influxql.ExplainStatement, ectx *query.ExecutionContext) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeExplainAnalyzeStatement(q *influxql.ExplainStatement, ectx *query.ExecutionContext) (models.Rows, error) {
 	stmt := q.Statement
 	t, span := tracing.NewTrace("select")
 	ctx := tracing.NewContextWithTrace(ectx, t)
@@ -511,15 +522,15 @@ CLEANUP:
 	return models.Rows{row}, nil
 }
 
-func (e *StatementExecutor) executeGrantStatement(stmt *influxql.GrantStatement) error {
+func (e *ClusterStatementExecutor) executeGrantStatement(stmt *influxql.GrantStatement) error {
 	return e.MetaClient.SetPrivilege(stmt.User, stmt.On, stmt.Privilege)
 }
 
-func (e *StatementExecutor) executeGrantAdminStatement(stmt *influxql.GrantAdminStatement) error {
+func (e *ClusterStatementExecutor) executeGrantAdminStatement(stmt *influxql.GrantAdminStatement) error {
 	return e.MetaClient.SetAdminPrivilege(stmt.User, true)
 }
 
-func (e *StatementExecutor) executeRevokeStatement(stmt *influxql.RevokeStatement) error {
+func (e *ClusterStatementExecutor) executeRevokeStatement(stmt *influxql.RevokeStatement) error {
 	priv := influxql.NoPrivileges
 
 	// Revoking all privileges means there's no need to look at existing user privileges.
@@ -535,15 +546,15 @@ func (e *StatementExecutor) executeRevokeStatement(stmt *influxql.RevokeStatemen
 	return e.MetaClient.SetPrivilege(stmt.User, stmt.On, priv)
 }
 
-func (e *StatementExecutor) executeRevokeAdminStatement(stmt *influxql.RevokeAdminStatement) error {
+func (e *ClusterStatementExecutor) executeRevokeAdminStatement(stmt *influxql.RevokeAdminStatement) error {
 	return e.MetaClient.SetAdminPrivilege(stmt.User, false)
 }
 
-func (e *StatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPasswordUserStatement) error {
+func (e *ClusterStatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPasswordUserStatement) error {
 	return e.MetaClient.UpdateUser(q.Name, q.Password)
 }
 
-func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *query.ExecutionContext) error {
+func (e *ClusterStatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *query.ExecutionContext) error {
 	cur, err := e.createIterators(ctx, stmt, ctx.ExecutionOptions)
 	if err != nil {
 		return err
@@ -629,7 +640,7 @@ func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatemen
 	return nil
 }
 
-func (e *StatementExecutor) createIterators(ctx context.Context, stmt *influxql.SelectStatement, opt query.ExecutionOptions) (query.Cursor, error) {
+func (e *ClusterStatementExecutor) createIterators(ctx context.Context, stmt *influxql.SelectStatement, opt query.ExecutionOptions) (query.Cursor, error) {
 	sopt := query.SelectOptions{
 		NodeID:      opt.NodeID,
 		MaxSeriesN:  e.MaxSelectSeriesN,
@@ -646,7 +657,7 @@ func (e *StatementExecutor) createIterators(ctx context.Context, stmt *influxql.
 	return cur, nil
 }
 
-func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement) (models.Rows, error) {
 	dis := e.MetaClient.Databases()
 
 	rows := []*models.Row{}
@@ -660,7 +671,7 @@ func (e *StatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql
 	return rows, nil
 }
 
-func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *query.ExecutionContext) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *query.ExecutionContext) (models.Rows, error) {
 	dis := e.MetaClient.Databases()
 	a := ctx.ExecutionOptions.Authorizer
 
@@ -674,7 +685,7 @@ func (e *StatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDataba
 	return []*models.Row{row}, nil
 }
 
-func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement) (models.Rows, error) {
 	diags, err := e.Monitor.Diagnostics()
 	if err != nil {
 		return nil, err
@@ -702,7 +713,7 @@ func (e *StatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowD
 	return rows, nil
 }
 
-func (e *StatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement) (models.Rows, error) {
 	priv, err := e.MetaClient.UserPrivileges(q.Name)
 	if err != nil {
 		return nil, err
@@ -715,7 +726,7 @@ func (e *StatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGr
 	return []*models.Row{row}, nil
 }
 
-func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMeasurementsStatement, ctx *query.ExecutionContext) error {
+func (e *ClusterStatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMeasurementsStatement, ctx *query.ExecutionContext) error {
 	if q.Database == "" {
 		return ErrDatabaseNameRequired
 	}
@@ -759,7 +770,7 @@ func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMea
 	})
 }
 
-func (e *StatementExecutor) executeShowMeasurementCardinalityStatement(stmt *influxql.ShowMeasurementCardinalityStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowMeasurementCardinalityStatement(stmt *influxql.ShowMeasurementCardinalityStatement) (models.Rows, error) {
 	if stmt.Database == "" {
 		return nil, ErrDatabaseNameRequired
 	}
@@ -775,7 +786,7 @@ func (e *StatementExecutor) executeShowMeasurementCardinalityStatement(stmt *inf
 	}}, nil
 }
 
-func (e *StatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.ShowRetentionPoliciesStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.ShowRetentionPoliciesStatement) (models.Rows, error) {
 	if q.Database == "" {
 		return nil, ErrDatabaseNameRequired
 	}
@@ -792,7 +803,7 @@ func (e *StatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.Sh
 	return []*models.Row{row}, nil
 }
 
-func (e *StatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShardsStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShardsStatement) (models.Rows, error) {
 	dis := e.MetaClient.Databases()
 
 	rows := []*models.Row{}
@@ -830,7 +841,7 @@ func (e *StatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShards
 	return rows, nil
 }
 
-func (e *StatementExecutor) executeShowSeriesCardinalityStatement(stmt *influxql.ShowSeriesCardinalityStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowSeriesCardinalityStatement(stmt *influxql.ShowSeriesCardinalityStatement) (models.Rows, error) {
 	if stmt.Database == "" {
 		return nil, ErrDatabaseNameRequired
 	}
@@ -846,7 +857,7 @@ func (e *StatementExecutor) executeShowSeriesCardinalityStatement(stmt *influxql
 	}}, nil
 }
 
-func (e *StatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowShardGroupsStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowShardGroupsStatement) (models.Rows, error) {
 	dis := e.MetaClient.Databases()
 
 	row := &models.Row{Columns: []string{"id", "database", "retention_policy", "start_time", "end_time", "expiry_time"}, Name: "shard groups"}
@@ -874,7 +885,7 @@ func (e *StatementExecutor) executeShowShardGroupsStatement(stmt *influxql.ShowS
 	return []*models.Row{row}, nil
 }
 
-func (e *StatementExecutor) executeShowStatsStatement(stmt *influxql.ShowStatsStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowStatsStatement(stmt *influxql.ShowStatsStatement) (models.Rows, error) {
 	var rows []*models.Row
 
 	if _, ok := e.TSDBStore.(*tsdb.Store); stmt.Module == "indexes" && ok {
@@ -912,7 +923,7 @@ func (e *StatementExecutor) executeShowStatsStatement(stmt *influxql.ShowStatsSt
 	return rows, nil
 }
 
-func (e *StatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.ShowSubscriptionsStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.ShowSubscriptionsStatement) (models.Rows, error) {
 	dis := e.MetaClient.Databases()
 
 	rows := []*models.Row{}
@@ -930,7 +941,7 @@ func (e *StatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.Sho
 	return rows, nil
 }
 
-func (e *StatementExecutor) executeShowTagKeys(q *influxql.ShowTagKeysStatement, ctx *query.ExecutionContext) error {
+func (e *ClusterStatementExecutor) executeShowTagKeys(q *influxql.ShowTagKeysStatement, ctx *query.ExecutionContext) error {
 	if q.Database == "" {
 		return ErrDatabaseNameRequired
 	}
@@ -1017,7 +1028,7 @@ func (e *StatementExecutor) executeShowTagKeys(q *influxql.ShowTagKeysStatement,
 	return nil
 }
 
-func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatement, ctx *query.ExecutionContext) error {
+func (e *ClusterStatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatement, ctx *query.ExecutionContext) error {
 	if q.Database == "" {
 		return ErrDatabaseNameRequired
 	}
@@ -1105,7 +1116,7 @@ func (e *StatementExecutor) executeShowTagValues(q *influxql.ShowTagValuesStatem
 	return nil
 }
 
-func (e *StatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersStatement) (models.Rows, error) {
+func (e *ClusterStatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersStatement) (models.Rows, error) {
 	row := &models.Row{Columns: []string{"user", "admin"}}
 	for _, ui := range e.MetaClient.Users() {
 		row.Values = append(row.Values, []interface{}{ui.Name, ui.Admin})
@@ -1113,166 +1124,9 @@ func (e *StatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersState
 	return []*models.Row{row}, nil
 }
 
-// BufferedPointsWriter adds buffering to a pointsWriter so that SELECT INTO queries
-// write their points to the destination in batches.
-type BufferedPointsWriter struct {
-	w               pointsWriter
-	buf             []models.Point
-	database        string
-	retentionPolicy string
-}
-
-// NewBufferedPointsWriter returns a new BufferedPointsWriter.
-func NewBufferedPointsWriter(w pointsWriter, database, retentionPolicy string, capacity int) *BufferedPointsWriter {
-	return &BufferedPointsWriter{
-		w:               w,
-		buf:             make([]models.Point, 0, capacity),
-		database:        database,
-		retentionPolicy: retentionPolicy,
-	}
-}
-
-// WritePointsInto implements pointsWriter for BufferedPointsWriter.
-func (w *BufferedPointsWriter) WritePointsInto(req *IntoWriteRequest) error {
-	// Make sure we're buffering points only for the expected destination.
-	if req.Database != w.database || req.RetentionPolicy != w.retentionPolicy {
-		return fmt.Errorf("writer for %s.%s can't write into %s.%s", w.database, w.retentionPolicy, req.Database, req.RetentionPolicy)
-	}
-
-	for i := 0; i < len(req.Points); {
-		// Get the available space in the buffer.
-		avail := cap(w.buf) - len(w.buf)
-
-		// Calculate number of points to copy into the buffer.
-		n := len(req.Points[i:])
-		if n > avail {
-			n = avail
-		}
-
-		// Copy points into buffer.
-		w.buf = append(w.buf, req.Points[i:n+i]...)
-
-		// Advance the index by number of points copied.
-		i += n
-
-		// If buffer is full, flush points to underlying writer.
-		if len(w.buf) == cap(w.buf) {
-			if err := w.Flush(); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// Flush writes all buffered points to the underlying writer.
-func (w *BufferedPointsWriter) Flush() error {
-	if len(w.buf) == 0 {
-		return nil
-	}
-
-	if err := w.w.WritePointsInto(&IntoWriteRequest{
-		Database:        w.database,
-		RetentionPolicy: w.retentionPolicy,
-		Points:          w.buf,
-	}); err != nil {
-		return err
-	}
-
-	// Clear the buffer.
-	w.buf = w.buf[:0]
-
-	return nil
-}
-
-// Len returns the number of points buffered.
-func (w *BufferedPointsWriter) Len() int { return len(w.buf) }
-
-// Cap returns the capacity (in points) of the buffer.
-func (w *BufferedPointsWriter) Cap() int { return cap(w.buf) }
-
-func (e *StatementExecutor) writeInto(w pointsWriter, stmt *influxql.SelectStatement, row *models.Row) (n int64, err error) {
-	if stmt.Target.Measurement.Database == "" {
-		return 0, errNoDatabaseInTarget
-	}
-
-	// It might seem a bit weird that this is where we do this, since we will have to
-	// convert rows back to points. The Executors (both aggregate and raw) are complex
-	// enough that changing them to write back to the DB is going to be clumsy
-	//
-	// it might seem weird to have the write be in the Executor, but the interweaving of
-	// limitedRowWriter and ExecuteAggregate/Raw makes it ridiculously hard to make sure that the
-	// results will be the same as when queried normally.
-	name := stmt.Target.Measurement.Name
-	if name == "" {
-		name = row.Name
-	}
-
-	points, err := convertRowToPoints(name, row)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := w.WritePointsInto(&IntoWriteRequest{
-		Database:        stmt.Target.Measurement.Database,
-		RetentionPolicy: stmt.Target.Measurement.RetentionPolicy,
-		Points:          points,
-	}); err != nil {
-		return 0, err
-	}
-
-	return int64(len(points)), nil
-}
-
-var errNoDatabaseInTarget = errors.New("no database in target")
-
-// convertRowToPoints will convert a query result Row into Points that can be written back in.
-func convertRowToPoints(measurementName string, row *models.Row) ([]models.Point, error) {
-	// figure out which parts of the result are the time and which are the fields
-	timeIndex := -1
-	fieldIndexes := make(map[string]int)
-	for i, c := range row.Columns {
-		if c == "time" {
-			timeIndex = i
-		} else {
-			fieldIndexes[c] = i
-		}
-	}
-
-	if timeIndex == -1 {
-		return nil, errors.New("error finding time index in result")
-	}
-
-	points := make([]models.Point, 0, len(row.Values))
-	for _, v := range row.Values {
-		vals := make(map[string]interface{})
-		for fieldName, fieldIndex := range fieldIndexes {
-			val := v[fieldIndex]
-			// Check specifically for nil or a NullFloat. This is because
-			// the NullFloat represents float numbers that don't have an internal representation
-			// (like NaN) that cannot be written back, but will not equal nil so there will be
-			// an attempt to write them if we do not check for it.
-			if val != nil && val != query.NullFloat {
-				vals[fieldName] = v[fieldIndex]
-			}
-		}
-
-		p, err := models.NewPoint(measurementName, models.NewTags(row.Tags), vals, v[timeIndex].(time.Time))
-		if err != nil {
-			// Drop points that can't be stored
-			continue
-		}
-
-		points = append(points, p)
-	}
-
-	return points, nil
-}
-
 // NormalizeStatement adds a default database and policy to the measurements in statement.
 // Parameter defaultRetentionPolicy can be "".
-func (e *StatementExecutor) NormalizeStatement(stmt influxql.Statement, defaultDatabase, defaultRetentionPolicy string) (err error) {
+func (e *ClusterStatementExecutor) NormalizeStatement(stmt influxql.Statement, defaultDatabase, defaultRetentionPolicy string) (err error) {
 	influxql.WalkFunc(stmt, func(node influxql.Node) {
 		if err != nil {
 			return
@@ -1315,7 +1169,7 @@ func (e *StatementExecutor) NormalizeStatement(stmt influxql.Statement, defaultD
 	return
 }
 
-func (e *StatementExecutor) normalizeMeasurement(m *influxql.Measurement, defaultDatabase, defaultRetentionPolicy string) error {
+func (e *ClusterStatementExecutor) normalizeMeasurement(m *influxql.Measurement, defaultDatabase, defaultRetentionPolicy string) error {
 	// Targets (measurements in an INTO clause) can have blank names, which means it will be
 	// the same as the measurement name it came from in the FROM clause.
 	if !m.IsTarget && m.Name == "" && m.SystemIterator == "" && m.Regex == nil {
@@ -1350,57 +1204,35 @@ func (e *StatementExecutor) normalizeMeasurement(m *influxql.Measurement, defaul
 	}
 	return nil
 }
-
-// IntoWriteRequest is a partial copy of cluster.WriteRequest
-type IntoWriteRequest struct {
-	Database        string
-	RetentionPolicy string
-	Points          []models.Point
-}
-
-// TSDBStore is an interface for accessing the time series data store.
-type TSDBStore interface {
-	CreateShard(database, policy string, shardID uint64, enabled bool) error
-	WriteToShard(shardID uint64, points []models.Point) error
-
-	RestoreShard(id uint64, r io.Reader) error
-	BackupShard(id uint64, since time.Time, w io.Writer) error
-
-	DeleteDatabase(name string) error
-	DeleteMeasurement(database, name string) error
-	DeleteRetentionPolicy(database, name string) error
-	DeleteSeries(database string, sources []influxql.Source, condition influxql.Expr) error
-	DeleteShard(id uint64) error
-
-	MeasurementNames(auth query.Authorizer, database string, cond influxql.Expr) ([][]byte, error)
-	TagKeys(auth query.Authorizer, shardIDs []uint64, cond influxql.Expr) ([]tsdb.TagKeys, error)
-	TagValues(auth query.Authorizer, shardIDs []uint64, cond influxql.Expr) ([]tsdb.TagValues, error)
-
-	SeriesCardinality(database string) (int64, error)
-	MeasurementsCardinality(database string) (int64, error)
-}
-
-var _ TSDBStore = LocalTSDBStore{}
-
-// LocalTSDBStore embeds a tsdb.Store and implements IteratorCreator
-// to satisfy the TSDBStore interface.
-type LocalTSDBStore struct {
-	*tsdb.Store
-}
-
-// ShardIteratorCreator is an interface for creating an IteratorCreator to access a specific shard.
-type ShardIteratorCreator interface {
-	ShardIteratorCreator(id uint64) query.IteratorCreator
-}
-
-// joinUint64 returns a comma-delimited string of uint64 numbers.
-func joinUint64(a []uint64) string {
-	var buf bytes.Buffer
-	for i, x := range a {
-		buf.WriteString(strconv.FormatUint(x, 10))
-		if i < len(a)-1 {
-			buf.WriteRune(',')
-		}
+func (e *ClusterStatementExecutor) writeInto(w pointsWriter, stmt *influxql.SelectStatement, row *models.Row) (n int64, err error) {
+	if stmt.Target.Measurement.Database == "" {
+		return 0, errNoDatabaseInTarget
 	}
-	return buf.String()
+
+	// It might seem a bit weird that this is where we do this, since we will have to
+	// convert rows back to points. The Executors (both aggregate and raw) are complex
+	// enough that changing them to write back to the DB is going to be clumsy
+	//
+	// it might seem weird to have the write be in the Executor, but the interweaving of
+	// limitedRowWriter and ExecuteAggregate/Raw makes it ridiculously hard to make sure that the
+	// results will be the same as when queried normally.
+	name := stmt.Target.Measurement.Name
+	if name == "" {
+		name = row.Name
+	}
+
+	points, err := convertRowToPoints(name, row)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := w.WritePointsInto(&IntoWriteRequest{
+		Database:        stmt.Target.Measurement.Database,
+		RetentionPolicy: stmt.Target.Measurement.RetentionPolicy,
+		Points:          points,
+	}); err != nil {
+		return 0, err
+	}
+
+	return int64(len(points)), nil
 }

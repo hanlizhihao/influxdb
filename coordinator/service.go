@@ -14,6 +14,7 @@ import (
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tsdb"
 	"go.uber.org/zap"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,21 +25,23 @@ const (
 	// Value is a collection of all database instances.
 	TSDBCommonNodesKey  = "tsdb-common-nodes"
 	TSDBCommonNodeIdKey = "tsdb-common-node-"
-	// Value is a collection of all available cluster, every item is key of cluster
+	// Value is a collection of all available Cluster, every item is key of Cluster
 	TSDBClustersKey = "tsdb-available-clusters"
-	// Value is the cluster that tries to connect
-	TSDBWorkKey = "tsdb-work-cluster-"
+	// Value is the Cluster that tries to connect
+	TSDBWorkKey = "tsdb-work-Cluster-"
 	//common key node-id, master key node-master-id
-	TSDBWorkNode               = "tsdb-cluster-"
+	TSDBWorkNode               = "tsdb-Cluster-"
 	TSDBRecruitClustersKey     = "tsdb-recruit-clusters"
-	TSDBClusterAutoIncrementId = "tsdb-cluster-auto-increment-id"
+	TSDBClusterAutoIncrementId = "tsdb-Cluster-auto-increment-id"
 	TSDBNodeAutoIncrementId    = "tsdb-node-auto-increment-id"
 	TSDBClassAutoIncrementId   = "tsdb-class-auto-increment-id"
 	TSDBClassesInfo            = "tsdb-classes-info"
 	TSDBClassId                = "tsdb-class-"
-	// cluster-id
+	// Cluster-id
 	TSDBClassNode = "tsdb-cla-"
 	TSDBDatabase  = "tsdb-databases"
+	TSDBcq        = "tsdb-cq"
+	TSDBUsers     = "tsdb-users"
 	// default class limit
 	DefaultClassLimit       = 3
 	DefaultClusterNodeLimit = 3
@@ -56,15 +59,16 @@ type Service struct {
 		DropSubscription(database, rp, name string) error
 		CreateContinuousQuery(database, name, query string) error
 		CreateDatabase(name string) (*meta.DatabaseInfo, error)
+		DropUser(name string) error
 		DropDatabase(name string) error
 		UpdateRetentionPolicy(database, name string, rpu *meta.RetentionPolicyUpdate, makeDefault bool) error
 		CreateRetentionPolicy(database string, spec *meta.RetentionPolicySpec, makeDefault bool) (*meta.RetentionPolicyInfo, error)
 		DropRetentionPolicy(database, name string) error
+		DropContinuousQuery(database, name string) error
+		CreateUser(name, password string, admin bool) (meta.User, error)
 	}
-	wg            sync.WaitGroup
 	closed        bool
 	mu            sync.Mutex
-	subMu         sync.RWMutex
 	Logger        *zap.Logger
 	subscriptions []meta.SubscriptionInfo
 
@@ -90,6 +94,10 @@ type Service struct {
 	clusterNodes *[]Node
 	rpcQuery     *RpcService
 	ip           string
+	Cluster      bool
+	dbsMu        sync.RWMutex
+	databases    Databases
+	latestUsers  Users
 }
 
 func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config,
@@ -105,6 +113,7 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		classDetail:  &ClassDetail{},
 		clusterNodes: &nodes,
 		rpcQuery:     NewRpcService(mapper, &nodes),
+		Cluster:      false,
 	}
 	return s
 }
@@ -172,12 +181,14 @@ func (s *Service) Open() error {
 	if err != nil {
 		return err
 	}
-	go s.watchClusterDatabaseInfo()
+	go s.watchDatabasesInfo()
+	go s.watchContinuesQuery()
 	go s.watchClassesInfo()
 	go s.processNewMeasurement()
+	go s.watchUsers()
 	s.closed = false
 	s.Logger.Info("Opened Service")
-	// cluster query rpc process
+	// Cluster query rpc process
 	s.rpcQuery.WithLogger(s.Logger)
 	s.rpcQuery.MetaClient = s.MetaClient
 	ip, err := GetLocalHostIp()
@@ -203,7 +214,7 @@ func (s *Service) processNewMeasurement() {
 			}
 			httpClientP, err := s.httpd.Handler.Balancing.GetClient(node.Ip, "")
 			var httpClient = *httpClientP
-			// cluster's master node crash
+			// Cluster's master node crash
 			if err = s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point}); err != nil {
 				s.Logger.Error(err.Error())
 			}
@@ -248,7 +259,7 @@ func (s *Service) processNewMeasurement() {
 				var classes = *s.classes
 				classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
 				updateClass := classes[0]
-				classes = append(classes[:1], classes[1:]...)
+				classes = append(classes[:1], classes[2:]...)
 				classes = append(classes, updateClass)
 				cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
 				putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
@@ -271,8 +282,10 @@ func (s *Service) processNewMeasurement() {
 // watch classes info, update index
 func (s *Service) watchClassesInfo() {
 	classesResp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
-	if classesResp.Count == 0 || err != nil {
-		s.Logger.Error("Etcd don't contain classes info key")
+	s.CheckErrorExit("Get classes from etcd failed", err)
+	if classesResp == nil || classesResp.Count == 0 {
+		s.Logger.Error("There is no classes info in meta data")
+		os.Exit(1)
 	}
 	classesWatch := s.cli.Watch(context.Background(), TSDBClassesInfo)
 	for classesInfo := range classesWatch {
@@ -285,16 +298,50 @@ func (s *Service) watchClassesInfo() {
 	}
 }
 
-// Every node of cluster may create database and retention policy, So focus on and respond to changes in database
-// information in metadata. So that each node's database and reservation policy data are consistent.
-func (s *Service) watchClusterDatabaseInfo() {
-	databaseInfoResp, err := s.cli.Get(context.Background(), TSDBDatabase)
-	if databaseInfoResp == nil || err != nil || databaseInfoResp.Count == 0 {
-		databases := s.getDatabaseInfo(s.MetaClient.Databases())
-		_, err := s.cli.Put(context.Background(), TSDBDatabase, ToJson(databases))
-		if err != nil {
-			s.Logger.Error(err.Error())
+func (s *Service) watchUsers() {
+	resp, err := s.cli.Get(context.Background(), TSDBUsers)
+	s.CheckErrorExit("Get users info from etcd failed, stop watch users", err)
+	if resp == nil || resp.Count == 0 {
+		users := make(Users)
+		_, err = s.cli.Put(context.Background(), TSDBUsers, ToJson(users))
+		s.CheckErrorExit("Update databases failed, stop watch databases, error message", err)
+	}
+	usersCh := s.cli.Watch(context.Background(), TSDBUsers)
+	for userResp := range usersCh {
+		for _, event := range userResp.Events {
+			if bytes.Equal(event.PrevKv.Value, event.Kv.Value) {
+				continue
+			}
+			s.mu.Lock()
+			ParseJson(event.Kv.Value, &s.latestUsers)
+			s.mu.Unlock()
+			noProcessed := s.latestUsers
+			for _, user := range s.MetaClient.Data().Users {
+				delete(noProcessed, user.Name)
+				if user := s.latestUsers[user.Name]; &user != nil {
+					continue
+				}
+				s.MetaClient.DropUser(user.Name)
+			}
+			for _, user := range noProcessed {
+				s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
+			}
 		}
+	}
+}
+
+// Every node of Cluster may create database and retention policy, So focus on and respond to changes in database
+// information in metadata. So that each node's database and reservation policy data are consistent.
+func (s *Service) watchDatabasesInfo() {
+	databaseInfoResp, err := s.cli.Get(context.Background(), TSDBDatabase)
+	s.CheckErrorExit("Get databases from etcd failed, error message", err)
+	if databaseInfoResp == nil || databaseInfoResp.Count == 0 {
+		databases := s.convertToDatabases(s.MetaClient.Databases())
+		_, err := s.cli.Put(context.Background(), TSDBDatabase, ToJson(databases))
+		s.CheckErrorExit("Update databases failed, stop watch databases, error message", err)
+		s.dbsMu.Lock()
+		s.databases = databases
+		s.dbsMu.Unlock()
 	}
 	databaseInfo := s.cli.Watch(context.Background(), TSDBDatabase, clientv3.WithPrefix())
 	for database := range databaseInfo {
@@ -302,18 +349,19 @@ func (s *Service) watchClusterDatabaseInfo() {
 			if bytes.Equal(db.PrevKv.Value, db.Kv.Value) {
 				continue
 			}
-			var databases Databases
 			localDBInfo := make(map[string]map[string]Rp, len(s.MetaClient.Databases()))
-			ParseJson(db.Kv.Value, &databases)
+			s.dbsMu.Lock()
+			ParseJson(db.Kv.Value, &s.databases)
+			s.dbsMu.Unlock()
+			var noProcessedData = s.databases.Database
 			// Add new database and retention policy
 			for _, localDB := range s.MetaClient.Databases() {
-				rps := databases.Database[localDB.Name]
+				rps := s.databases.Database[localDB.Name]
 				if rps == nil {
 					_ = s.MetaClient.DropDatabase(localDB.Name)
 					continue
 				}
 				// Local information is up to date.
-				//localDBInfo[localDB.Name] = make(map[string]Rp, len(localDB.RetentionPolicies))
 				rpInfo := make(map[string]Rp, len(localDB.RetentionPolicies))
 				for _, localRP := range localDB.RetentionPolicies {
 					if s.subscriptions == nil || len(s.subscriptions) == 0 {
@@ -350,10 +398,10 @@ func (s *Service) watchClusterDatabaseInfo() {
 				}
 				// save DB that has been completed
 				localDBInfo[localDB.Name] = rpInfo
-				delete(databases.Database, localDB.Name)
+				delete(noProcessedData, localDB.Name)
 			}
 			// add new database
-			for key, value := range databases.Database {
+			for key, value := range noProcessedData {
 				_, err = s.MetaClient.CreateDatabase(key)
 				for _, rpValue := range value {
 					_, err = s.MetaClient.CreateRetentionPolicy(key, &meta.RetentionPolicySpec{
@@ -367,8 +415,69 @@ func (s *Service) watchClusterDatabaseInfo() {
 					}
 				}
 			}
-			s.Logger.Error("create new database error !")
-			s.Logger.Error(err.Error())
+			if err != nil {
+				s.Logger.Error("create new database error !")
+				s.Logger.Error(err.Error())
+			}
+		}
+	}
+}
+
+func (s *Service) CheckErrorExit(msg string, err error) {
+	if err != nil {
+		s.Logger.Error(msg+" {}", zap.String("{}", err.Error()))
+		os.Exit(1)
+		return
+	}
+}
+
+func (s *Service) watchContinuesQuery() {
+	cqResp, err := s.cli.Get(context.Background(), TSDBcq)
+	s.CheckErrorExit("Get continues query from etcd failed, stop watch cq, error message", err)
+	if cqResp == nil || cqResp.Count == 0 {
+		cqs := make(map[string][]meta.ContinuousQueryInfo, len(s.MetaClient.Databases()))
+		for _, database := range s.MetaClient.Databases() {
+			cqs[database.Name] = database.ContinuousQueries
+		}
+		_, err := s.cli.Put(context.Background(), TSDBcq, ToJson(cqs))
+		s.CheckErrorExit("Initial Meta Data Continues Query failed, error message: ", err)
+	}
+	cqInfo := s.cli.Watch(context.Background(), TSDBcq, clientv3.WithPrefix())
+	for cq := range cqInfo {
+		for _, ev := range cq.Events {
+			if bytes.Equal(ev.PrevKv.Value, ev.Kv.Value) {
+				continue
+			}
+			var latestCqs Cqs
+			ParseJson(ev.Kv.Value, &latestCqs)
+			noProcessedCq := latestCqs
+			for _, db := range s.MetaClient.Databases() {
+				cqs := latestCqs[db.Name]
+				if cqs == nil {
+					for _, tempCq := range db.ContinuousQueries {
+						s.MetaClient.DropContinuousQuery(db.Name, tempCq.Name)
+					}
+					delete(noProcessedCq, db.Name)
+					continue
+				}
+			LocalCQ:
+				for _, localCq := range db.ContinuousQueries {
+					for i, latestCq := range cqs {
+						if latestCq.Name == localCq.Name {
+							noProcessedCq[db.Name] = append(noProcessedCq[db.Name][0:i], noProcessedCq[db.Name][i+1:]...)
+							continue LocalCQ
+						}
+					}
+					// If local cq don't belong latest, will delete local cq
+					s.MetaClient.DropContinuousQuery(db.Name, localCq.Name)
+				}
+			}
+			// noProcessedCq is new cq
+			for newDB, newCqs := range noProcessedCq {
+				for _, newCq := range newCqs {
+					s.MetaClient.CreateContinuousQuery(newDB, newCq.Name, newCq.Query)
+				}
+			}
 		}
 	}
 }
@@ -382,12 +491,12 @@ func (s *Service) GetLatestDatabaseInfo() (*Databases, error) {
 	ParseJson(databasesInfoResp.Kvs[0].Value, &databases)
 	return &databases, nil
 }
-func (s *Service) PutDatabaseInfo(database *Databases) error {
-	_, err := s.cli.Put(context.Background(), TSDBDatabase, ToJson(*database))
+func (s *Service) PutMetaDataForEtcd(data interface{}, key string) error {
+	_, err := s.cli.Put(context.Background(), key, ToJson(data))
 	return err
 }
 
-func (s *Service) getDatabaseInfo(databaseInfo []meta.DatabaseInfo) Databases {
+func (s *Service) convertToDatabases(databaseInfo []meta.DatabaseInfo) Databases {
 	var databases = make(map[string]map[string]Rp, len(databaseInfo))
 	for _, db := range databaseInfo {
 		var rps = make(map[string]Rp, len(db.RetentionPolicies))
@@ -416,9 +525,9 @@ func (s *Service) setMetaDataNodeId(nodeId uint64) error {
 	return s.MetaClient.SetData(&originMetaData)
 }
 func (s *Service) joinClusterOrCreateCluster() error {
-	s.Logger.Info("System will join origin cluster or create new cluster")
+	s.Logger.Info("System will join origin Cluster or create new Cluster")
 RetryJoinOriginalCluster:
-	// Try to connect the original cluster.
+	// Try to connect the original Cluster.
 	originClusterKey := TSDBWorkKey + strconv.FormatUint(s.MetaClient.Data().ClusterID, 10)
 	workClusterResp, err := s.cli.Get(context.Background(), originClusterKey)
 	if workClusterResp.Count != 0 && err == nil {
@@ -463,10 +572,10 @@ RetryJoinOriginalCluster:
 				ClusterIds: make([]uint64, 1),
 			}
 			_, err = s.cli.Put(context.Background(), TSDBRecruitClustersKey, ToJson(recruitCluster))
-			// create cluster
+			// create Cluster
 			err = s.createCluster()
 			if err != nil {
-				s.Logger.Error("Try create cluster failed, error message is " + err.Error())
+				s.Logger.Error("Try create Cluster failed, error message is " + err.Error())
 				goto RetryJoinOriginalCluster
 			}
 			return nil
@@ -510,7 +619,7 @@ func (s *Service) putWorkNodeKey(nodes []Node) {
 	}
 }
 
-// Join cluster failed, create new cluster
+// Join Cluster failed, create new Cluster
 func (s *Service) createCluster() error {
 	recruit, err := s.cli.Get(context.Background(), TSDBRecruitClustersKey)
 	if err != nil {
@@ -540,7 +649,7 @@ RetryCreate:
 	workClusterInfo.Limit = DefaultClusterNodeLimit
 	workClusterInfo.Nodes = latestClusterInfo.Nodes
 	workClusterInfo.Master = latestClusterInfo.Nodes[0]
-	// Transaction creation cluster
+	// Transaction creation Cluster
 	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
 	cmpRecruit := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruit.Kvs[0].Value))
 	putAllCluster := clientv3.OpPut(TSDBClustersKey, ToJson(allClustersInfo))
@@ -583,7 +692,7 @@ RetryCreateClass:
 		metaData.ClassID = classIdResp
 		err = s.MetaClient.SetData(&metaData)
 		if err != nil {
-			s.Logger.Error("When create cluster and create class, set meta data failed")
+			s.Logger.Error("When create Cluster and create class, set meta data failed")
 			s.Logger.Error(err.Error())
 		}
 		classesCamp := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", nil)
@@ -594,9 +703,9 @@ RetryCreateClass:
 		if !resp.Succeeded || err != nil {
 			goto RetryCreateClass
 		}
-		// put alive cluster key with lease
+		// put alive Cluster key with lease
 		_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(classIdResp, 10)+
-			"-cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(class), clientv3.WithLease(s.lease.ID))
+			"-Cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(class), clientv3.WithLease(s.lease.ID))
 		return err
 	}
 	return nil
@@ -619,7 +728,7 @@ func (s *Service) changeWorkCluster(t mvccpb.Event_EventType, node Node) {
 		workNodeKey := TSDBWorkNode + strconv.FormatUint(s.MetaClient.Data().ClusterID, 10)
 		clusterResp, err := s.cli.Get(context.Background(), workNodeKey)
 		if err != nil || clusterResp.Count == 0 {
-			s.Logger.Error("Cluster " + workNodeKey + " master node attempt to get cluster info failed error message: " +
+			s.Logger.Error("Cluster " + workNodeKey + " master node attempt to get Cluster info failed error message: " +
 				err.Error())
 			if c >= 3 {
 				return
@@ -632,7 +741,7 @@ func (s *Service) changeWorkCluster(t mvccpb.Event_EventType, node Node) {
 			cluster.Number--
 			for i := 0; i < len(cluster.Nodes); i++ {
 				if cluster.Nodes[i].Id == node.Id {
-					cluster.Nodes = append(cluster.Nodes[0:i+1], cluster.Nodes[i+1:]...)
+					cluster.Nodes = append(cluster.Nodes[0:i], cluster.Nodes[i+1:]...)
 					break
 				}
 			}
@@ -659,7 +768,7 @@ func (s *Service) changeWorkCluster(t mvccpb.Event_EventType, node Node) {
 	}
 }
 
-// Watch node of the cluster, change cluster information and change subscriber
+// Watch node of the Cluster, change Cluster information and change subscriber
 func (s *Service) watchWorkCluster(clusterId uint64) {
 	var err error
 	clusterIdStr := strconv.FormatUint(clusterId, 10)
@@ -680,7 +789,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 				if strings.Contains(string(ev.Kv.Key), "master") {
 					resp, err := s.cli.Get(context.Background(), TSDBWorkNode+clusterIdStr)
 					if resp.Count == 0 || err != nil {
-						s.Logger.Error("Election master node, get cluster " + clusterIdStr + "failed, error message: " + err.Error())
+						s.Logger.Error("Election master node, get Cluster " + clusterIdStr + "failed, error message: " + err.Error())
 					}
 					var workCluster WorkClusterInfo
 					ParseJson(resp.Kvs[0].Value, &workCluster)
@@ -730,8 +839,8 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 	}
 }
 
-// cluster is logical node and min uint, they made up class, working cluster must be class member
-// Become a cluster of worker, add to classes info, create or join the original class.
+// Cluster is logical node and min uint, they made up class, working Cluster must be class member
+// Become a Cluster of worker, add to classes info, create or join the original class.
 func (s *Service) joinClass() error {
 RetryAddClasses:
 	classesResp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
@@ -785,7 +894,7 @@ RetryAddClasses:
 				}
 			}
 		}
-		// Class's clusters don't have local cluster,
+		// Class's clusters don't have local Cluster,
 		if !clusterProcessed && index == -1 {
 			err = addNewClass()
 			err = s.putClasses(classesResp, classes)
@@ -811,7 +920,7 @@ RetryAddClasses:
 	if err == nil && clusterInfoResp.Count > 0 {
 		ParseJson(clusterInfoResp.Kvs[0].Value, &workClusterInfo)
 	} else {
-		return errors.New("The MetaData Service don't contain the cluster, cluster id is " +
+		return errors.New("The MetaData Service don't contain the Cluster, Cluster id is " +
 			strconv.FormatUint(s.MetaClient.Data().ClusterID, 10))
 	}
 	classResp, err := s.cli.Get(context.Background(), TSDBClassId+
@@ -839,7 +948,7 @@ RetryAddClasses:
 
 func (s *Service) watchClassNode() {
 	classNodeEventChan := s.cli.Watch(context.Background(), TSDBClassNode+strconv.
-		FormatUint(s.MetaClient.Data().ClassID, 10)+"-cluster", clientv3.WithPrefix())
+		FormatUint(s.MetaClient.Data().ClassID, 10)+"-Cluster", clientv3.WithPrefix())
 	for classNodeInfo := range classNodeEventChan {
 		for _, event := range classNodeInfo.Events {
 			if event.Type == mvccpb.DELETE {
@@ -855,9 +964,9 @@ func (s *Service) watchClassNode() {
 						break
 					}
 				}
-				s.classDetail.Clusters = append(s.classDetail.Clusters[0:index], s.classDetail.Clusters[index:]...)
+				s.classDetail.Clusters = append(s.classDetail.Clusters[0:index], s.classDetail.Clusters[index+1:]...)
 				s.buildConsistentHash()
-				// Class's cluster[0] master node update class detail
+				// Class's Cluster[0] master node update class detail
 				if s.classDetail.Clusters[0].Master.Id == s.MetaClient.Data().NodeID {
 					_, err := s.cli.Put(context.Background(), TSDBClassId+strconv.FormatUint(s.MetaClient.Data().ClassID, 10),
 						ToJson(*s.classDetail))
@@ -879,7 +988,7 @@ func (s *Service) watchClassNode() {
 						}
 					}
 					classes[classIndex].ClusterIds = append(classes[classIndex].ClusterIds[0:clusterIndex],
-						classes[classIndex].ClusterIds[clusterIndex:]...)
+						classes[classIndex].ClusterIds[clusterIndex+1:]...)
 					_, err = s.cli.Put(context.Background(), TSDBClassesInfo, ToJson(classes))
 					s.Logger.Error("Get class detail update event, update meta data classes failed, error message: " +
 						err.Error())
@@ -906,10 +1015,10 @@ func (s *Service) putClassDetail() error {
 		ToJson(*s.classDetail))
 	resp, err := s.cli.Txn(context.Background()).If(cmpClassDetail).Then(opPutClassDetail).Commit()
 	if resp.Succeeded {
-		// If local node is local cluster's master node, local node will put cluster key of the class
+		// If local node is local Cluster's master node, local node will put Cluster key of the class
 		if s.masterNode.Id == s.MetaClient.Data().NodeID {
 			_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(s.MetaClient.Data().ClassID, 10)+
-				"-cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(s.masterNode),
+				"-Cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(s.masterNode),
 				clientv3.WithLease(s.lease.ID))
 		}
 		return nil
@@ -1038,13 +1147,13 @@ RetryJoinTarget:
 		go s.watchWorkCluster(clusterId)
 		return err
 	}
-	return errors.New("Join cluster" + strconv.FormatUint(clusterId, 10) + "failed")
+	return errors.New("Join Cluster" + strconv.FormatUint(clusterId, 10) + "failed")
 }
 
 // close closes the existing channel writers.
 func (s *Service) close(wg *sync.WaitGroup) {
-	s.subMu.Lock()
-	defer s.subMu.Unlock()
+	s.dbsMu.Lock()
+	defer s.dbsMu.Unlock()
 
 	// Wait for them to finish
 	wg.Wait()
@@ -1059,7 +1168,6 @@ func (s *Service) Close() error {
 
 	s.closed = true
 
-	s.wg.Wait()
 	s.Logger.Info("Closed Service")
 	return nil
 }
@@ -1106,7 +1214,7 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 		if classIp := s.classIpMap[class.ClassId]; classIp == nil || len(classIp) <= 1 {
 			clusterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(class.ClusterIds[0], 10))
 			if err != nil || clusterResp.Count == 0 {
-				s.Logger.Error("Get cluster info by " + strconv.FormatUint(class.ClusterIds[0], 10) + "failed")
+				s.Logger.Error("Get Cluster info by " + strconv.FormatUint(class.ClusterIds[0], 10) + "failed")
 				continue
 			}
 			var cluster WorkClusterInfo

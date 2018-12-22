@@ -204,19 +204,21 @@ func NewServer(c *Config, buildInfo *BuildInfo) (*Server, error) {
 
 	// Initialize query executor.
 	s.QueryExecutor = query.NewExecutor()
-	s.QueryExecutor.StatementExecutor = &coordinator.StatementExecutor{
-		MetaClient:  s.MetaClient,
-		TaskManager: s.QueryExecutor.TaskManager,
-		TSDBStore:   s.TSDBStore,
-		ShardMapper: &coordinator.LocalShardMapper{
-			MetaClient: s.MetaClient,
-			TSDBStore:  coordinator.LocalTSDBStore{Store: s.TSDBStore},
+	s.QueryExecutor.StatementExecutor = &coordinator.ClusterStatementExecutor{
+		StatementExecutor: coordinator.StatementExecutor{
+			MetaClient:  s.MetaClient,
+			TaskManager: s.QueryExecutor.TaskManager,
+			TSDBStore:   s.TSDBStore,
+			ShardMapper: &coordinator.LocalShardMapper{
+				MetaClient: s.MetaClient,
+				TSDBStore:  coordinator.LocalTSDBStore{Store: s.TSDBStore},
+			},
+			Monitor:           s.Monitor,
+			PointsWriter:      s.PointsWriter,
+			MaxSelectPointN:   c.Coordinator.MaxSelectPointN,
+			MaxSelectSeriesN:  c.Coordinator.MaxSelectSeriesN,
+			MaxSelectBucketsN: c.Coordinator.MaxSelectBucketsN,
 		},
-		Monitor:           s.Monitor,
-		PointsWriter:      s.PointsWriter,
-		MaxSelectPointN:   c.Coordinator.MaxSelectPointN,
-		MaxSelectSeriesN:  c.Coordinator.MaxSelectSeriesN,
-		MaxSelectBucketsN: c.Coordinator.MaxSelectBucketsN,
 	}
 	s.QueryExecutor.TaskManager.QueryTimeout = time.Duration(c.Coordinator.QueryTimeout)
 	s.QueryExecutor.TaskManager.LogQueriesAfter = time.Duration(c.Coordinator.LogQueriesAfter)
@@ -383,7 +385,7 @@ func (s *Server) appendContinuousQueryService(c continuous_querier.Config) {
 
 func (s *Server) appendEtcdService() {
 	// Initialize etcd service
-	statement := s.QueryExecutor.StatementExecutor.(*coordinator.StatementExecutor)
+	statement := s.QueryExecutor.StatementExecutor.(*coordinator.ClusterStatementExecutor)
 	s.EtcdService = coordinator.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0],
 		&statement.ShardMapper)
 	statement.SetEtcdService(s.EtcdService)

@@ -65,7 +65,7 @@ type PointsWriter struct {
 	stats *WriteStatistics
 }
 
-// WritePointsRequest represents a request to write point data to the cluster.
+// WritePointsRequest represents a request to write point data to the Cluster.
 type WritePointsRequest struct {
 	Database        string
 	RetentionPolicy string
@@ -277,7 +277,7 @@ func (l sgList) Append(sgi meta.ShardGroupInfo) sgList {
 }
 
 // WritePointsInto is a copy of WritePoints that uses a tsdb structure instead of
-// a cluster structure for information. This is to avoid a circular dependency.
+// a Cluster structure for information. This is to avoid a circular dependency.
 func (w *PointsWriter) WritePointsInto(p *IntoWriteRequest) error {
 	return w.WritePointsPrivileged(p.Database, p.RetentionPolicy, models.ConsistencyLevelOne, p.Points)
 }
