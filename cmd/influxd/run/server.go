@@ -460,6 +460,7 @@ func (s *Server) Open() error {
 	}
 	s.SnapshotterService.WithLogger(s.Logger)
 	s.Monitor.WithLogger(s.Logger)
+	s.EtcdService.WithLogger(s.Logger)
 
 	// Open TSDB store.
 	if err := s.TSDBStore.Open(); err != nil {

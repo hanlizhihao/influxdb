@@ -183,7 +183,6 @@ func (s *Service) Open() error {
 	}
 	go s.watchDatabasesInfo()
 	go s.watchContinuesQuery()
-	go s.watchClassesInfo()
 	go s.processNewMeasurement()
 	go s.watchUsers()
 	s.closed = false
@@ -284,8 +283,11 @@ func (s *Service) watchClassesInfo() {
 	classesResp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
 	s.CheckErrorExit("Get classes from etcd failed", err)
 	if classesResp == nil || classesResp.Count == 0 {
-		s.Logger.Error("There is no classes info in meta data")
-		os.Exit(1)
+		resp, err := s.cli.Get(context.Background(), TSDBWorkNode+strconv.FormatUint(s.MetaClient.Data().ClusterID, 10))
+		var workClusterInfo WorkClusterInfo
+		ParseJson(resp.Kvs[0].Value, &workClusterInfo)
+		err = s.initClasses(&workClusterInfo)
+		s.CheckErrorExit("Watch Classes info, init classes meta data failed", err)
 	}
 	classesWatch := s.cli.Watch(context.Background(), TSDBClassesInfo)
 	for classesInfo := range classesWatch {
@@ -425,7 +427,7 @@ func (s *Service) watchDatabasesInfo() {
 
 func (s *Service) CheckErrorExit(msg string, err error) {
 	if err != nil {
-		s.Logger.Error(msg+" {}", zap.String("{}", err.Error()))
+		s.Logger.Error(msg, zap.Error(err))
 		os.Exit(1)
 		return
 	}
@@ -675,6 +677,10 @@ RetryCreate:
 	s.putWorkNodeKey(workClusterInfo.Nodes)
 	go s.watchWorkCluster(latestClusterInfo.ClusterId)
 	// if class is nil, create class
+	return s.initClasses(&workClusterInfo)
+}
+
+func (s *Service) initClasses(workClusterInfo *WorkClusterInfo) error {
 RetryCreateClass:
 	classResp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
 	if err != nil || classResp == nil || classResp.Count == 0 {
@@ -691,7 +697,7 @@ RetryCreateClass:
 			NewMeasurement:    make([]string, 0),
 		}}
 		class := ClassDetail{
-			Clusters:     []WorkClusterInfo{workClusterInfo},
+			Clusters:     []WorkClusterInfo{*workClusterInfo},
 			Measurements: make([]string, 0),
 		}
 		metaData := s.MetaClient.Data()
