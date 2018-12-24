@@ -151,7 +151,7 @@ func (s *Service) Open() error {
 	var err error
 	s.cli, err = clientv3.New(clientv3.Config{
 		Endpoints:            []string{s.etcdConfig.EtcdAddress},
-		DialTimeout:          5 * time.Second,
+		DialTimeout:          10 * time.Second,
 		DialKeepAliveTime:    20 * time.Second,
 		DialKeepAliveTimeout: 10 * time.Second,
 	})
@@ -628,15 +628,15 @@ func (s *Service) createCluster() error {
 	var recruitCluster RecruitClusters
 	ParseJson(recruit.Kvs[0].Value, &recruitCluster)
 	var allClustersInfo AvailableClusterInfo
+	clusterInitial := false
 RetryCreate:
 	allClusterInfoResp, err := s.cli.Get(context.Background(), TSDBClustersKey)
-	if allClusterInfoResp == nil || allClusterInfoResp.Count == 0 {
-		err = s.initAllClusterInfo(&allClustersInfo)
-	} else {
+	if allClusterInfoResp.Count > 0 {
 		ParseJson(allClusterInfoResp.Kvs[0].Value, &allClustersInfo)
-		if allClustersInfo.Clusters == nil {
-			err = s.initAllClusterInfo(&allClustersInfo)
-		}
+		err = s.appendNewWorkCluster(allClustersInfo.Clusters)
+	} else {
+		err = s.initAllClusterInfo(&allClustersInfo)
+		clusterInitial = true
 	}
 	if err != nil {
 		return err
@@ -644,18 +644,24 @@ RetryCreate:
 	latestClusterInfo := allClustersInfo.Clusters[len(allClustersInfo.Clusters)-1]
 	recruitCluster.ClusterIds = append(recruitCluster.ClusterIds, latestClusterInfo.ClusterId)
 	recruitCluster.Number++
+
 	workClusterInfo := WorkClusterInfo{}
 	workClusterInfo.Number = 1
 	workClusterInfo.Limit = DefaultClusterNodeLimit
 	workClusterInfo.Nodes = latestClusterInfo.Nodes
 	workClusterInfo.Master = latestClusterInfo.Nodes[0]
 	// Transaction creation Cluster
-	cmpAllCluster := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
+	cmpAllCluster := clientv3.Compare(clientv3.CreateRevision(TSDBClustersKey), "=", 0)
 	cmpRecruit := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruit.Kvs[0].Value))
 	putAllCluster := clientv3.OpPut(TSDBClustersKey, ToJson(allClustersInfo))
 	putAllRecruit := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
 	putWorkerCluster := clientv3.OpPut(TSDBWorkKey+strconv.FormatUint(latestClusterInfo.ClusterId, 10), ToJson(workClusterInfo))
-	resp, err := s.cli.Txn(context.Background()).If(cmpAllCluster, cmpRecruit).Then(putAllCluster, putAllRecruit, putWorkerCluster).Commit()
+	var resp *clientv3.TxnResponse
+	if clusterInitial {
+		resp, err = s.cli.Txn(context.Background()).If(cmpAllCluster, cmpRecruit).Then(putAllCluster, putAllRecruit, putWorkerCluster).Commit()
+	} else {
+		resp, err = s.cli.Txn(context.Background()).If(cmpRecruit).Then(putAllCluster, putAllRecruit, putWorkerCluster).Commit()
+	}
 	if !resp.Succeeded || err != nil {
 		goto RetryCreate
 	}
@@ -695,8 +701,9 @@ RetryCreateClass:
 			s.Logger.Error("When create Cluster and create class, set meta data failed")
 			s.Logger.Error(err.Error())
 		}
-		classesCamp := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", nil)
-		classDetailCamp := clientv3.Compare(clientv3.Value(TSDBClassId+strconv.FormatUint(classIdResp, 10)), "=", nil)
+		classesCamp := clientv3.Compare(clientv3.CreateRevision(TSDBClassesInfo), "=", 0)
+		classDetailCamp := clientv3.Compare(clientv3.CreateRevision(TSDBClassId+strconv.FormatUint(classIdResp,
+			10)), "=", 0)
 		classesOp := clientv3.OpPut(TSDBClassesInfo, ToJson(classes))
 		classDetailOp := clientv3.OpPut(TSDBClassId+strconv.FormatUint(classIdResp, 10), ToJson(class))
 		resp, err := s.cli.Txn(context.Background()).If(classesCamp, classDetailCamp).Then(classesOp, classDetailOp).Commit()
@@ -707,6 +714,35 @@ RetryCreateClass:
 		_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(classIdResp, 10)+
 			"-Cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(class), clientv3.WithLease(s.lease.ID))
 		return err
+	}
+	return nil
+}
+
+func (s *Service) appendNewWorkCluster(workClusterInfo []WorkClusterInfo) error {
+	clusterId, err := s.GetLatestID(TSDBClusterAutoIncrementId)
+	ip, err := GetLocalHostIp()
+	if err != nil {
+		return err
+	}
+	nodes := []Node{{
+		Host:    ip + s.httpConfig.BindAddress,
+		UdpHost: ip + s.udpConfig.BindAddress,
+	}}
+	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
+		RecruitCluster: RecruitCluster{ClusterId: clusterId, Nodes: nodes, Limit: 3, Number: len(nodes), Master: nodes[0]},
+		Series:         make([]string, 0),
+	})
+	return nil
+}
+
+func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) error {
+	var workClusterInfo = make([]WorkClusterInfo, 0)
+	err := s.appendNewWorkCluster(workClusterInfo)
+	if err != nil {
+		return err
+	}
+	*allClusterInfo = AvailableClusterInfo{
+		Clusters: workClusterInfo,
 	}
 	return nil
 }
@@ -1083,28 +1119,6 @@ RegisterNode:
 	return nil
 }
 
-func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) error {
-	clusterId, err := s.GetLatestID(TSDBClusterAutoIncrementId)
-	if err != nil {
-		return err
-	}
-	var nodes []Node
-	ip, err := GetLocalHostIp()
-	nodes = append(nodes, Node{
-		Host:    ip + s.httpConfig.BindAddress,
-		UdpHost: ip + s.udpConfig.BindAddress,
-	})
-	var workClusterInfo = make([]WorkClusterInfo, 0)
-	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
-		RecruitCluster: RecruitCluster{ClusterId: clusterId, Nodes: nodes, Limit: 3, Number: len(nodes), Master: nodes[0]},
-		Series:         make([]string, 0),
-	})
-	*allClusterInfo = AvailableClusterInfo{
-		Clusters: workClusterInfo,
-	}
-	_, err = s.cli.Put(context.Background(), TSDBClustersKey, ToJson(allClusterInfo))
-	return err
-}
 func (s *Service) joinRecruitClusterByClusterId(clusterId uint64) error {
 	// 不使用RecruitClusterKey，计划通过worker来判断是否允许加入，
 	workClusterKey := TSDBWorkKey + strconv.FormatUint(clusterId, 10)

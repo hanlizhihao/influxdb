@@ -2,21 +2,30 @@ package coordinator
 
 import (
 	"errors"
+	"fmt"
 	"net"
 )
 
 func GetLocalHostIp() (ip string, err error) {
-	localhostAddress, err := net.InterfaceAddrs()
+	netInterfaces, err := net.Interfaces()
 	if err != nil {
-		return "", errors.New(err.Error())
+		fmt.Println("net.Interfaces failed, err:", err.Error())
+		return "", err
 	}
-	for _, address := range localhostAddress {
-		if ipNet, ok := address.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
-			if ipNet.IP.To4() != nil {
-				ip := ipNet.IP.String()
-				return ip, nil
+
+	for i := 0; i < len(netInterfaces); i++ {
+		if (netInterfaces[i].Flags & net.FlagUp) != 0 {
+			addrs, _ := netInterfaces[i].Addrs()
+
+			for _, address := range addrs {
+				if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+					if ipnet.IP.To4() != nil {
+						return ipnet.IP.String(), nil
+					}
+				}
 			}
 		}
 	}
+
 	return "", errors.New("cannot get localhost ip")
 }

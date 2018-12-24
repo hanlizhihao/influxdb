@@ -18,16 +18,14 @@ const (
 	DefaultTimeRangeLimit = time.Hour * 24
 )
 
-var rpcService RpcService
-
 type RpcConfig struct {
 	Enabled     bool   `toml:"enabled"`
-	bindAddress string `toml:"address"`
+	BindAddress string `toml:"address"`
 }
 
 func NewRpcConfig() RpcConfig {
 	return RpcConfig{
-		bindAddress: DefaultRpcBindAddress,
+		BindAddress: DefaultRpcBindAddress,
 	}
 }
 
@@ -42,18 +40,19 @@ type RpcService struct {
 	MetaClient interface {
 		Data() meta.Data
 	}
-	ip string
+	ip            string
+	queryExecutor *QueryExecutor
 }
 
 func NewRpcService(lsm *query.ShardMapper, n *[]Node) *RpcService {
-	rpcService = RpcService{
-		rpcConfig:   NewRpcConfig(),
-		shardMapper: lsm,
-		Logger:      zap.NewNop(),
-		closed:      true,
-		nodes:       n,
+	return &RpcService{
+		rpcConfig:     NewRpcConfig(),
+		shardMapper:   lsm,
+		Logger:        zap.NewNop(),
+		closed:        true,
+		nodes:         n,
+		queryExecutor: NewQuery(lsm, n),
 	}
-	return &rpcService
 }
 func (rs *RpcService) Close() error {
 
@@ -72,8 +71,9 @@ func (rs *RpcService) WithLogger(log *zap.Logger) {
 	rs.Logger = log.With(zap.String("RpcQueryService", "Cluster"))
 }
 func (rs *RpcService) Open() error {
-	err := rpc.Register(rpcService)
-	tcpAddr, err := net.ResolveTCPAddr("tcp", rs.rpcConfig.bindAddress)
+	rs.queryExecutor.MetaClient = rs.MetaClient
+	err := rpc.Register(rs.queryExecutor)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", rs.rpcConfig.BindAddress)
 	listener, err := net.ListenTCP("tcp", tcpAddr)
 	if err != nil {
 		return err
@@ -107,13 +107,31 @@ type RpcParam struct {
 	opt       query.IteratorOptions
 }
 
-func (rs *RpcService) DistributeQuery(param RpcParam, iterator *query.Iterator) error {
+type QueryExecutor struct {
+	nodes      *[]Node
+	MetaClient interface {
+		Data() meta.Data
+	}
+	Logger      *zap.Logger
+	shardMapper *query.ShardMapper
+	ip          string
+}
+
+func NewQuery(lsm *query.ShardMapper, n *[]Node) *QueryExecutor {
+	return &QueryExecutor{
+		shardMapper: lsm,
+		Logger:      zap.NewNop(),
+		nodes:       n,
+	}
+}
+
+func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterator) error {
 	if t := param.timeRange.Min.Add(DefaultTimeRangeLimit); t.After(param.timeRange.Max) {
-		return rs.BoosterQuery(param, iterator)
+		return rq.BoosterQuery(param, iterator)
 	}
 	// The time interval of parameters exceeds the limit
-	nodes := *rs.nodes
-	m := rs.MetaClient.Data()
+	nodes := *rq.nodes
+	m := rq.MetaClient.Data()
 	duration := (param.timeRange.Max.Second() - param.timeRange.Min.Second()) / len(nodes)
 	itCh := make(chan query.Iterator)
 	iterators := make([]query.Iterator, len(nodes)-1)
@@ -132,7 +150,7 @@ func (rs *RpcService) DistributeQuery(param RpcParam, iterator *query.Iterator) 
 		}
 		var it *query.Iterator
 		if node.Id == m.NodeID {
-			err := rs.BoosterQuery(rewriteParam, it)
+			err := rq.BoosterQuery(rewriteParam, it)
 			if err != nil {
 				return err
 			}
@@ -143,7 +161,7 @@ func (rs *RpcService) DistributeQuery(param RpcParam, iterator *query.Iterator) 
 			client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
 			err = client.Call("RpcService.BoosterQuery", rewriteParam, it)
 			if err != nil {
-				rs.Logger.Info("Distribute Query failed")
+				rq.Logger.Info("Distribute Query failed")
 				return
 			}
 			i <- *it
@@ -160,7 +178,7 @@ func (rs *RpcService) DistributeQuery(param RpcParam, iterator *query.Iterator) 
 	select {
 	case <-tc.Done():
 		if len(iterators) < len(nodes) {
-			return rs.BoosterQuery(param, iterator)
+			return rq.BoosterQuery(param, iterator)
 		}
 		result, err := query.Iterators(iterators).Merge(param.opt)
 		if err != nil {
@@ -170,8 +188,8 @@ func (rs *RpcService) DistributeQuery(param RpcParam, iterator *query.Iterator) 
 		return nil
 	}
 }
-func (rs *RpcService) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
-	sm := *rs.shardMapper
+func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
+	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 1)
 	sources = append(sources, &param.source)
 	sg, err := sm.MapShards(sources, param.timeRange, query.SelectOptions{})

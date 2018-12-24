@@ -293,6 +293,8 @@ func (opt *Options) GetConfigPath() string {
 		os.ExpandEnv("${HOME}/.influxdb/influxdb.conf"),
 		"/etc/influxdb/influxdb.conf",
 	} {
+		home := os.Getenv("INFLUX_HOME")
+		fmt.Print(home)
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}

@@ -102,4 +102,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 属于本地class，但series不属于本地的数据处理失败，暂时未作处理，只是重试3次
 * 异步EtcdSerivce写入本地失败，暂时未处理
 * 连接池设计
-* Continues Query 全局生效
+* watch前先同步本地metaData至最新
+## 使用注意
+环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
+需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接

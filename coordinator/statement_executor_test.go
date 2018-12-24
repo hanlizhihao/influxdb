@@ -477,8 +477,8 @@ func NewQueryExecutor() *QueryExecutor {
 	}
 
 	e.StatementExecutor = &coordinator.StatementExecutor{
-		MetaClient: &e.MetaClient,
-		TSDBStore:  e.TSDBStore,
+		// MetaClient: &e.MetaClient,
+		TSDBStore: e.TSDBStore,
 		ShardMapper: &coordinator.LocalShardMapper{
 			MetaClient: &e.MetaClient,
 			TSDBStore:  e.TSDBStore,
