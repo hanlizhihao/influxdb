@@ -560,6 +560,7 @@
     "github.com/boltdb/bolt",
     "github.com/cespare/xxhash",
     "github.com/coreos/etcd/clientv3",
+    "github.com/coreos/etcd/mvcc/mvccpb",
     "github.com/davecgh/go-spew/spew",
     "github.com/dgrijalva/jwt-go",
     "github.com/dgryski/go-bitstream",

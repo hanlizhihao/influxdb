@@ -6,8 +6,6 @@ import (
 	"net"
 )
 
-var ip string
-
 func GetLocalHostIp() (ip string, err error) {
 	if &ip != nil {
 		return ip, nil
@@ -25,8 +23,7 @@ func GetLocalHostIp() (ip string, err error) {
 			for _, address := range addrs {
 				if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 					if ipnet.IP.To4() != nil {
-						ip = ipnet.IP.String()
-						return ip, nil
+						return ipnet.IP.String(), nil
 					}
 				}
 			}

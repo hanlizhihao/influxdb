@@ -23,7 +23,6 @@ import (
 
 const (
 	// Value is a collection of all database instances.
-	TSDBCommonNodesKey  = "tsdb-common-nodes"
 	TSDBCommonNodeIdKey = "tsdb-common-node-"
 	// Value is a collection of all available Cluster, every item is key of Cluster
 	TSDBClustersKey = "tsdb-available-clusters"
@@ -665,7 +664,7 @@ RetryCreate:
 		ParseJson(allClusterInfoResp.Kvs[0].Value, &allClustersInfo)
 		err, allClustersInfo.Clusters, nodes = s.appendNewWorkCluster(allClustersInfo.Clusters)
 	} else {
-		err = s.initAllClusterInfo(&allClustersInfo)
+		err, nodes = s.initAllClusterInfo(&allClustersInfo)
 		clusterInitial = true
 	}
 	if err != nil {
@@ -750,14 +749,11 @@ RetryCreateClass:
 
 func (s *Service) appendNewWorkCluster(workClusterInfo []WorkClusterInfo) (error, []WorkClusterInfo, []Node) {
 	clusterId, err := s.GetLatestID(TSDBClusterAutoIncrementId)
-	ip, err := GetLocalHostIp()
-	if err != nil {
-		return err, nil, nil
-	}
+	s.CheckErrorExit("Get cluster auto increment id faied ", err)
 	nodes := []Node{{
 		Id:      s.MetaClient.Data().NodeID,
-		Host:    ip + s.httpConfig.BindAddress,
-		UdpHost: ip + s.udpConfig.BindAddress,
+		Host:    s.ip + s.httpConfig.BindAddress,
+		UdpHost: s.ip + s.udpConfig.BindAddress,
 	}}
 	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
 		Series:     make([]string, 0),
@@ -770,16 +766,16 @@ func (s *Service) appendNewWorkCluster(workClusterInfo []WorkClusterInfo) (error
 	return nil, workClusterInfo, nodes
 }
 
-func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) error {
+func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) (error, []Node) {
 	var workClusterInfo = make([]WorkClusterInfo, 0, 1)
-	err, workClusterInfo, _ := s.appendNewWorkCluster(workClusterInfo)
+	err, workClusterInfo, nodes := s.appendNewWorkCluster(workClusterInfo)
 	if err != nil {
-		return err
+		return err, nil
 	}
 	*allClusterInfo = AvailableClusterInfo{
 		Clusters: workClusterInfo,
 	}
-	return nil
+	return nil, nodes
 }
 
 // Watch node of the Cluster, change Cluster information and change subscriber
@@ -803,19 +799,16 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 				if strings.Contains(string(ev.Kv.Key), "master") {
 					s.masterNode = nil
 					masterKey := clusterKey + "-master"
-					ip, err := GetLocalHostIp()
-					if err != nil {
-						s.Logger.Error("Get local ip failed,", zap.String("error message:", err.Error()))
-					}
 					// choice master
 				ChoiceMaster:
 					masterResp, err := s.cli.Get(context.Background(), masterKey, clientv3.WithPrefix())
+					s.CheckErrPrintLog("Watch work cluster, get master node failed", err)
 					if masterResp.Count == 0 {
 						cmp := clientv3.Compare(clientv3.CreateRevision(masterKey), "=", 0)
 						node := Node{
 							Id:        s.MetaClient.Data().NodeID,
-							Host:      ip + s.httpConfig.BindAddress,
-							UdpHost:   ip + s.udpConfig.BindAddress,
+							Host:      s.ip + s.httpConfig.BindAddress,
+							UdpHost:   s.ip + s.udpConfig.BindAddress,
 							ClusterId: clusterId,
 						}
 						opPut := clientv3.OpPut(masterKey, ToJson(node), clientv3.WithLease(s.lease.ID))
@@ -1046,67 +1039,21 @@ func (s *Service) putClassDetail() error {
 }
 
 func (s *Service) registerToCommonNode() error {
-	nodeId := s.MetaClient.Data().NodeID
+	nodeId, err := s.GetLatestID(TSDBNodeAutoIncrementId)
+	s.CheckErrorExit("Get node id failed", err)
+	nodeKey := TSDBCommonNodeIdKey + strconv.FormatUint(nodeId, 10)
+	node := Node{
+		Id:      nodeId,
+		Host:    s.ip + s.httpConfig.BindAddress,
+		UdpHost: s.ip + s.udpConfig.BindAddress,
+	}
+	cmp := clientv3.Compare(clientv3.CreateRevision(nodeKey), "=", 0)
+	opPut := clientv3.OpPut(nodeKey, ToJson(node))
 RegisterNode:
 	// Register with etcd
-	commonNodesResp, err := s.cli.Get(context.Background(), TSDBCommonNodesKey)
-	if err != nil {
-		return err
-	}
-	// TSDBCommonNodesKey is not exist
-	if commonNodesResp == nil || commonNodesResp.Count == 0 {
-		if nodeId == 0 {
-			nodeId, err = s.GetLatestID(TSDBNodeAutoIncrementId)
-			err = s.setMetaDataNodeId(nodeId)
-		}
-		var nodes []Node
-		ip, err := GetLocalHostIp()
-		nodes = append(nodes, Node{
-			Id:      nodeId,
-			Host:    ip + s.httpConfig.BindAddress,
-			UdpHost: ip + s.udpConfig.BindAddress,
-		})
-		if err != nil {
-			return errors.New("Get node id failed ")
-		}
-		_, err = s.cli.Put(context.Background(), TSDBCommonNodesKey, ToJson(nodes))
-		_, err = s.cli.Put(context.Background(), TSDBCommonNodeIdKey+strconv.FormatUint(nodeId, 10),
-			ToJson(nodes[len(nodes)-1]), clientv3.WithLease(s.lease.ID))
-		return err
-	}
-	var nodes CommonNodes
-	ParseJson(commonNodesResp.Kvs[0].Value, &nodes)
-	latestNodes := make([]Node, len(nodes))
-	// arrange tsdb common nodes
-NODES:
-	for _, node := range nodes {
-		for _, latestNode := range latestNodes {
-			if latestNode.Id == node.Id {
-				continue NODES
-			}
-			latestNodes = append(latestNodes, node)
-		}
-	}
-	nodeId, err = s.GetLatestID(TSDBNodeAutoIncrementId)
-	err = s.setMetaDataNodeId(nodeId)
-	for _, latestNode := range latestNodes {
-		if latestNode.Id == nodeId {
-			return nil
-		}
-	}
-	ip, err := GetLocalHostIp()
-	nodes = append(nodes, Node{
-		Id:      nodeId,
-		Host:    ip + s.httpConfig.BindAddress,
-		UdpHost: ip + s.udpConfig.BindAddress,
-	})
-	cmp := clientv3.Compare(clientv3.Value(TSDBCommonNodesKey), "=", string(commonNodesResp.Kvs[0].Value))
-	put := clientv3.OpPut(TSDBCommonNodesKey, ToJson(nodes))
-	_, err = s.cli.Put(context.Background(), TSDBCommonNodeIdKey+strconv.FormatUint(nodeId, 10),
-		ToJson(nodes[len(nodes)-1]), clientv3.WithLease(s.lease.ID))
-	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
-	if !resp.Succeeded || err != nil {
-		s.Logger.Error("Register node failed, error message " + err.Error())
+	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
+	s.CheckErrorExit("Register node failed ", err)
+	if !resp.Succeeded {
 		goto RegisterNode
 	}
 	return nil
@@ -1127,14 +1074,10 @@ RetryJoinTarget:
 		ParseJson(clusterNodeResp.Kvs[0].Value, &workClusterInfo)
 		if workClusterInfo.Number < workClusterInfo.Limit {
 			cmp := clientv3.Compare(clientv3.Value(workClusterKey), "=", string(clusterMetaResp.Kvs[0].Value))
-			ip, err := GetLocalHostIp()
-			if err != nil {
-				return err
-			}
 			node := Node{
 				Id:      s.MetaClient.Data().NodeID,
-				Host:    ip + s.httpConfig.BindAddress,
-				UdpHost: ip + s.udpConfig.BindAddress,
+				Host:    s.ip + s.httpConfig.BindAddress,
+				UdpHost: s.ip + s.udpConfig.BindAddress,
 			}
 			joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, cmp)
 			if !joinSuccess {
