@@ -83,6 +83,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
     负载均衡器识别特定请求头后，将不做分析，直接写入本地硬盘存储。
     (3)对于分发写入请求的节点，等待所有被分发写请求完成以后，删除内存数据，写入失败的，写入本地磁盘，等待重试，
     两次以上写入失败的写入磁盘，注意，写请求，如果不负载均衡的情况下，立即响应写入完成，如果负载均衡，等待转发后的响应结果
+    (4)cluster 不能脱离class而存在
 读：
     (1)如果agent为InfluxDbClient或者请求头包含balance，不进行负载均衡，直接进行分布式查询，负载均衡的请求agent为InfluxDBClient
     (2)preparedStatement的compile负责选择ShardGroup，ShardGroup就是IteratorCreator，
@@ -103,6 +104,12 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 异步EtcdSerivce写入本地失败，暂时未处理
 * 连接池设计
 * watch前先同步本地metaData至最新
+* 弹性Hash算法
 ## 使用注意
 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
+listen client url 不能用公网ip?
+ETCD_LISTEN_PEER_URLS="http://129.28.118.191:2380"
+ETCD_LISTEN_CLIENT_URLS="http://129.28.118.191:2379,http://127.0.0.1:2379"
+ETCD_INITIAL_ADVERTISE_PEER_URLS="http://129.28.128.191:2380"
+etcdctl is a command line client for etcd. Make sure to set environment variable ETCDCTL_API=3. For etcdctl v2, please check READMEv2.

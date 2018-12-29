@@ -16,25 +16,25 @@ type (
 		Host    string `json:"host"`
 		UdpHost string `json:"udpHost"`
 		// consistent hash weight
-		Weight int    `json:"weight"`
-		Ip     string `json:"ip"`
-	}
-	CommonNodes    []Node
-	RecruitCluster struct {
+		Weight    int    `json:"weight"`
+		Ip        string `json:"ip"`
 		ClusterId uint64 `json:"cluster_id"`
-		Limit     int    `json:"limit"`
-		Number    int    `json:"number"`
-		Master    Node   `json:"master"`
-		Nodes     []Node `json:"nodes"`
 	}
+	CommonNodes []Node
 	//[{id:1, nodes:[{id:1,host:,udpHost:}]}]
 	Series struct {
 		Key string `json:"key"`
 	}
+
 	WorkClusterInfo struct {
-		RecruitCluster
-		Series  []string `json:"series"`
-		ClassId uint64   `json:"class_id"`
+		ClusterId    uint64   `json:"cluster_id"`
+		Limit        int      `json:"limit"`
+		Number       int      `json:"number"`
+		Series       []string `json:"series"`
+		ClassId      uint64   `json:"class_id"`
+		MasterUsable bool     `json:"master"`
+		MasterId     uint64   `json:"master_id"`
+		MasterHost   string   `json:"master_host"`
 	}
 	// tsdb-available-clusters
 	AvailableClusterInfo struct {
