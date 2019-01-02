@@ -41,9 +41,7 @@ type (
 		Clusters []WorkClusterInfo `json:"clusters"`
 	}
 	// TSDB-Database key: database name value: key: rp name value: RP
-	Databases struct {
-		Database map[string]map[string]Rp `json:"database"`
-	}
+	Databases map[string]map[string]Rp
 	// key: database name, value Cq Array
 	Cqs map[string][]meta.ContinuousQueryInfo
 	Rp  struct {

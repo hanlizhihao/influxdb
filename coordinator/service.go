@@ -27,21 +27,20 @@ const (
 	// Value is a collection of all available Cluster, every item is key of Cluster
 	TSDBClustersKey = "tsdb-available-clusters"
 	// master key: -master; common node: -node
-	TSDBWorkKey                = "tsdb-work-Cluster-"
+	TSDBWorkKey                = "tsdb-work-cluster-"
 	TSDBRecruitClustersKey     = "tsdb-recruit-clusters"
-	TSDBClusterAutoIncrementId = "tsdb-Cluster-auto-increment-id"
+	TSDBClusterAutoIncrementId = "tsdb-cluster-auto-increment-id"
 	TSDBNodeAutoIncrementId    = "tsdb-node-auto-increment-id"
 	TSDBClassAutoIncrementId   = "tsdb-class-auto-increment-id"
 	TSDBClassesInfo            = "tsdb-classes-info"
 	TSDBClassId                = "tsdb-class-"
-	// Cluster-id
+	// example tsdb-cla-1-cluster-1, describe class 1 has cluster 1
 	TSDBClassNode = "tsdb-cla-"
 	TSDBDatabase  = "tsdb-databases"
 	TSDBcq        = "tsdb-cq"
 	TSDBUsers     = "tsdb-users"
 	// default class limit
-	DefaultClassLimit       = 3
-	DefaultClusterNodeLimit = 3
+	DefaultClassLimit = 3
 )
 
 var Once sync.Once
@@ -251,7 +250,7 @@ func (s *Service) processNewMeasurement() {
 				continue
 			}
 			resp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
-			if err != nil && resp.Count == 0 {
+			if err != nil || resp.Count == 0 {
 				ParseJson(resp.Kvs[0].Value, s.classes)
 				var classes = *s.classes
 				classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
@@ -342,6 +341,10 @@ func (s *Service) watchDatabasesInfo() {
 		s.dbsMu.Lock()
 		s.databases = databases
 		s.dbsMu.Unlock()
+	} else {
+		ParseJson(databaseInfoResp.Kvs[0].Value, &s.databases)
+		err := s.addNewDatabase(s.databases)
+		s.CheckErrorExit("synchronize database failed, error message: ", err)
 	}
 	databaseInfo := s.cli.Watch(context.Background(), TSDBDatabase, clientv3.WithPrefix())
 	for database := range databaseInfo {
@@ -353,10 +356,10 @@ func (s *Service) watchDatabasesInfo() {
 			s.dbsMu.Lock()
 			ParseJson(db.Kv.Value, &s.databases)
 			s.dbsMu.Unlock()
-			var noProcessedData = s.databases.Database
+			var additionalDB = s.databases
 			// Add new database and retention policy
 			for _, localDB := range s.MetaClient.Databases() {
-				rps := s.databases.Database[localDB.Name]
+				rps := s.databases[localDB.Name]
 				if rps == nil {
 					_ = s.MetaClient.DropDatabase(localDB.Name)
 					continue
@@ -398,29 +401,35 @@ func (s *Service) watchDatabasesInfo() {
 				}
 				// save DB that has been completed
 				localDBInfo[localDB.Name] = rpInfo
-				delete(noProcessedData, localDB.Name)
+				delete(additionalDB, localDB.Name)
 			}
-			// add new database
-			for key, value := range noProcessedData {
-				_, err = s.MetaClient.CreateDatabase(key)
-				for _, rpValue := range value {
-					_, err = s.MetaClient.CreateRetentionPolicy(key, &meta.RetentionPolicySpec{
-						Name:               rpValue.Name,
-						ReplicaN:           &rpValue.Replica,
-						Duration:           &rpValue.Duration,
-						ShardGroupDuration: rpValue.ShardGroupDuration,
-					}, false)
-					for _, sub := range s.subscriptions {
-						err = s.MetaClient.CreateSubscription(key, rpValue.Name, sub.Name, sub.Mode, sub.Destinations)
-					}
-				}
-			}
+			err = s.addNewDatabase(additionalDB)
 			if err != nil {
 				s.Logger.Error("create new database error !")
 				s.Logger.Error(err.Error())
 			}
 		}
 	}
+}
+
+func (s *Service) addNewDatabase(additionalDB Databases) error {
+	var err error
+	// add new database
+	for key, value := range additionalDB {
+		_, err = s.MetaClient.CreateDatabase(key)
+		for _, rpValue := range value {
+			_, err = s.MetaClient.CreateRetentionPolicy(key, &meta.RetentionPolicySpec{
+				Name:               rpValue.Name,
+				ReplicaN:           &rpValue.Replica,
+				Duration:           &rpValue.Duration,
+				ShardGroupDuration: rpValue.ShardGroupDuration,
+			}, false)
+			for _, sub := range s.subscriptions {
+				err = s.MetaClient.CreateSubscription(key, rpValue.Name, sub.Name, sub.Mode, sub.Destinations)
+			}
+		}
+	}
+	return err
 }
 
 func (s *Service) CheckErrorExit(msg string, err error) {
@@ -515,9 +524,7 @@ func (s *Service) convertToDatabases(databaseInfo []meta.DatabaseInfo) Databases
 		}
 		databases[db.Name] = rps
 	}
-	return Databases{
-		Database: databases,
-	}
+	return databases
 }
 func (s *Service) clearHistoryData() {
 	for _, db := range s.MetaClient.Databases() {
@@ -719,9 +726,10 @@ RetryCreate:
 	ops = append(ops, clientv3.OpPut(clusterKey+"-master", ToJson(nodes[0])))
 	ops = append(ops, clientv3.OpPut(TSDBClustersKey, ToJson(allClustersInfo)))
 	ops = append(ops, clientv3.OpPut(clusterKey, ToJson(workClusterInfo)))
-	clusterNodeKey := clusterKey + "-node"
+	clusterNodeKey := clusterKey + "-node-"
 	for _, node := range nodes {
-		ops = append(ops, clientv3.OpPut(clusterNodeKey, ToJson(node)))
+		ops = append(ops, clientv3.OpPut(clusterNodeKey+strconv.FormatUint(node.Id, 10), ToJson(node),
+			clientv3.WithLease(s.lease.ID)))
 	}
 
 	// Transaction creation Cluster
@@ -779,7 +787,7 @@ RetryCreateClass:
 		}
 		// put alive Cluster key with lease
 		_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(classIdResp, 10)+
-			"-Cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(class), clientv3.WithLease(s.lease.ID))
+			"-cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(class), clientv3.WithLease(s.lease.ID))
 		return err
 	}
 	return nil
@@ -859,7 +867,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 							metaData := s.MetaClient.Data()
 							node.ClusterId = clusterId
 							_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(metaData.ClassID, 10)+
-								"-Cluster-"+strconv.FormatUint(metaData.ClusterID, 10), ToJson(node),
+								"-cluster-"+strconv.FormatUint(metaData.ClusterID, 10), ToJson(node),
 								clientv3.WithLease(s.lease.ID))
 							continue
 						}
@@ -887,6 +895,27 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 	}
 }
 
+func (s *Service) checkClassesMetaData(classesP *[]Class) {
+	if classesP == nil {
+		s.Logger.Error("CheckClassesMetaData Classes is nil")
+	}
+	classes := *classesP
+	for _, class := range classes {
+		clusterIds := make([]uint64, len(class.ClusterIds))
+		for _, id := range class.ClusterIds {
+			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(id, 10))
+			if resp.Count > 0 && err == nil {
+				clusterIds = append(clusterIds, id)
+			}
+		}
+		class.ClusterIds = clusterIds
+	}
+	_, err := s.cli.Put(context.Background(), TSDBClassesInfo, ToJson(classes))
+	if err != nil {
+		s.Logger.Error(err.Error())
+	}
+}
+
 // Cluster is logical node and min uint, they made up class, working Cluster must be class member
 // Become a Cluster of worker, add to classes info, create or join the original class.
 func (s *Service) joinClass() error {
@@ -896,6 +925,7 @@ RetryAddClasses:
 	// etcd don't contain TSDBClassesInfo
 	if err == nil && classesResp.Count > 0 {
 		ParseJson(classesResp.Kvs[0].Value, &classes)
+		go s.checkClassesMetaData(&classes)
 	}
 	var addNewClass = func() error {
 		class := Class{
@@ -997,9 +1027,40 @@ RetryAddClasses:
 	return err
 }
 
+func (s *Service) checkClassCluster() {
+RetryCheckClassCluster:
+	classResp, err := s.cli.Get(context.Background(), TSDBClassId+
+		strconv.FormatUint(s.MetaClient.Data().ClassID, 10))
+	if classResp.Count > 0 && err == nil {
+		ParseJson(classResp.Kvs[0].Value, s.classDetail)
+	}
+	classKey := TSDBClassId + strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
+	clusters := make([]WorkClusterInfo, len(s.classDetail.Clusters))
+	for _, cluster := range s.classDetail.Clusters {
+		if cluster.ClusterId == s.MetaClient.Data().ClusterID {
+			continue
+		}
+		resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(cluster.ClusterId, 10))
+		if resp.Count > 0 && err == nil {
+			clusters = append(clusters, cluster)
+		}
+	}
+	if len(s.classDetail.Clusters) == len(clusters) {
+		return
+	}
+	cmp := clientv3.Compare(clientv3.Value(classKey), "=", ToJson(*s.classDetail))
+	s.classDetail.Clusters = clusters
+	opPut := clientv3.OpPut(classKey, ToJson(*s.classDetail))
+	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
+	if !resp.Succeeded || err != nil {
+		goto RetryCheckClassCluster
+	}
+}
+
 func (s *Service) watchClassNode() {
+	go s.checkClassCluster()
 	classNodeEventChan := s.cli.Watch(context.Background(), TSDBClassNode+strconv.
-		FormatUint(s.MetaClient.Data().ClassID, 10)+"-Cluster", clientv3.WithPrefix())
+		FormatUint(s.MetaClient.Data().ClassID, 10)+"-cluster", clientv3.WithPrefix())
 	for classNodeInfo := range classNodeEventChan {
 		for _, event := range classNodeInfo.Events {
 			if event.Type == mvccpb.DELETE {
@@ -1068,7 +1129,7 @@ func (s *Service) putClassDetail() error {
 		// If local node is local Cluster's master node, local node will put Cluster key of the class
 		if s.masterNode.Id == s.MetaClient.Data().NodeID {
 			_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(s.MetaClient.Data().ClassID, 10)+
-				"-Cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(s.masterNode),
+				"-cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(s.masterNode),
 				clientv3.WithLease(s.lease.ID))
 		}
 		return nil
@@ -1086,7 +1147,7 @@ func (s *Service) registerToCommonNode() error {
 		UdpHost: s.ip + s.udpConfig.BindAddress,
 	}
 	cmp := clientv3.Compare(clientv3.CreateRevision(nodeKey), "=", 0)
-	opPut := clientv3.OpPut(nodeKey, ToJson(node))
+	opPut := clientv3.OpPut(nodeKey, ToJson(node), clientv3.WithLease(s.lease.ID))
 RegisterNode:
 	// Register with etcd
 	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()

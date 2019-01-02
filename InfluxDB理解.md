@@ -107,10 +107,11 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
 * 弹性Hash算法
 ## 使用注意
-环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
-需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
+* 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
+* 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
 listen client url 不能用公网ip?
-ETCD_LISTEN_PEER_URLS="http://129.28.118.191:2380"
-ETCD_LISTEN_CLIENT_URLS="http://129.28.118.191:2379,http://127.0.0.1:2379"
-ETCD_INITIAL_ADVERTISE_PEER_URLS="http://129.28.128.191:2380"
-etcdctl is a command line client for etcd. Make sure to set environment variable ETCDCTL_API=3. For etcdctl v2, please check READMEv2.
+* ETCD_LISTEN_PEER_URLS="http://129.28.118.191:2380"
+* ETCD_LISTEN_CLIENT_URLS="http://129.28.118.191:2379,http://127.0.0.1:2379"
+* ETCD_INITIAL_ADVERTISE_PEER_URLS="http://129.28.128.191:2380"
+* etcdctl is a command line client for etcd. Make sure to set environment variable ETCDCTL_API=3. For etcdctl v2, please check READMEv2.
+* RP失效后，应该删除元数据，以便全局生效
