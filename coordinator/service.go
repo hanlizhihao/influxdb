@@ -32,7 +32,7 @@ const (
 	TSDBClusterAutoIncrementId = "tsdb-cluster-auto-increment-id"
 	TSDBNodeAutoIncrementId    = "tsdb-node-auto-increment-id"
 	TSDBClassAutoIncrementId   = "tsdb-class-auto-increment-id"
-	TSDBClassesInfo            = "tsdb-classes-info"
+	TSDBClassesInfo            = "tsdb-classes"
 	TSDBClassId                = "tsdb-class-"
 	// example tsdb-cla-1-cluster-1, describe class 1 has cluster 1
 	TSDBClassNode = "tsdb-cla-"
@@ -122,7 +122,7 @@ func (s *Service) GetLatestID(key string) (uint64, error) {
 		return 0, err
 	}
 	if latestClusterId.Count == 0 {
-		_, err = s.cli.Put(context.Background(), key, "0")
+		_, err = s.cli.Put(context.Background(), key, "1")
 	}
 getClusterId:
 	latestClusterId, err = s.cli.Get(context.Background(), key)
@@ -188,7 +188,7 @@ func (s *Service) Open() error {
 	go s.processNewMeasurement()
 	go s.watchUsers()
 	s.closed = false
-	s.Logger.Info("Opened Service")
+	s.Logger.Info("Opened Coordinator Service")
 	// Cluster query rpc process
 	s.rpcQuery.WithLogger(s.Logger)
 	s.rpcQuery.MetaClient = s.MetaClient
@@ -455,6 +455,15 @@ func (s *Service) watchContinuesQuery() {
 		}
 		_, err := s.cli.Put(context.Background(), TSDBcq, ToJson(cqs))
 		s.CheckErrorExit("Initial Meta Data Continues Query failed, error message: ", err)
+	} else {
+		var cqs Cqs
+		ParseJson(cqResp.Kvs[0].Value, &cqs)
+		for k, v := range cqs {
+			for _, cq := range v {
+				err = s.MetaClient.CreateContinuousQuery(k, cq.Name, cq.Query)
+				s.CheckErrorExit("Synchronize continue query failed", err)
+			}
+		}
 	}
 	cqInfo := s.cli.Watch(context.Background(), TSDBcq, clientv3.WithPrefix())
 	for cq := range cqInfo {
@@ -723,7 +732,7 @@ RetryCreate:
 	workClusterInfo := allClustersInfo.Clusters[len(allClustersInfo.Clusters)-1]
 	clusterKey := TSDBWorkKey + strconv.FormatUint(latestClusterInfo.ClusterId, 10)
 
-	ops = append(ops, clientv3.OpPut(clusterKey+"-master", ToJson(nodes[0])))
+	ops = append(ops, clientv3.OpPut(clusterKey+"-master", ToJson(nodes[0]), clientv3.WithLease(s.lease.ID)))
 	ops = append(ops, clientv3.OpPut(TSDBClustersKey, ToJson(allClustersInfo)))
 	ops = append(ops, clientv3.OpPut(clusterKey, ToJson(workClusterInfo)))
 	clusterNodeKey := clusterKey + "-node-"
@@ -1138,8 +1147,12 @@ func (s *Service) putClassDetail() error {
 }
 
 func (s *Service) registerToCommonNode() error {
-	nodeId, err := s.GetLatestID(TSDBNodeAutoIncrementId)
-	s.CheckErrorExit("Get node id failed", err)
+	var err error
+	nodeId := s.MetaClient.Data().NodeID
+	if nodeId == 0 {
+		nodeId, err = s.GetLatestID(TSDBNodeAutoIncrementId)
+		s.CheckErrorExit(" Get auto increment id failed", err)
+	}
 	nodeKey := TSDBCommonNodeIdKey + strconv.FormatUint(nodeId, 10)
 	node := Node{
 		Id:      nodeId,

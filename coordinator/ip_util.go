@@ -7,9 +7,6 @@ import (
 )
 
 func GetLocalHostIp() (ip string, err error) {
-	if &ip != nil {
-		return ip, nil
-	}
 	netInterfaces, err := net.Interfaces()
 	if err != nil {
 		fmt.Println("net.Interfaces failed, err:", err.Error())

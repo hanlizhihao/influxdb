@@ -190,7 +190,7 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 func (e *ClusterStatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.AlterRetentionPolicyStatement) error {
 	e.EtcdService.dbsMu.Lock()
 	defer e.EtcdService.dbsMu.Unlock()
-	rps := e.EtcdService.databases.Database[stmt.Database]
+	rps := e.EtcdService.databases[stmt.Database]
 	if rps == nil {
 		return influxdb.ErrRetentionPolicyNotFound(stmt.Database)
 	}
@@ -213,7 +213,7 @@ func (e *ClusterStatementExecutor) executeAlterRetentionPolicyStatement(stmt *in
 	rp.Replica = *stmt.Replication
 	rp.ShardGroupDuration = *stmt.ShardGroupDuration
 	rps[stmt.Name] = rp
-	e.EtcdService.databases.Database[stmt.Database] = rps
+	e.EtcdService.databases[stmt.Database] = rps
 	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
 }
 
@@ -270,7 +270,7 @@ func (e *ClusterStatementExecutor) executeCreateDatabaseStatement(stmt *influxql
 		// but can't go there until 1.1 is used everywhere
 		return meta.ErrInvalidName
 	}
-	if e.EtcdService.databases.Database[stmt.Name] != nil {
+	if e.EtcdService.databases[stmt.Name] != nil {
 		return errors.New("Database " + stmt.Name + "exist")
 	}
 	if stmt.RetentionPolicyCreate {
@@ -285,7 +285,7 @@ func (e *ClusterStatementExecutor) executeCreateDatabaseStatement(stmt *influxql
 			ShardGroupDuration: stmt.RetentionPolicyShardGroupDuration,
 		}
 	} else {
-		e.EtcdService.databases.Database[stmt.Name] = make(map[string]Rp)
+		e.EtcdService.databases[stmt.Name] = make(map[string]Rp)
 	}
 	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
 }
@@ -300,7 +300,7 @@ func (e *ClusterStatementExecutor) executeCreateRetentionPolicyStatement(stmt *i
 	if &stmt.Duration != nil && stmt.Duration < meta.MinRetentionPolicyDuration && stmt.Duration != 0 {
 		return meta.ErrRetentionPolicyDurationTooLow
 	}
-	rps := e.EtcdService.databases.Database[stmt.Database]
+	rps := e.EtcdService.databases[stmt.Database]
 	if rp := rps[stmt.Name]; &rp != nil {
 		return meta.ErrContinuousQueryExists
 	}
