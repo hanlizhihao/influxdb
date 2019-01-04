@@ -209,13 +209,13 @@ func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, poi
 		if qb.measurement[name] == nil {
 			classId := qb.otherMeasurement[name]
 			// todo: check map value uint64
-			if &classId == nil {
+			if classId == 0 {
 				newMeasurementPoint = append(newMeasurementPoint, point)
 				continue
 			}
 			points = otherClassPoint[classId]
 			if points == nil {
-				points = make([]models.Point, 5)
+				points = make([]models.Point, 0)
 				points = append(points, point)
 			} else {
 				points = append(points, point)
@@ -226,26 +226,31 @@ func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, poi
 		localClassPoint = append(localClassPoint, point)
 	}
 	// process otherClassPoint
-	go func(otherClassPoint map[uint64][]models.Point) {
-		processFailedKeys := make([]string, 0)
-		retryTime := -1
-	RetryForward:
-		retryTime++
-		for classId, otherClassPoints := range otherClassPoint {
-			otherClassClient, err := qb.GetClientByClassId("InfluxForwardClient", classId)
-			err = qb.ForwardPoint(*otherClassClient, otherClassPoints)
-			if err != nil {
-				qb.Logger.Error("Failure to retrieve client for forwarding write request, will try again")
+	if len(otherClassPoint) != 0 {
+		go func(otherClassPoint map[uint64][]models.Point) {
+			processFailedKeys := make([]string, 0)
+			retryTime := -1
+		RetryForward:
+			retryTime++
+			for classId, otherClassPoints := range otherClassPoint {
+				otherClassClient, err := qb.GetClientByClassId("InfluxForwardClient", classId)
+				err = qb.ForwardPoint(*otherClassClient, otherClassPoints)
+				if err != nil {
+					qb.Logger.Error("Failure to retrieve client for forwarding write request, will try again")
+				}
 			}
-		}
-		if retryTime < 3 && len(processFailedKeys) != 0 {
-			goto RetryForward
-		}
-	}(otherClassPoint)
+			if retryTime < 3 && len(processFailedKeys) != 0 {
+				goto RetryForward
+			}
+		}(otherClassPoint)
+	}
 	// process new measurement
-	go func(newMeasurementPoint []models.Point) {
-		qb.newPointChan <- &NewMeasurementPoint{Points: newMeasurementPoint, DB: db, Rp: rp, User: user}
-	}(newMeasurementPoint)
+	if len(newMeasurementPoint) != 0 {
+		go func(newMeasurementPoint []models.Point) {
+			qb.newPointChan <- &NewMeasurementPoint{Points: newMeasurementPoint, DB: db, Rp: rp, User: user}
+		}(newMeasurementPoint)
+	}
+
 	// process point belong local class
 	pointWriteOtherCluster := make(map[string][]models.Point)
 	localNodePoint := make([]models.Point, 0)
@@ -302,6 +307,10 @@ func (qb *HttpBalance) GetClientByClassId(agent string, classId uint64) (*client
 	var err error
 RetryGetClient:
 	ips := qb.classIpMap[classId]
+	if ips == nil {
+		qb.Logger.Error("get ip from class id failed, ips is nil")
+		return nil, errors.New("class " + strconv.FormatUint(classId, 10) + "is nil error")
+	}
 	httpClient := qb.clients[ips[0]]
 	if httpClient == nil {
 		var httpConfig = qb.clientConfig

@@ -1,7 +1,6 @@
 package coordinator
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"github.com/coreos/etcd/clientv3"
@@ -183,6 +182,7 @@ func (s *Service) Open() error {
 	if err != nil {
 		return err
 	}
+	go s.watchClassesInfo()
 	go s.watchDatabasesInfo()
 	go s.watchContinuesQuery()
 	go s.processNewMeasurement()
@@ -198,39 +198,6 @@ func (s *Service) Open() error {
 
 func (s *Service) processNewMeasurement() {
 	newPointChan := s.httpd.Handler.Balancing.GetNewPointChan()
-	var filterPoint = func(point models.Point, measurementPoint *httpd.NewMeasurementPoint) error {
-		if s.measurement[string(point.Name())] != nil {
-			node := s.ch.Get(string(point.Key()))
-			if node.Id == s.masterNode.Id {
-				if err := s.httpd.Handler.PointsWriter.WritePoints(measurementPoint.DB, measurementPoint.Rp,
-					1, measurementPoint.User, []models.Point{point}); err != nil {
-					s.Logger.Error(err.Error())
-				}
-				return nil
-			}
-			httpClientP, err := s.httpd.Handler.Balancing.GetClient(node.Ip, "")
-			var httpClient = *httpClientP
-			// Cluster's master node crash
-			if err = s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point}); err != nil {
-				s.Logger.Error(err.Error())
-			}
-			if httpClient != nil {
-				httpClient.Close()
-			}
-			return nil
-		}
-		if classId := s.otherMeasurement[string(point.Name())]; &classId != nil {
-			httpClientP, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient", classId)
-			var httpClient = *httpClientP
-			if err = s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point}); err != nil {
-				s.Logger.Error(err.Error())
-			}
-			if httpClient != nil {
-				httpClient.Close()
-			}
-		}
-		return errors.New("")
-	}
 	for {
 		newMeasurementPoint, ok := <-newPointChan
 		if !ok {
@@ -240,28 +207,27 @@ func (s *Service) processNewMeasurement() {
 		failedPoints := make([]models.Point, 0)
 	ProcessFailedPoint:
 		for _, point := range newMeasurementPoint.Points {
-			err := filterPoint(point, newMeasurementPoint)
-			if err == nil {
-				continue
-			}
-			if len(*s.classes) == 0 {
-				s.Logger.Error("Meta Data is nil, please restart database")
-				failedPoints = append(failedPoints, point)
-				continue
-			}
-			resp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
-			if err != nil || resp.Count == 0 {
-				ParseJson(resp.Kvs[0].Value, s.classes)
-				var classes = *s.classes
-				classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
-				updateClass := classes[0]
-				classes = append(classes[:1], classes[2:]...)
-				classes = append(classes, updateClass)
-				cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
-				putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
-				resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
-				if resp.Succeeded && err == nil {
+			measurement := string(point.Name())
+			if s.measurement[measurement] == nil && s.otherMeasurement[measurement] == 0 {
+				if len(*s.classes) == 0 {
+					s.Logger.Error("Meta Data is nil, please restart database")
+					failedPoints = append(failedPoints, point)
 					continue
+				}
+				resp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
+				if err != nil || resp.Count == 0 {
+					ParseJson(resp.Kvs[0].Value, s.classes)
+					var classes = *s.classes
+					classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
+					updateClass := classes[0]
+					classes = append(classes[:1], classes[2:]...)
+					classes = append(classes, updateClass)
+					cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
+					putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
+					resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
+					if resp.Succeeded && err == nil {
+						continue
+					}
 				}
 			}
 			s.Logger.Error("Add measurement to class failed")
@@ -285,13 +251,15 @@ func (s *Service) watchClassesInfo() {
 		ParseJson(resp.Kvs[0].Value, &workClusterInfo)
 		err = s.initClasses(&workClusterInfo)
 		s.CheckErrorExit("Watch Classes info, init classes meta data failed", err)
+		classesResp, err = s.cli.Get(context.Background(), TSDBClassesInfo)
+		s.CheckErrorExit("Watch Classes info, init classes meta data failed", err)
+		s.buildMeasurementIndex(classesResp.Kvs[0].Value)
+	} else {
+		s.buildMeasurementIndex(classesResp.Kvs[0].Value)
 	}
 	classesWatch := s.cli.Watch(context.Background(), TSDBClassesInfo)
 	for classesInfo := range classesWatch {
 		for _, event := range classesInfo.Events {
-			if bytes.Equal(event.PrevKv.Value, event.Kv.Value) {
-				continue
-			}
 			s.buildMeasurementIndex(event.Kv.Value)
 		}
 	}
@@ -308,9 +276,6 @@ func (s *Service) watchUsers() {
 	usersCh := s.cli.Watch(context.Background(), TSDBUsers)
 	for userResp := range usersCh {
 		for _, event := range userResp.Events {
-			if bytes.Equal(event.PrevKv.Value, event.Kv.Value) {
-				continue
-			}
 			s.mu.Lock()
 			ParseJson(event.Kv.Value, &s.latestUsers)
 			s.mu.Unlock()
@@ -349,9 +314,6 @@ func (s *Service) watchDatabasesInfo() {
 	databaseInfo := s.cli.Watch(context.Background(), TSDBDatabase, clientv3.WithPrefix())
 	for database := range databaseInfo {
 		for _, db := range database.Events {
-			if bytes.Equal(db.PrevKv.Value, db.Kv.Value) {
-				continue
-			}
 			localDBInfo := make(map[string]map[string]Rp, len(s.MetaClient.Databases()))
 			s.dbsMu.Lock()
 			ParseJson(db.Kv.Value, &s.databases)
@@ -468,9 +430,6 @@ func (s *Service) watchContinuesQuery() {
 	cqInfo := s.cli.Watch(context.Background(), TSDBcq, clientv3.WithPrefix())
 	for cq := range cqInfo {
 		for _, ev := range cq.Events {
-			if bytes.Equal(ev.PrevKv.Value, ev.Kv.Value) {
-				continue
-			}
 			var latestCqs Cqs
 			ParseJson(ev.Kv.Value, &latestCqs)
 			noProcessedCq := latestCqs
@@ -972,7 +931,11 @@ RetryAddClasses:
 		for classIndex, class := range classes {
 			for _, id := range class.ClusterIds {
 				if id == s.MetaClient.Data().ClusterID {
+					// ensure meta class id is same as etcd's meta class id
 					clusterProcessed = true
+					metaData := s.MetaClient.Data()
+					metaData.ClassID = class.ClassId
+					s.MetaClient.SetData(&metaData)
 					break
 				}
 			}
@@ -1129,21 +1092,21 @@ func (s *Service) putClasses(classesResp *clientv3.GetResponse, classes []Class)
 }
 
 func (s *Service) putClassDetail() error {
-	cmpClassDetail := clientv3.Compare(clientv3.Value(TSDBClassId+strconv.FormatUint(s.MetaClient.Data().ClassID,
-		10)), "=", string(ToJson(*s.classDetail)))
-	opPutClassDetail := clientv3.OpPut(TSDBClassId+strconv.FormatUint(s.MetaClient.Data().ClassID, 10),
-		ToJson(*s.classDetail))
-	resp, err := s.cli.Txn(context.Background()).If(cmpClassDetail).Then(opPutClassDetail).Commit()
+	classKey := strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
+	cmpClassDetail := clientv3.Compare(clientv3.Value(TSDBClassId+classKey), "=", string(ToJson(*s.classDetail)))
+	opPutClassDetail := clientv3.OpPut(TSDBClassId+classKey, ToJson(*s.classDetail))
+	resp, _ := s.cli.Txn(context.Background()).If(cmpClassDetail).Then(opPutClassDetail).Commit()
 	if resp.Succeeded {
 		// If local node is local Cluster's master node, local node will put Cluster key of the class
 		if s.masterNode.Id == s.MetaClient.Data().NodeID {
-			_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(s.MetaClient.Data().ClassID, 10)+
+			_, err := s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(s.MetaClient.Data().ClassID, 10)+
 				"-cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(s.masterNode),
 				clientv3.WithLease(s.lease.ID))
+			return err
 		}
 		return nil
 	}
-	return err
+	return errors.New("Put Class detail failed , class key: " + classKey)
 }
 
 func (s *Service) registerToCommonNode() error {

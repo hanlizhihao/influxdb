@@ -774,6 +774,8 @@ func (h *Handler) serveWrite(w http.ResponseWriter, r *http.Request, user meta.U
 			return
 		}
 	}
+	rp := r.URL.Query().Get("rp")
+	points, _ = h.Balancing.writeBalance(&w, r, points, database, rp, user)
 
 	// Write points.
 	if err := h.PointsWriter.WritePoints(database, r.URL.Query().Get("rp"), consistency, user, points); influxdb.IsClientError(err) {
