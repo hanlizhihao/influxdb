@@ -286,7 +286,7 @@ func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, poi
 	return localNodePoint, nil
 }
 
-// @param agent is "", target client will save point to itself, can not execute cluster analysis
+// @param agent is "", target client will save point to itself, can not execute cluster
 func (qb *HttpBalance) GetClient(ip string, agent string) (*client.Client, error) {
 	var err error
 	httpClient := qb.clients[ip]

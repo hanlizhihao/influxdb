@@ -43,7 +43,7 @@ const (
 	DefaultClassLimit = 3
 )
 
-var Once sync.Once
+var one sync.Once
 
 type Service struct {
 	MetaClient interface {
@@ -100,16 +100,21 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 	mapper *query.ShardMapper) *Service {
 	nodes := make([]Node, 0)
 	s := &Service{
-		Logger:      zap.NewNop(),
-		closed:      true,
-		store:       store,
-		etcdConfig:  etcdConfig,
-		httpConfig:  httpConfig,
-		udpConfig:   udpConfig,
-		classDetail: &ClassDetail{},
-		rpcQuery:    NewRpcService(mapper, &nodes),
-		Cluster:     false,
-		classes:     new(Classes),
+		Logger:           zap.NewNop(),
+		closed:           true,
+		store:            store,
+		etcdConfig:       etcdConfig,
+		httpConfig:       httpConfig,
+		udpConfig:        udpConfig,
+		classDetail:      &ClassDetail{},
+		rpcQuery:         NewRpcService(mapper, &nodes),
+		Cluster:          false,
+		classes:          new(Classes),
+		measurement:      make(map[string]interface{}),
+		otherMeasurement: make(map[string]uint64),
+		classIpMap:       make(map[uint64][]string),
+		masterNode:       new(Node),
+		ch:               consistent.NewConsistent(),
 	}
 	return s
 }
@@ -169,9 +174,7 @@ func (s *Service) Open() error {
 	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.measurement = make(map[string]interface{})
-	s.otherMeasurement = make(map[string]uint64)
-	s.classIpMap = make(map[uint64][]string)
+	s.httpd.Handler.Balancing.SetMeasurementMapIndex(s.measurement, s.otherMeasurement, s.classIpMap)
 	s.Logger.Info("Starting register for ETCD Service...")
 	err = s.registerToCommonNode()
 	if err != nil {
@@ -208,10 +211,11 @@ func (s *Service) processNewMeasurement() {
 		}
 		// create new measurement
 		failedPoints := make([]models.Point, 0)
-	ProcessFailedPoint:
 		for _, point := range newMeasurementPoint.Points {
 			measurement := string(point.Name())
-			if s.measurement[measurement] == nil && s.otherMeasurement[measurement] == 0 {
+			mapValue := s.measurement[measurement]
+			classId := s.otherMeasurement[measurement]
+			if mapValue == nil && classId == 0 {
 				if len(*s.classes) == 0 {
 					s.Logger.Error("Meta Data is nil, please restart database")
 					failedPoints = append(failedPoints, point)
@@ -234,59 +238,59 @@ func (s *Service) processNewMeasurement() {
 					resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
 					if resp.Succeeded && err == nil {
 						// dispatcher point to target class node
-						if classes[0].ClassId == s.MetaClient.Data().ClassID {
-							targetClusterMasterNode := s.ch.Get(string(point.Key()))
-							// if target node is self node
-							if targetClusterMasterNode.Id == s.MetaClient.Data().NodeID {
-								if err := s.httpd.Handler.PointsWriter.WritePoints(newMeasurementPoint.DB,
-									newMeasurementPoint.Rp, 1, newMeasurementPoint.User,
-									[]models.Point{point}); err != nil {
-									s.Logger.Error(err.Error())
-								}
-							} else {
-								promise.ExecuteNeedRetryAction(func() error {
-									targetHttpClientPoint, err := s.httpd.Handler.Balancing.GetClient(
-										targetClusterMasterNode.Ip, "")
-									if err != nil {
-										return err
-									}
-									var client = *targetHttpClientPoint
-									return s.httpd.Handler.Balancing.ForwardPoint(client, []models.Point{point})
-								}, func() {
-									// success
-								}, func() {
-									// error
-								}, s.Logger)
-							}
-							continue
-						}
-						promise.ExecuteNeedRetryAction(func() error {
-							s.otherMeasurement[measurement] = classes[0].ClassId
-							httpClientP, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient",
-								classes[0].ClassId)
-							if err != nil {
-								return err
-							}
-							var httpClient = *httpClientP
-							return s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point})
-						}, func() {
-
-						}, func() {
-
-						}, s.Logger)
+						s.distributeWritePoint(point, classes[0].ClassId, newMeasurementPoint)
 						continue
 					}
 				}
 			}
-			s.Logger.Error("Add measurement to class failed")
-			failedPoints = append(failedPoints, point)
-		}
-		if len(failedPoints) != 0 {
-			newMeasurementPoint.Points = failedPoints
-			failedPoints = make([]models.Point, 0)
-			goto ProcessFailedPoint
+			s.Logger.Error("Point is not create measurement point, will forward the point")
+			if classId == 0 {
+				classId = s.MetaClient.Data().ClassID
+			}
+			s.distributeWritePoint(point, classId, newMeasurementPoint)
 		}
 	}
+}
+
+func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMeasurementPoint *httpd.NewMeasurementPoint) {
+	if classId == s.MetaClient.Data().ClassID {
+		targetClusterMasterNode := s.ch.Get(string(point.Key()))
+		// if target node is self node
+		if targetClusterMasterNode.Id == s.MetaClient.Data().NodeID {
+			if err := s.httpd.Handler.PointsWriter.WritePoints(newMeasurementPoint.DB,
+				newMeasurementPoint.Rp, 1, newMeasurementPoint.User,
+				[]models.Point{point}); err != nil {
+				s.Logger.Error(err.Error())
+			}
+		} else {
+			promise.ExecuteNeedRetryAction(func() error {
+				targetHttpClientPoint, err := s.httpd.Handler.Balancing.GetClient(
+					targetClusterMasterNode.Ip, "")
+				if err != nil {
+					return err
+				}
+				var client = *targetHttpClientPoint
+				return s.httpd.Handler.Balancing.ForwardPoint(client, []models.Point{point})
+			}, func() {
+				// success
+			}, func() {
+				// error
+			}, s.Logger)
+		}
+		return
+	}
+	promise.ExecuteNeedRetryAction(func() error {
+		httpClientP, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient", classId)
+		if err != nil {
+			return err
+		}
+		var httpClient = *httpClientP
+		return s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point})
+	}, func() {
+
+	}, func() {
+
+	}, s.Logger)
 }
 
 // watch classes info, update index
@@ -691,6 +695,16 @@ RetryJoinOriginalCluster:
 			}
 		}
 	}
+	masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(s.MetaClient.Data().ClusterID,
+		10)+"-master", clientv3.WithPrefix())
+	s.CheckErrorExit("Get cluster master node failed", err)
+	if masterResp.Count == 0 {
+		return errors.New("Cluster master node is nil ")
+	}
+	ParseJson(masterResp.Kvs[0].Value, s.masterNode)
+	port, _ := strconv.Atoi(string([]rune(s.httpConfig.BindAddress)[1 : len(s.httpConfig.BindAddress)-1]))
+	s.httpd.Handler.Balancing.SetMasterNode(consistent.NewNode(s.masterNode.Id, s.masterNode.Host, port,
+		"host_"+strconv.FormatUint(s.MetaClient.Data().ClusterID, 10), 1))
 	return nil
 }
 
@@ -1254,9 +1268,6 @@ func (s *Service) WithLogger(log *zap.Logger) {
 // @param data is classes
 func (s *Service) buildMeasurementIndex(data []byte) {
 	ParseJson(data, s.classes)
-	if s.otherMeasurement == nil {
-		s.otherMeasurement = make(map[string]uint64, len(*s.classes))
-	}
 	var classes = *s.classes
 	for _, class := range classes {
 		if len(class.NewMeasurement) == 0 && len(class.DeleteMeasurement) == 0 {
@@ -1264,9 +1275,6 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 		}
 		// process local class
 		if class.ClassId == s.MetaClient.Data().ClassID {
-			if s.measurement == nil {
-				s.measurement = make(map[string]interface{})
-			}
 			for _, measurementName := range class.Measurements {
 				s.measurement[measurementName] = ""
 			}
@@ -1298,22 +1306,16 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 			s.classIpMap[class.ClassId] = ips
 		}
 	}
-	Once.Do(func() {
-		s.httpd.Handler.Balancing.SetMeasurementMapIndex(s.measurement, s.otherMeasurement, s.classIpMap)
-	})
 }
 
 func (s *Service) buildConsistentHash() {
-	if s.ch == nil {
-		s.ch = consistent.NewConsistent()
-	}
 	for _, classItem := range s.classDetail.Clusters {
 		port, _ := strconv.Atoi(string([]rune(s.httpConfig.BindAddress)[1 : len(s.httpConfig.BindAddress)-1]))
 		weight := 1
 		s.ch.Add(consistent.NewNode(classItem.MasterId, classItem.MasterHost, port,
 			"host_"+strconv.FormatUint(classItem.ClusterId, 10), weight))
 	}
-	Once.Do(func() {
+	one.Do(func() {
 		s.httpd.Handler.Balancing.SetConsistent(s.ch)
 	})
 }
