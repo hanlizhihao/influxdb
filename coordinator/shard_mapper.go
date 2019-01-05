@@ -2,6 +2,7 @@ package coordinator
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"io"
 	"net/rpc"
 	"time"
@@ -178,7 +179,7 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 	resultCh := make(chan query.Iterator)
 	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
 	defer cancel()
-	for _, node := range a.s.ch.Nodes {
+	for _, node := range a.s.ch.MasterNodes {
 		if node.Id != a.s.masterNode.Id {
 			count++
 			client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
@@ -192,8 +193,9 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 					timeRange: timeRange,
 					opt:       opt,
 				}, it)
+				resultCh <- *it
 				if err != nil {
-					resultCh <- *it
+					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
 				}
 			}()
 		}
@@ -239,20 +241,27 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 
 		return query.Iterators(inputs).Merge(opt)
 	}
-	itrs := make([]query.Iterator, count)
+	itrs := make([]query.Iterator, 0, count)
 	localIterator, err := sg.CreateIterator(ctx, m, opt)
 	if err != nil {
 		return localIterator, err
 	}
 	itrs = append(itrs, localIterator)
-	for i := range resultCh {
-		count--
-		itrs = append(itrs, i)
-		if count == 0 {
-			cancel()
-			break
-		}
+	if count == 0 {
+		return query.Iterators(itrs).Merge(opt)
 	}
+	go func(itrs []query.Iterator) {
+		for i := range resultCh {
+			count--
+			if i != nil {
+				itrs = append(itrs, i)
+			}
+			if count == 0 {
+				cancel()
+				break
+			}
+		}
+	}(itrs)
 	select {
 	case <-ctxTimeOut.Done():
 		return query.Iterators(itrs).Merge(opt)

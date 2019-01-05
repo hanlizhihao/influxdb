@@ -48,6 +48,7 @@ type Consistent struct {
 	Resources map[uint64]bool
 	ring      HashRing
 	sync.RWMutex
+	MasterNodes []*Node
 }
 
 func NewConsistent() *Consistent {
@@ -74,6 +75,7 @@ func (c *Consistent) Add(node *Node) bool {
 	}
 	c.Resources[node.Id] = true
 	c.sortHashRing()
+	c.MasterNodes = append(c.MasterNodes, node)
 	return true
 }
 
