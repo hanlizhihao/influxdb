@@ -200,7 +200,7 @@ func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, poi
 	if userAgent := r.Header.Get("User-Agent"); "InfluxDBClient" == userAgent {
 		return points, nil
 	}
-	localClassPoint := make([]models.Point, len(points))
+	localClassPoint := make([]models.Point, 0, len(points))
 	// otherClassPoint need forward other class to be process
 	otherClassPoint := make(map[uint64][]models.Point)
 	newMeasurementPoint := make([]models.Point, 0)
@@ -208,7 +208,6 @@ func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, poi
 		name := string(point.Name())
 		if qb.measurement[name] == nil {
 			classId := qb.otherMeasurement[name]
-			// todo: check map value uint64
 			if classId == 0 {
 				newMeasurementPoint = append(newMeasurementPoint, point)
 				continue

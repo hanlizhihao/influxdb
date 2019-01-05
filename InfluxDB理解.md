@@ -115,3 +115,4 @@ listen client url 不能用公网ip?
 * ETCD_INITIAL_ADVERTISE_PEER_URLS="http://129.28.128.191:2380"
 * etcdctl is a command line client for etcd. Make sure to set environment variable ETCDCTL_API=3. For etcdctl v2, please check READMEv2.
 * RP失效后，应该删除元数据，以便全局生效
+* 在初始化、新增和删除表时，应该确保newMeasurement和deleteMeasurement至少不为空

@@ -107,6 +107,7 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		classDetail: &ClassDetail{},
 		rpcQuery:    NewRpcService(mapper, &nodes),
 		Cluster:     false,
+		classes:     new(Classes),
 	}
 	return s
 }
@@ -218,7 +219,9 @@ func (s *Service) processNewMeasurement() {
 				if err != nil || resp.Count == 0 {
 					ParseJson(resp.Kvs[0].Value, s.classes)
 					var classes = *s.classes
+					// balance measurement algorithm
 					classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
+					classes[0].NewMeasurement = append(classes[0].NewMeasurement, string(point.Name()))
 					updateClass := classes[0]
 					classes = append(classes[:1], classes[2:]...)
 					classes = append(classes, updateClass)
@@ -615,7 +618,7 @@ RetryJoinOriginalCluster:
 		if recruitResp.Count == 0 {
 			recruitCluster = RecruitClusters{
 				Number:     0,
-				ClusterIds: make([]uint64, 1),
+				ClusterIds: make([]uint64, 0, 1),
 			}
 			_, err = s.cli.Put(context.Background(), TSDBRecruitClustersKey, ToJson(recruitCluster))
 			// create Cluster
@@ -623,7 +626,7 @@ RetryJoinOriginalCluster:
 			s.CheckErrorExit("Try create Cluster failed, error message is", err)
 			return nil
 		}
-		ParseJson(recruitResp.Kvs[0].Value, recruitCluster)
+		ParseJson(recruitResp.Kvs[0].Value, &recruitCluster)
 		if recruitCluster.Number > 0 {
 			for _, id := range recruitCluster.ClusterIds {
 				err = s.joinRecruitClusterByClusterId(id)
@@ -869,7 +872,7 @@ func (s *Service) checkClassesMetaData(classesP *[]Class) {
 	}
 	classes := *classesP
 	for _, class := range classes {
-		clusterIds := make([]uint64, len(class.ClusterIds))
+		clusterIds := make([]uint64, 0, len(class.ClusterIds))
 		for _, id := range class.ClusterIds {
 			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(id, 10))
 			if resp.Count > 0 && err == nil {
@@ -903,7 +906,7 @@ RetryAddClasses:
 		if err != nil {
 			return err
 		}
-		class.ClusterIds = make([]uint64, 1)
+		class.ClusterIds = make([]uint64, 0, 1)
 		class.ClusterIds = append(class.ClusterIds, s.MetaClient.Data().ClusterID)
 		classes = append(classes, class)
 		metaData := s.MetaClient.Data()
@@ -986,14 +989,14 @@ RetryAddClasses:
 			Clusters:     []WorkClusterInfo{workClusterInfo},
 		}
 
-		if err = s.putClassDetail(); err == nil {
+		if err = s.putClassDetail(classResp); err == nil {
 			go s.watchClassNode()
 		}
 		return err
 	}
 	ParseJson(classResp.Kvs[0].Value, s.classDetail)
 	s.classDetail.Clusters = append(s.classDetail.Clusters, workClusterInfo)
-	err = s.putClassDetail()
+	err = s.putClassDetail(classResp)
 	s.buildConsistentHash()
 	go s.watchClassNode()
 	return err
@@ -1007,7 +1010,7 @@ RetryCheckClassCluster:
 		ParseJson(classResp.Kvs[0].Value, s.classDetail)
 	}
 	classKey := TSDBClassId + strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
-	clusters := make([]WorkClusterInfo, len(s.classDetail.Clusters))
+	clusters := make([]WorkClusterInfo, 0, len(s.classDetail.Clusters))
 	for _, cluster := range s.classDetail.Clusters {
 		if cluster.ClusterId == s.MetaClient.Data().ClusterID {
 			continue
@@ -1020,7 +1023,7 @@ RetryCheckClassCluster:
 	if len(s.classDetail.Clusters) == len(clusters) {
 		return
 	}
-	cmp := clientv3.Compare(clientv3.Value(classKey), "=", ToJson(*s.classDetail))
+	cmp := clientv3.Compare(clientv3.Value(classKey), "=", string(classResp.Kvs[0].Value))
 	s.classDetail.Clusters = clusters
 	opPut := clientv3.OpPut(classKey, ToJson(*s.classDetail))
 	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
@@ -1036,16 +1039,19 @@ func (s *Service) watchClassNode() {
 	for classNodeInfo := range classNodeEventChan {
 		for _, event := range classNodeInfo.Events {
 			if event.Type == mvccpb.DELETE {
+				if event.Kv.Value == nil {
+					continue
+				}
 				// every node need update consistent hash
 				var deletedClusterMasterNode Node
-				ParseJson(event.PrevKv.Value, &deletedClusterMasterNode)
+				ParseJson(event.Kv.Value, &deletedClusterMasterNode)
 				for i, c := range s.classDetail.Clusters {
 					if c.ClusterId == deletedClusterMasterNode.ClusterId {
 						s.classDetail.Clusters = append(s.classDetail.Clusters[0:i], s.classDetail.Clusters[i+1:]...)
+						s.buildConsistentHash()
 						break
 					}
 				}
-				s.buildConsistentHash()
 				// Class's Cluster[0] master node update class detail
 				metaData := s.MetaClient.Data()
 				if s.classDetail.Clusters[0].ClusterId == metaData.ClusterID && s.masterNode.Id == metaData.NodeID {
@@ -1091,10 +1097,10 @@ func (s *Service) putClasses(classesResp *clientv3.GetResponse, classes []Class)
 	return nil
 }
 
-func (s *Service) putClassDetail() error {
-	classKey := strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
-	cmpClassDetail := clientv3.Compare(clientv3.Value(TSDBClassId+classKey), "=", string(ToJson(*s.classDetail)))
-	opPutClassDetail := clientv3.OpPut(TSDBClassId+classKey, ToJson(*s.classDetail))
+func (s *Service) putClassDetail(getResp *clientv3.GetResponse) error {
+	classKey := TSDBClassId + strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
+	cmpClassDetail := clientv3.Compare(clientv3.Value(classKey), "=", string(getResp.Kvs[0].Value))
+	opPutClassDetail := clientv3.OpPut(classKey, ToJson(*s.classDetail))
 	resp, _ := s.cli.Txn(context.Background()).If(cmpClassDetail).Then(opPutClassDetail).Commit()
 	if resp.Succeeded {
 		// If local node is local Cluster's master node, local node will put Cluster key of the class
@@ -1206,7 +1212,8 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 	if s.otherMeasurement == nil {
 		s.otherMeasurement = make(map[string]uint64, len(*s.classes))
 	}
-	for _, class := range *s.classes {
+	var classes = *s.classes
+	for _, class := range classes {
 		if len(class.NewMeasurement) == 0 && len(class.DeleteMeasurement) == 0 {
 			continue
 		}
@@ -1237,13 +1244,13 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 			clusterNodeResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(class.ClusterIds[0], 10)+
 				"-node", clientv3.WithPrefix())
 			s.CheckErrPrintLog("Build Measurement Index failed", err)
-			ipArray := make([]string, clusterNodeResp.Count)
+			ips := make([]string, 0, clusterNodeResp.Count)
 			for _, kv := range clusterNodeResp.Kvs {
 				var node Node
 				ParseJson(kv.Value, &node)
-				ipArray = append(ipArray, node.Host)
+				ips = append(ips, node.Host)
 			}
-			s.classIpMap[class.ClassId] = ipArray
+			s.classIpMap[class.ClassId] = ips
 		}
 	}
 	Once.Do(func() {
