@@ -6,6 +6,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/pkg/promise"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/httpd"
 	"github.com/influxdata/influxdb/services/httpd/consistent"
@@ -85,6 +86,7 @@ type Service struct {
 	ch          *consistent.Consistent
 	classDetail *ClassDetail
 
+	// master node
 	masterNode  *Node
 	rpcQuery    *RpcService
 	ip          string
@@ -216,19 +218,62 @@ func (s *Service) processNewMeasurement() {
 					continue
 				}
 				resp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
-				if err != nil || resp.Count == 0 {
+				if err == nil && resp.Count > 0 {
 					ParseJson(resp.Kvs[0].Value, s.classes)
 					var classes = *s.classes
 					// balance measurement algorithm
 					classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
 					classes[0].NewMeasurement = append(classes[0].NewMeasurement, string(point.Name()))
 					updateClass := classes[0]
-					classes = append(classes[:1], classes[2:]...)
-					classes = append(classes, updateClass)
+					if len(classes) > 1 {
+						classes = classes[1:]
+						classes = append(classes, updateClass)
+					}
 					cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
 					putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
 					resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
 					if resp.Succeeded && err == nil {
+						// dispatcher point to target class node
+						if classes[0].ClassId == s.MetaClient.Data().ClassID {
+							targetClusterMasterNode := s.ch.Get(string(point.Key()))
+							// if target node is self node
+							if targetClusterMasterNode.Id == s.MetaClient.Data().NodeID {
+								if err := s.httpd.Handler.PointsWriter.WritePoints(newMeasurementPoint.DB,
+									newMeasurementPoint.Rp, 1, newMeasurementPoint.User,
+									[]models.Point{point}); err != nil {
+									s.Logger.Error(err.Error())
+								}
+							} else {
+								promise.ExecuteNeedRetryAction(func() error {
+									targetHttpClientPoint, err := s.httpd.Handler.Balancing.GetClient(
+										targetClusterMasterNode.Ip, "")
+									if err != nil {
+										return err
+									}
+									var client = *targetHttpClientPoint
+									return s.httpd.Handler.Balancing.ForwardPoint(client, []models.Point{point})
+								}, func() {
+									// success
+								}, func() {
+									// error
+								}, s.Logger)
+							}
+							continue
+						}
+						promise.ExecuteNeedRetryAction(func() error {
+							s.otherMeasurement[measurement] = classes[0].ClassId
+							httpClientP, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient",
+								classes[0].ClassId)
+							if err != nil {
+								return err
+							}
+							var httpClient = *httpClientP
+							return s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point})
+						}, func() {
+
+						}, func() {
+
+						}, s.Logger)
 						continue
 					}
 				}
