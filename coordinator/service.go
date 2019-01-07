@@ -658,6 +658,7 @@ RetryJoinOriginalCluster:
 			}
 		}
 	} else {
+	RetryJoin:
 		recruitResp, err := s.cli.Get(context.Background(), TSDBRecruitClustersKey)
 		if err != nil {
 			return err
@@ -677,22 +678,29 @@ RetryJoinOriginalCluster:
 		}
 		ParseJson(recruitResp.Kvs[0].Value, &recruitCluster)
 		if recruitCluster.Number > 0 {
-			for _, id := range recruitCluster.ClusterIds {
-				err = s.joinRecruitClusterByClusterId(id)
-				if err == nil {
-					return nil
+			recruitChanged := false
+			joinSuccess := false
+			for i := 0; i < len(recruitCluster.ClusterIds); {
+				if err := s.joinRecruitClusterByClusterId(recruitCluster.ClusterIds[i]); err == nil {
+					joinSuccess = true
+					break
+				} else {
+					recruitChanged = true
+					recruitCluster.ClusterIds = append(recruitCluster.ClusterIds[0:i], recruitCluster.ClusterIds[i+1:]...)
 				}
 			}
-			return s.createCluster()
-		}
-		for _, kv := range recruitResp.Kvs {
-			ParseJson(kv.Value, &recruitCluster)
-			// Logical nodes need nodes to join it.
-
-			err = s.createCluster()
-			if err != nil {
-				return err
+			if recruitChanged {
+				cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruitResp.Kvs[0].Value))
+				opPut := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
+				resp, _ := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
+				if !resp.Succeeded {
+					goto RetryJoin
+				}
 			}
+			if joinSuccess {
+				return nil
+			}
+			return s.createCluster()
 		}
 	}
 	masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(s.MetaClient.Data().ClusterID,
@@ -862,7 +870,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 	var node Node
 	for nodeEvent := range workAllNode {
 		for _, ev := range nodeEvent.Events {
-			ParseJson(ev.PrevKv.Value, &node)
+			ParseJson(ev.Kv.Value, &node)
 			if mvccpb.DELETE == ev.Type {
 				for _, db := range s.MetaClient.Databases() {
 					for _, rp := range db.RetentionPolicies {
