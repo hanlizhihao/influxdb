@@ -124,17 +124,17 @@ func (s *Service) SetHttpdService(httpd *httpd.Service) {
 
 // 获取集群及物理节点的自增id
 func (s *Service) GetLatestID(key string) (uint64, error) {
-	latestClusterId, err := s.cli.Get(context.Background(), key)
+	response, err := s.cli.Get(context.Background(), key)
 	if err != nil {
 		return 0, err
 	}
-	if latestClusterId.Count == 0 {
+	if response.Count == 0 {
 		_, err = s.cli.Put(context.Background(), key, "1")
 	}
 getClusterId:
-	latestClusterId, err = s.cli.Get(context.Background(), key)
-	cmp := clientv3.Compare(clientv3.Value(key), "=", string(latestClusterId.Kvs[0].Value))
-	clusterId, err := ByteToUint64(latestClusterId.Kvs[0].Value)
+	response, err = s.cli.Get(context.Background(), key)
+	cmp := clientv3.Compare(clientv3.Value(key), "=", string(response.Kvs[0].Value))
+	clusterId, err := strconv.ParseUint(string(response.Kvs[0].Value), 10, 64)
 	if err != nil {
 		return 0, err
 	}
