@@ -1238,6 +1238,7 @@ func (s *Service) putClassDetail(getResp *clientv3.GetResponse) error {
 }
 
 func (s *Service) registerToCommonNode() error {
+RegisterNode:
 	var err error
 	nodeId := s.MetaClient.Data().NodeID
 	if nodeId == 0 {
@@ -1252,7 +1253,6 @@ func (s *Service) registerToCommonNode() error {
 	}
 	cmp := clientv3.Compare(clientv3.CreateRevision(nodeKey), "=", 0)
 	opPut := clientv3.OpPut(nodeKey, ToJson(node), clientv3.WithLease(s.lease.ID))
-RegisterNode:
 	// Register with etcd
 	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
 	s.CheckErrorExit("Register node failed ", err)
