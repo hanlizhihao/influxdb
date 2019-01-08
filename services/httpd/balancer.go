@@ -140,7 +140,7 @@ func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Re
 	if agent := r.UserAgent(); agent == "InfluxDBClient" {
 		return false, nil
 	}
-	if headerBalance := r.Header.Get("balance"); &headerBalance != nil {
+	if headerBalance := r.Header.Get("balance"); headerBalance != "" {
 		return false, nil
 	}
 	key, err := GetMeasurementFromInfluxQL(q)
