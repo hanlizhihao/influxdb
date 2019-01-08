@@ -180,6 +180,7 @@ func (s *Service) Open() error {
 	if err != nil {
 		return err
 	}
+	s.checkAvailable()
 	err = s.joinClusterOrCreateCluster()
 	if err != nil {
 		return err
@@ -723,6 +724,34 @@ func (s *Service) containCluster(clusterId uint64, clusters []uint64) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) checkAvailable() {
+Retry:
+	allClusterInfoResp, err := s.cli.Get(context.Background(), TSDBClustersKey)
+	var cluster AvailableClusterInfo
+	if err == nil && allClusterInfoResp.Count > 0 {
+		ParseJson(allClusterInfoResp.Kvs[0].Value, &cluster)
+		liveClusterMap := make(map[uint64]interface{})
+		liveCluster := make([]WorkClusterInfo, 0)
+		for _, c := range cluster.Clusters {
+			masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(c.ClusterId,
+				10)+"-master", clientv3.WithPrefix())
+			if masterResp.Count > 0 && err == nil {
+				if value := liveClusterMap[c.ClusterId]; value == nil {
+					liveCluster = append(liveCluster, c)
+				}
+			}
+		}
+		cluster.Clusters = liveCluster
+		cmp := clientv3.Compare(clientv3.Value(TSDBClustersKey), "=", string(allClusterInfoResp.Kvs[0].Value))
+		put := clientv3.OpPut(TSDBClustersKey, ToJson(cluster))
+		resp, _ := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+		if resp == nil || !resp.Succeeded {
+			goto Retry
+		}
+	}
+	s.CheckErrorExit("Get TSDBCluster failed ", err)
 }
 
 // Join Cluster failed, create new Cluster
