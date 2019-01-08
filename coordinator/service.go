@@ -181,6 +181,7 @@ func (s *Service) Open() error {
 		return err
 	}
 	s.checkAvailable()
+	s.checkRecruit()
 	err = s.joinClusterOrCreateCluster()
 	if err != nil {
 		return err
@@ -201,6 +202,30 @@ func (s *Service) Open() error {
 	s.rpcQuery.MetaClient = s.MetaClient
 	err = s.rpcQuery.Open()
 	return err
+}
+
+func (s *Service) checkRecruit() {
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBRecruitClustersKey)
+	if err != nil && resp.Count > 0 {
+		var recruit RecruitClusters
+		ParseJson(resp.Kvs[0].Value, &recruit)
+		clusterMap := make(map[uint64]interface{})
+		for _, id := range recruit.ClusterIds {
+			clusterMap[id] = ""
+		}
+		ids := make([]uint64, 0, len(clusterMap))
+		for key := range clusterMap {
+			ids = append(ids, key)
+		}
+		recruit.Number = int32(len(ids))
+		cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(resp.Kvs[0].Value))
+		put := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruit))
+		txnResp, _ := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+		if txnResp == nil || !txnResp.Succeeded {
+			goto Retry
+		}
+	}
 }
 
 func (s *Service) processNewMeasurement() {
@@ -967,15 +992,16 @@ func (s *Service) checkClassesMetaData(classesP *[]Class) {
 		s.Logger.Error("CheckClassesMetaData Classes is nil")
 	}
 	classes := *classesP
-	for _, class := range classes {
-		clusterIds := make([]uint64, 0, len(class.ClusterIds))
-		for _, id := range class.ClusterIds {
-			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(id, 10))
-			if resp.Count > 0 && err == nil {
-				clusterIds = append(clusterIds, id)
+	for i := 0; i < len(classes); i++ {
+		clusterIds := make([]uint64, 0)
+		for j := 0; j < len(classes[i].ClusterIds); j++ {
+			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(classes[i].ClusterIds[j],
+				10)+"-", clientv3.WithPrefix())
+			if resp.Count > 1 && err == nil {
+				clusterIds = append(clusterIds, classes[i].ClusterIds[j])
 			}
 		}
-		class.ClusterIds = clusterIds
+		classes[i].ClusterIds = clusterIds
 	}
 	_, err := s.cli.Put(context.Background(), TSDBClassesInfo, ToJson(classes))
 	if err != nil {
@@ -992,7 +1018,7 @@ RetryAddClasses:
 	// etcd don't contain TSDBClassesInfo
 	if err == nil && classesResp.Count > 0 {
 		ParseJson(classesResp.Kvs[0].Value, &classes)
-		go s.checkClassesMetaData(&classes)
+		s.checkClassesMetaData(&classes)
 	}
 	var addNewClass = func() error {
 		class := Class{
