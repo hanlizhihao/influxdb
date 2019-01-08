@@ -833,9 +833,12 @@ RetryCreate:
 	} else {
 		resp, err = s.cli.Txn(context.Background()).If(cmpRecruit).Then(ops...).Commit()
 	}
-	if !resp.Succeeded || err != nil {
+	if resp == nil || !resp.Succeeded || err != nil {
 		goto RetryCreate
 	}
+	var metaData = s.MetaClient.Data()
+	metaData.ClusterID = workClusterInfo.ClusterId
+	s.MetaClient.SetData(&metaData)
 	go s.watchWorkCluster(latestClusterInfo.ClusterId)
 	// if class is nil, create class
 	return s.initClasses(&workClusterInfo)
