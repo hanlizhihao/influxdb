@@ -926,7 +926,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 						}
 						opPut := clientv3.OpPut(masterKey, ToJson(node), clientv3.WithLease(s.lease.ID))
 						opMasterResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
-						if opMasterResp.Succeeded && err != nil {
+						if opMasterResp != nil && opMasterResp.Succeeded && err != nil {
 							s.masterNode = &node
 							// If cluster's master node crash, class's class detail be created by the node will be delete
 							// New master node need create class detail again
