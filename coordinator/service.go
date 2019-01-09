@@ -165,13 +165,8 @@ func (s *Service) Open() error {
 		return err
 	}
 	lease, err := s.cli.Grant(context.Background(), 30)
-	ch, err := s.cli.KeepAlive(context.Background(), lease.ID)
+	_, err = s.cli.KeepAlive(context.Background(), lease.ID)
 	s.lease = lease
-	go func() {
-		for resp := range ch {
-			s.lease.ID = resp.ID
-		}
-	}()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.httpd.Handler.Balancing.SetMeasurementMapIndex(s.measurement, s.otherMeasurement, s.classIpMap)
@@ -919,12 +914,13 @@ func (s *Service) appendNewWorkCluster(workClusterInfo []WorkClusterInfo) (error
 		UdpHost: s.ip + s.udpConfig.BindAddress,
 	}}
 	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
-		Series:     make([]string, 0),
-		ClusterId:  clusterId,
-		Limit:      3,
-		Number:     len(nodes),
-		MasterId:   nodes[0].Id,
-		MasterHost: nodes[0].Host,
+		Series:       make([]string, 0),
+		ClusterId:    clusterId,
+		Limit:        3,
+		Number:       len(nodes),
+		MasterId:     nodes[0].Id,
+		MasterHost:   nodes[0].Host,
+		MasterUsable: true,
 	})
 	return nil, workClusterInfo, nodes
 }
