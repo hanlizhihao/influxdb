@@ -1266,14 +1266,14 @@ func (s *Service) putClassDetail(getResp *clientv3.GetResponse) error {
 func (s *Service) registerToCommonNode() error {
 RegisterNode:
 	var err error
-	nodeId := s.MetaClient.Data().NodeID
-	if nodeId == 0 {
-		nodeId, err = s.GetLatestID(TSDBNodeAutoIncrementId)
+	metaData := s.MetaClient.Data()
+	if metaData.NodeID == 0 {
+		metaData.NodeID, err = s.GetLatestID(TSDBNodeAutoIncrementId)
 		s.CheckErrorExit(" Get auto increment id failed", err)
 	}
-	nodeKey := TSDBCommonNodeIdKey + strconv.FormatUint(nodeId, 10)
+	nodeKey := TSDBCommonNodeIdKey + strconv.FormatUint(metaData.NodeID, 10)
 	node := Node{
-		Id:      nodeId,
+		Id:      metaData.NodeID,
 		Host:    s.ip + s.httpConfig.BindAddress,
 		UdpHost: s.ip + s.udpConfig.BindAddress,
 	}
@@ -1285,6 +1285,7 @@ RegisterNode:
 	if resp == nil || !resp.Succeeded {
 		goto RegisterNode
 	}
+	s.MetaClient.SetData(&metaData)
 	return nil
 }
 
@@ -1304,9 +1305,10 @@ RetryJoinTarget:
 		if workClusterInfo.Number < workClusterInfo.Limit {
 			cmp := clientv3.Compare(clientv3.Value(workClusterKey), "=", string(clusterMetaResp.Kvs[0].Value))
 			node := Node{
-				Id:      s.MetaClient.Data().NodeID,
-				Host:    s.ip + s.httpConfig.BindAddress,
-				UdpHost: s.ip + s.udpConfig.BindAddress,
+				Id:        s.MetaClient.Data().NodeID,
+				Host:      s.ip + s.httpConfig.BindAddress,
+				UdpHost:   s.ip + s.udpConfig.BindAddress,
+				ClusterId: clusterId,
 			}
 			workClusterInfo.Number++
 			joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, cmp)
