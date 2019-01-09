@@ -589,7 +589,7 @@ func (s *Service) setMetaDataNodeId(nodeId uint64) error {
 	originMetaData.NodeID = nodeId
 	return s.MetaClient.SetData(&originMetaData)
 }
-func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey string, cmp clientv3.Cmp) bool {
+func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey string, cmp *clientv3.Cmp) bool {
 	nodeKey := clusterKey + "-node-"
 	ops := make([]clientv3.Op, 0)
 	ops = append(ops, clientv3.OpPut(nodeKey+strconv.FormatUint(node.Id, 10), ToJson(node), clientv3.WithLease(s.lease.ID)))
@@ -630,12 +630,12 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 	}
 	if cluster.MasterUsable {
 		ops = append(ops, clientv3.OpPut(clusterKey, ToJson(cluster)))
-		resp, err = s.cli.Txn(context.Background()).If(cmp).Then(ops...).Commit()
+		resp, err = s.cli.Txn(context.Background()).If(*cmp).Then(ops...).Commit()
 	} else {
 		cluster.MasterUsable = true
 		ops = append(ops, clientv3.OpPut(clusterKey, ToJson(cluster)))
 		ops := append(ops, clientv3.OpPut(originMasterNodeKey, ToJson(node), clientv3.WithLease(s.lease.ID)))
-		resp, err = s.cli.Txn(context.Background()).If(cmp).Then(ops...).Commit()
+		resp, err = s.cli.Txn(context.Background()).If(*cmp).Then(ops...).Commit()
 	}
 	if resp != nil && resp.Succeeded && err == nil {
 		var metaData = s.MetaClient.Data()
@@ -653,7 +653,7 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 		ParseJson(masterNodeResp.Kvs[0].Value, &masterNode)
 		masterNode.ClusterId = cluster.ClusterId
 		s.masterNode = &masterNode
-		nodeResp, err := s.cli.Get(context.Background(), nodeKey)
+		nodeResp, err := s.cli.Get(context.Background(), nodeKey, clientv3.WithPrefix())
 		s.CheckErrorExit("Join Cluster Success, but common node get failed", err)
 		nodes := make([]Node, nodeResp.Count)
 		for _, kv := range nodeResp.Kvs {
@@ -691,7 +691,7 @@ RetryJoinOriginalCluster:
 				Ip:      s.ip,
 			}
 			cmpWorkCluster := clientv3.Compare(clientv3.Value(originClusterKey), "=", string(workClusterResp.Kvs[0].Value))
-			joinSuccess := s.putClusterNode(node, originWorkCluster, originClusterKey, cmpWorkCluster)
+			joinSuccess := s.putClusterNode(node, originWorkCluster, originClusterKey, &cmpWorkCluster)
 			if !joinSuccess {
 				goto RetryJoinOriginalCluster
 			}
@@ -703,7 +703,7 @@ RetryJoinOriginalCluster:
 			return err
 		}
 		var recruitCluster RecruitClusters
-		// if recruitCluster key non-existent
+		// if recruitCluster key non-existent, First Start machine
 		if recruitResp.Count == 0 {
 			recruitCluster = RecruitClusters{
 				Number:     0,
@@ -1319,7 +1319,7 @@ RetryJoinTarget:
 				ClusterId: clusterId,
 			}
 			workClusterInfo.Number++
-			joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, cmp)
+			joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, &cmp)
 			if !joinSuccess {
 				goto RetryJoinTarget
 			}
