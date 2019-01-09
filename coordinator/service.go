@@ -262,7 +262,7 @@ func (s *Service) processNewMeasurement() {
 					cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
 					putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
 					resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
-					if resp.Succeeded && err == nil {
+					if resp != nil && resp.Succeeded && err == nil {
 						// dispatcher point to target class node
 						s.distributeWritePoint(point, classes[0].ClassId, newMeasurementPoint)
 						continue
@@ -586,7 +586,6 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 	nodeKey := clusterKey + "-node-"
 	ops := make([]clientv3.Op, 0)
 	ops = append(ops, clientv3.OpPut(nodeKey+strconv.FormatUint(node.Id, 10), ToJson(node), clientv3.WithLease(s.lease.ID)))
-	ops = append(ops, clientv3.OpPut(clusterKey, ToJson(cluster)))
 	var resp *clientv3.TxnResponse
 	var err error
 	originMasterNodeKey := clusterKey + "-master"
@@ -618,25 +617,32 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 		cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruitResp.Kvs[0].Value))
 		op := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruit))
 		resp, err := s.cli.Txn(context.Background()).If(cmp).Then(op).Commit()
-		if !resp.Succeeded {
+		if resp == nil || !resp.Succeeded {
 			goto RetryChange
 		}
 	}
 	if cluster.MasterUsable {
+		ops = append(ops, clientv3.OpPut(clusterKey, ToJson(cluster)))
 		resp, err = s.cli.Txn(context.Background()).If(cmp).Then(ops...).Commit()
 	} else {
+		cluster.MasterUsable = true
+		ops = append(ops, clientv3.OpPut(clusterKey, ToJson(cluster)))
 		ops := append(ops, clientv3.OpPut(originMasterNodeKey, ToJson(node), clientv3.WithLease(s.lease.ID)))
 		resp, err = s.cli.Txn(context.Background()).If(cmp).Then(ops...).Commit()
 	}
-	if resp.Succeeded && err == nil {
+	if resp != nil && resp.Succeeded && err == nil {
 		var metaData = s.MetaClient.Data()
 		metaData.ClassID = cluster.ClassId
 		metaData.ClusterID = cluster.ClusterId
 		// if class id is null, it is exception
 		err = s.MetaClient.SetData(&metaData)
 		var masterNode Node
-		masterNodeResp, err := s.cli.Get(context.Background(), originMasterNodeKey)
+		masterNodeResp, err := s.cli.Get(context.Background(), originMasterNodeKey, clientv3.WithPrefix())
 		s.CheckErrorExit("Join Cluster Success, but master node dont't exist", err)
+		if masterNodeResp.Count == 0 {
+			s.Logger.Error("Join Cluster Success, but the cluster master node crash")
+			os.Exit(1)
+		}
 		ParseJson(masterNodeResp.Kvs[0].Value, &masterNode)
 		masterNode.ClusterId = cluster.ClusterId
 		s.masterNode = &masterNode
@@ -719,7 +725,7 @@ RetryJoinOriginalCluster:
 				cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruitResp.Kvs[0].Value))
 				opPut := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
 				resp, _ := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
-				if !resp.Succeeded {
+				if resp == nil || !resp.Succeeded {
 					goto RetryJoin
 				}
 			}
@@ -877,7 +883,7 @@ RetryCreateClass:
 		classesOp := clientv3.OpPut(TSDBClassesInfo, ToJson(classes))
 		classDetailOp := clientv3.OpPut(TSDBClassId+strconv.FormatUint(classIdResp, 10), ToJson(class))
 		resp, err := s.cli.Txn(context.Background()).If(classesCamp, classDetailCamp).Then(classesOp, classDetailOp).Commit()
-		if !resp.Succeeded || err != nil {
+		if resp == nil && !resp.Succeeded || err != nil {
 			goto RetryCreateClass
 		}
 		// put alive Cluster key with lease
@@ -1049,7 +1055,7 @@ RetryAddClasses:
 		cmpClasses := clientv3.Compare(clientv3.CreateRevision(TSDBClassesInfo), "=", 0)
 		opPutClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(classes))
 		putResp, _ := s.cli.Txn(context.Background()).If(cmpClasses).Then(opPutClasses).Commit()
-		if !putResp.Succeeded {
+		if putResp == nil || !putResp.Succeeded {
 			return errors.New("Put Classes failed ")
 		}
 	} else {
@@ -1152,7 +1158,7 @@ RetryCheckClassCluster:
 	s.classDetail.Clusters = clusters
 	opPut := clientv3.OpPut(classKey, ToJson(*s.classDetail))
 	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
-	if !resp.Succeeded || err != nil {
+	if resp == nil || !resp.Succeeded || err != nil {
 		goto RetryCheckClassCluster
 	}
 }
@@ -1216,7 +1222,7 @@ func (s *Service) putClasses(classesResp *clientv3.GetResponse, classes []Class)
 	cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(classesResp.Kvs[0].Value))
 	opPutClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(classes))
 	putResp, _ := s.cli.Txn(context.Background()).If(cmpClasses).Then(opPutClasses).Commit()
-	if !putResp.Succeeded {
+	if putResp == nil || !putResp.Succeeded {
 		return errors.New("Put Classes failed ")
 	}
 	return nil
@@ -1227,7 +1233,7 @@ func (s *Service) putClassDetail(getResp *clientv3.GetResponse) error {
 	cmpClassDetail := clientv3.Compare(clientv3.Value(classKey), "=", string(getResp.Kvs[0].Value))
 	opPutClassDetail := clientv3.OpPut(classKey, ToJson(*s.classDetail))
 	resp, _ := s.cli.Txn(context.Background()).If(cmpClassDetail).Then(opPutClassDetail).Commit()
-	if resp.Succeeded {
+	if resp != nil && resp.Succeeded {
 		// If local node is local Cluster's master node, local node will put Cluster key of the class
 		if s.masterNode.Id == s.MetaClient.Data().NodeID {
 			_, err := s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(s.MetaClient.Data().ClassID, 10)+
@@ -1259,7 +1265,7 @@ RegisterNode:
 	// Register with etcd
 	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
 	s.CheckErrorExit("Register node failed ", err)
-	if !resp.Succeeded {
+	if resp == nil || !resp.Succeeded {
 		goto RegisterNode
 	}
 	return nil
@@ -1271,13 +1277,13 @@ func (s *Service) joinRecruitClusterByClusterId(clusterId uint64) error {
 RetryJoinTarget:
 	var joinSuccess = false
 	clusterMetaResp, metaErr := s.cli.Get(context.Background(), workClusterKey)
-	clusterNodeResp, err := s.cli.Get(context.Background(), workClusterKey+"-node")
+	clusterNodeResp, err := s.cli.Get(context.Background(), workClusterKey+"-node", clientv3.WithPrefix())
 	if err != nil || metaErr != nil {
 		return errors.New("Get cluster info failed, meta error message:" + metaErr.Error() + "err message :" + err.Error())
 	}
 	var workClusterInfo WorkClusterInfo
 	if clusterNodeResp.Count > 0 {
-		ParseJson(clusterNodeResp.Kvs[0].Value, &workClusterInfo)
+		ParseJson(clusterMetaResp.Kvs[0].Value, &workClusterInfo)
 		if workClusterInfo.Number < workClusterInfo.Limit {
 			cmp := clientv3.Compare(clientv3.Value(workClusterKey), "=", string(clusterMetaResp.Kvs[0].Value))
 			node := Node{
@@ -1285,6 +1291,7 @@ RetryJoinTarget:
 				Host:    s.ip + s.httpConfig.BindAddress,
 				UdpHost: s.ip + s.udpConfig.BindAddress,
 			}
+			workClusterInfo.Number++
 			joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, cmp)
 			if !joinSuccess {
 				goto RetryJoinTarget
