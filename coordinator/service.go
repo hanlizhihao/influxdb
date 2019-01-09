@@ -993,7 +993,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 					for _, rp := range db.RetentionPolicies {
 						subscriberName := db.Name + rp.Name + node.Host
 						destination := []string{"http://" + node.Host}
-						err := s.MetaClient.CreateSubscription(db.Name, rp.Name, subscriberName, "All", destination)
+						err := s.MetaClient.CreateSubscription(db.Name, rp.Name, subscriberName, "ALL", destination)
 						s.CheckErrPrintLog("Watch adding node event, create subscription failed ", err)
 					}
 				}
