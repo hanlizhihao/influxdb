@@ -203,11 +203,18 @@ func (s *Service) Open() error {
 	err = s.rpcQuery.Open()
 	return err
 }
-
+func (s *Service) isLive(clusterId uint64) bool {
+	resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(clusterId, 10)+"-node",
+		clientv3.WithPrefix())
+	if err == nil && resp.Count > 0 {
+		return true
+	}
+	return false
+}
 func (s *Service) checkRecruit() {
 Retry:
 	resp, err := s.cli.Get(context.Background(), TSDBRecruitClustersKey)
-	if err != nil && resp.Count > 0 {
+	if err == nil && resp.Count > 0 {
 		var recruit RecruitClusters
 		ParseJson(resp.Kvs[0].Value, &recruit)
 		clusterMap := make(map[uint64]interface{})
@@ -216,9 +223,14 @@ Retry:
 		}
 		ids := make([]uint64, 0, len(clusterMap))
 		for key := range clusterMap {
-			ids = append(ids, key)
+			if s.isLive(key) {
+				ids = append(ids, key)
+				continue
+			}
+			s.cli.Delete(context.Background(), TSDBWorkKey+strconv.FormatUint(key, 10))
 		}
 		recruit.Number = int32(len(ids))
+		recruit.ClusterIds = ids
 		cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(resp.Kvs[0].Value))
 		put := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruit))
 		txnResp, _ := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
@@ -670,7 +682,7 @@ RetryJoinOriginalCluster:
 	if workClusterResp.Count != 0 && err == nil {
 		var originWorkCluster WorkClusterInfo
 		ParseJson(workClusterResp.Kvs[0].Value, &originWorkCluster)
-		clusterNodeResp, err := s.cli.Get(context.Background(), originClusterKey+"-node")
+		clusterNodeResp, err := s.cli.Get(context.Background(), originClusterKey+"-node", clientv3.WithPrefix())
 		if err != nil {
 			return err
 		}
@@ -732,8 +744,8 @@ RetryJoinOriginalCluster:
 			if joinSuccess {
 				return nil
 			}
-			return s.createCluster()
 		}
+		return s.createCluster()
 	}
 	masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(s.MetaClient.Data().ClusterID,
 		10)+"-master", clientv3.WithPrefix())
