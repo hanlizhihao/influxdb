@@ -888,7 +888,11 @@ RetryCreateClass:
 		}
 		// put alive Cluster key with lease
 		_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(classIdResp, 10)+
-			"-cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(class), clientv3.WithLease(s.lease.ID))
+			"-cluster-"+strconv.FormatUint(workClusterInfo.ClusterId, 10), ToJson(Node{
+			Id:        workClusterInfo.MasterId,
+			Host:      workClusterInfo.MasterHost,
+			ClusterId: workClusterInfo.ClusterId,
+		}), clientv3.WithLease(s.lease.ID))
 		return err
 	}
 	return nil
@@ -956,6 +960,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 							Id:        s.MetaClient.Data().NodeID,
 							Host:      s.ip + s.httpConfig.BindAddress,
 							UdpHost:   s.ip + s.udpConfig.BindAddress,
+							Ip:        s.ip,
 							ClusterId: clusterId,
 						}
 						opPut := clientv3.OpPut(masterKey, ToJson(node), clientv3.WithLease(s.lease.ID))
@@ -1121,7 +1126,7 @@ RetryAddClasses:
 		}
 
 		if err = s.putClassDetail(classResp); err == nil {
-			go s.watchClassNode()
+			go s.watchClassCluster()
 		}
 		return err
 	}
@@ -1129,7 +1134,7 @@ RetryAddClasses:
 	s.classDetail.Clusters = append(s.classDetail.Clusters, workClusterInfo)
 	err = s.putClassDetail(classResp)
 	s.buildConsistentHash()
-	go s.watchClassNode()
+	go s.watchClassCluster()
 	return err
 }
 
@@ -1163,21 +1168,21 @@ RetryCheckClassCluster:
 	}
 }
 
-func (s *Service) watchClassNode() {
+func (s *Service) watchClassCluster() {
 	go s.checkClassCluster()
 	classNodeEventChan := s.cli.Watch(context.Background(), TSDBClassNode+strconv.
 		FormatUint(s.MetaClient.Data().ClassID, 10)+"-cluster", clientv3.WithPrefix())
 	for classNodeInfo := range classNodeEventChan {
 		for _, event := range classNodeInfo.Events {
+			// every node need update consistent hash
+			var changedNode Node
+			ParseJson(event.Kv.Value, &changedNode)
 			if event.Type == mvccpb.DELETE {
 				if event.Kv.Value == nil {
 					continue
 				}
-				// every node need update consistent hash
-				var deletedClusterMasterNode Node
-				ParseJson(event.Kv.Value, &deletedClusterMasterNode)
 				for i, c := range s.classDetail.Clusters {
-					if c.ClusterId == deletedClusterMasterNode.ClusterId {
+					if c.ClusterId == changedNode.ClusterId {
 						s.classDetail.Clusters = append(s.classDetail.Clusters[0:i], s.classDetail.Clusters[i+1:]...)
 						s.buildConsistentHash()
 						break
@@ -1188,15 +1193,17 @@ func (s *Service) watchClassNode() {
 				if s.classDetail.Clusters[0].ClusterId == metaData.ClusterID && s.masterNode.Id == metaData.NodeID {
 					_, err := s.cli.Put(context.Background(), TSDBClassId+strconv.FormatUint(s.MetaClient.Data().ClassID, 10),
 						ToJson(*s.classDetail))
-					s.Logger.Error("Get class detail update event, update etcd failed, error message: " + err.Error())
+					if err != nil {
+						s.Logger.Error("Get class detail update event, update etcd failed, error message: " + err.Error())
+					}
 					var classes = *s.classes
 					classIndex := -1
 					clusterIndex := -1
 				Class:
 					for ci, c := range classes {
-						if c.ClassId == s.MetaClient.Data().ClassID {
+						if c.ClassId == metaData.ClassID {
 							for i, cluster := range c.ClusterIds {
-								if cluster == deletedClusterMasterNode.ClusterId {
+								if cluster == changedNode.ClusterId {
 									clusterIndex = i
 									classIndex = ci
 									break Class
@@ -1205,15 +1212,27 @@ func (s *Service) watchClassNode() {
 
 						}
 					}
-					classes[classIndex].ClusterIds = append(classes[classIndex].ClusterIds[0:clusterIndex],
-						classes[classIndex].ClusterIds[clusterIndex+1:]...)
-					_, err = s.cli.Put(context.Background(), TSDBClassesInfo, ToJson(classes))
-					if err != nil {
-						s.Logger.Error("Get class detail update event, update meta data classes failed, error message: " +
-							err.Error())
+					if classIndex != -1 && clusterIndex != -1 {
+						classes[classIndex].ClusterIds = append(classes[classIndex].ClusterIds[0:clusterIndex],
+							classes[classIndex].ClusterIds[clusterIndex+1:]...)
+						_, err = s.cli.Put(context.Background(), TSDBClassesInfo, ToJson(classes))
+						if err != nil {
+							s.Logger.Error("Get class detail update event, update meta data classes failed, error message: " +
+								err.Error())
+						}
 					}
 				}
+				continue
 			}
+			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(changedNode.ClusterId, 10))
+			if err == nil && resp != nil && resp.Count > 0 {
+				var cluster WorkClusterInfo
+				ParseJson(resp.Kvs[0].Value, &cluster)
+				s.classDetail.Clusters = append(s.classDetail.Clusters, cluster)
+				s.buildConsistentHash()
+				continue
+			}
+			s.Logger.Error("Get New cluster join the class, but TSDBWorkKey dont exist")
 		}
 	}
 }
@@ -1237,7 +1256,7 @@ func (s *Service) putClassDetail(getResp *clientv3.GetResponse) error {
 		// If local node is local Cluster's master node, local node will put Cluster key of the class
 		if s.masterNode.Id == s.MetaClient.Data().NodeID {
 			_, err := s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(s.MetaClient.Data().ClassID, 10)+
-				"-cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(s.masterNode),
+				"-cluster-"+strconv.FormatUint(s.classDetail.Clusters[0].ClusterId, 10), ToJson(*s.masterNode),
 				clientv3.WithLease(s.lease.ID))
 			return err
 		}
