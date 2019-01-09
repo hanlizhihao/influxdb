@@ -949,7 +949,6 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 					masterResp, err := s.cli.Get(context.Background(), masterKey, clientv3.WithPrefix())
 					s.CheckErrPrintLog("Watch work cluster, get master node failed", err)
 					if masterResp.Count == 0 {
-						cmp := clientv3.Compare(clientv3.CreateRevision(masterKey), "=", 0)
 						node := Node{
 							Id:        s.MetaClient.Data().NodeID,
 							Host:      s.ip + s.httpConfig.BindAddress,
@@ -957,21 +956,20 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 							Ip:        s.ip,
 							ClusterId: clusterId,
 						}
-						opPut := clientv3.OpPut(masterKey, ToJson(node), clientv3.WithLease(s.lease.ID))
-						opMasterResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
-						if opMasterResp != nil && opMasterResp.Succeeded && err != nil {
-							s.masterNode = &node
-							// If cluster's master node crash, class's class detail be created by the node will be delete
-							// New master node need create class detail again
-							// class detail is array, express the class's cluster member
-							metaData := s.MetaClient.Data()
-							node.ClusterId = clusterId
-							_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(metaData.ClassID, 10)+
-								"-cluster-"+strconv.FormatUint(metaData.ClusterID, 10), ToJson(node),
-								clientv3.WithLease(s.lease.ID))
-							continue
+						_, err = s.cli.Put(context.Background(), masterKey, ToJson(node), clientv3.WithLease(s.lease.ID))
+						if err != nil {
+							s.Logger.Error(err.Error())
+							goto ChoiceMaster
 						}
-						goto ChoiceMaster
+						s.masterNode = &node
+						// If cluster's master node crash, class's class detail be created by the node will be delete
+						// New master node need create class detail again
+						// class detail is array, express the class's cluster member
+						metaData := s.MetaClient.Data()
+						node.ClusterId = clusterId
+						_, err = s.cli.Put(context.Background(), TSDBClassNode+strconv.FormatUint(metaData.ClassID, 10)+
+							"-cluster-"+strconv.FormatUint(metaData.ClusterID, 10), ToJson(node),
+							clientv3.WithLease(s.lease.ID))
 					}
 				}
 				continue
