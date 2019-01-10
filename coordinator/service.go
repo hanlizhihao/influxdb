@@ -1185,6 +1185,7 @@ RetryCheckClassCluster:
 	if resp == nil || !resp.Succeeded || err != nil {
 		goto RetryCheckClassCluster
 	}
+	s.buildConsistentHash()
 }
 
 func (s *Service) watchClassCluster() {
