@@ -43,6 +43,8 @@ const (
 	DefaultClassLimit = 3
 )
 
+var IgnoreDBS = []string{"_internal", "database"}
+
 var one sync.Once
 
 type Service struct {
@@ -152,6 +154,16 @@ func (s *Service) Open() error {
 	ip, err := GetLocalHostIp()
 	if err != nil {
 		return err
+	}
+	for _, db := range s.MetaClient.Databases() {
+		if ContainsStr(IgnoreDBS, db.Name) {
+			continue
+		}
+		for _, rp := range db.RetentionPolicies {
+			subscriberName := db.Name + rp.Name + ip + s.httpConfig.BindAddress
+			err := s.MetaClient.DropSubscription(db.Name, rp.Name, subscriberName)
+			s.CheckErrPrintLog("Watch cluster "+subscriberName+"deleted, Drop subscription failed", err)
+		}
 	}
 	s.ip = ip
 	s.cli, err = clientv3.New(clientv3.Config{
@@ -941,8 +953,14 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 	for nodeEvent := range workAllNode {
 		for _, ev := range nodeEvent.Events {
 			ParseJson(ev.Kv.Value, &node)
+			if node.Id == s.MetaClient.Data().NodeID {
+				continue
+			}
 			if mvccpb.DELETE == ev.Type {
 				for _, db := range s.MetaClient.Databases() {
+					if ContainsStr(IgnoreDBS, db.Name) {
+						continue
+					}
 					for _, rp := range db.RetentionPolicies {
 						subscriberName := db.Name + rp.Name + node.Host
 						err := s.MetaClient.DropSubscription(db.Name, rp.Name, subscriberName)
@@ -950,7 +968,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 					}
 				}
 				// election master node
-				if strings.Contains(string(ev.Kv.Key), "master") {
+				if strings.Contains(string(ev.Kv.Key), strconv.FormatUint(s.masterNode.Id, 10)+"-master") {
 					s.masterNode = nil
 					masterKey := clusterKey + "-master"
 					// choice master
@@ -985,6 +1003,9 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 			}
 			if mvccpb.PUT == ev.Type {
 				for _, db := range s.MetaClient.Databases() {
+					if ContainsStr(IgnoreDBS, db.Name) {
+						continue
+					}
 					for _, rp := range db.RetentionPolicies {
 						subscriberName := db.Name + rp.Name + node.Host
 						destination := []string{"http://" + node.Host}
@@ -1413,4 +1434,13 @@ func (s *Service) buildConsistentHash() {
 	one.Do(func() {
 		s.httpd.Handler.Balancing.SetConsistent(s.ch)
 	})
+}
+
+func ContainsStr(all []string, sub string) bool {
+	for _, s := range all {
+		if s == sub {
+			return true
+		}
+	}
+	return false
 }
