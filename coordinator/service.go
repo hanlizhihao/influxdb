@@ -718,10 +718,8 @@ RetryJoinOriginalCluster:
 		ParseJson(recruitResp.Kvs[0].Value, &recruitCluster)
 		if recruitCluster.Number > 0 {
 			recruitChanged := false
-			joinSuccess := false
 			for i := 0; i < len(recruitCluster.ClusterIds); {
 				if err := s.joinRecruitClusterByClusterId(recruitCluster.ClusterIds[i]); err == nil {
-					joinSuccess = true
 					break
 				} else {
 					recruitChanged = true
@@ -736,11 +734,8 @@ RetryJoinOriginalCluster:
 					goto RetryJoin
 				}
 			}
-			if joinSuccess {
-				return nil
-			}
 		}
-		return s.createCluster()
+		err = s.createCluster()
 	}
 	masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(s.MetaClient.Data().ClusterID,
 		10)+"-master", clientv3.WithPrefix())
@@ -752,7 +747,7 @@ RetryJoinOriginalCluster:
 	port, _ := strconv.Atoi(string([]rune(s.httpConfig.BindAddress)[1 : len(s.httpConfig.BindAddress)-1]))
 	s.httpd.Handler.Balancing.SetMasterNode(consistent.NewNode(s.masterNode.Id, s.masterNode.Host, port,
 		"host_"+strconv.FormatUint(s.MetaClient.Data().ClusterID, 10), 1))
-	return nil
+	return err
 }
 
 func (s *Service) containCluster(clusterId uint64, clusters []uint64) bool {
