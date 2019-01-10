@@ -1161,19 +1161,19 @@ RetryAddClasses:
 }
 
 func (s *Service) checkClassCluster() {
+	classKey := TSDBClassId + strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
 RetryCheckClassCluster:
-	classResp, err := s.cli.Get(context.Background(), TSDBClassId+
-		strconv.FormatUint(s.MetaClient.Data().ClassID, 10))
+	classResp, err := s.cli.Get(context.Background(), classKey)
 	if classResp.Count > 0 && err == nil {
 		ParseJson(classResp.Kvs[0].Value, s.classDetail)
 	}
-	classKey := TSDBClassId + strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
 	clusters := make([]WorkClusterInfo, 0, len(s.classDetail.Clusters))
 	for _, cluster := range s.classDetail.Clusters {
 		if cluster.ClusterId == s.MetaClient.Data().ClusterID {
 			continue
 		}
-		resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(cluster.ClusterId, 10))
+		resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(cluster.ClusterId, 10)+
+			"-master", clientv3.WithPrefix())
 		if resp.Count > 0 && err == nil {
 			clusters = append(clusters, cluster)
 		}
@@ -1191,7 +1191,7 @@ RetryCheckClassCluster:
 }
 
 func (s *Service) watchClassCluster() {
-	go s.checkClassCluster()
+	s.checkClassCluster()
 	classNodeEventChan := s.cli.Watch(context.Background(), TSDBClassNode+strconv.
 		FormatUint(s.MetaClient.Data().ClassID, 10)+"-cluster", clientv3.WithPrefix())
 	for classNodeInfo := range classNodeEventChan {
