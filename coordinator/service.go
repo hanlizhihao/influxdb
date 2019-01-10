@@ -197,7 +197,9 @@ func (s *Service) Open() error {
 	if err != nil {
 		return err
 	}
+	s.checkClassCluster()
 	go s.watchClassesInfo()
+	go s.watchClassCluster()
 	go s.watchDatabasesInfo()
 	go s.watchContinuesQuery()
 	go s.processNewMeasurement()
@@ -1147,16 +1149,14 @@ RetryAddClasses:
 			Clusters:     []WorkClusterInfo{workClusterInfo},
 		}
 
-		if err = s.putClassDetail(classResp); err == nil {
-			go s.watchClassCluster()
+		if err = s.putClassDetail(classResp); err != nil {
+			return err
 		}
-		return err
 	}
 	ParseJson(classResp.Kvs[0].Value, s.classDetail)
 	s.classDetail.Clusters = append(s.classDetail.Clusters, workClusterInfo)
 	err = s.putClassDetail(classResp)
 	s.buildConsistentHash()
-	go s.watchClassCluster()
 	return err
 }
 
@@ -1169,9 +1169,6 @@ RetryCheckClassCluster:
 	}
 	clusters := make([]WorkClusterInfo, 0, len(s.classDetail.Clusters))
 	for _, cluster := range s.classDetail.Clusters {
-		if cluster.ClusterId == s.MetaClient.Data().ClusterID {
-			continue
-		}
 		resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(cluster.ClusterId, 10)+
 			"-master", clientv3.WithPrefix())
 		if resp.Count > 0 && err == nil {
@@ -1191,7 +1188,6 @@ RetryCheckClassCluster:
 }
 
 func (s *Service) watchClassCluster() {
-	s.checkClassCluster()
 	classNodeEventChan := s.cli.Watch(context.Background(), TSDBClassNode+strconv.
 		FormatUint(s.MetaClient.Data().ClassID, 10)+"-cluster", clientv3.WithPrefix())
 	for classNodeInfo := range classNodeEventChan {
@@ -1272,7 +1268,8 @@ func (s *Service) putClasses(classesResp *clientv3.GetResponse, classes []Class)
 func (s *Service) putClassDetail(getResp *clientv3.GetResponse) error {
 	classKey := TSDBClassId + strconv.FormatUint(s.MetaClient.Data().ClassID, 10)
 	cmpClassDetail := clientv3.Compare(clientv3.Value(classKey), "=", string(getResp.Kvs[0].Value))
-	opPutClassDetail := clientv3.OpPut(classKey, ToJson(*s.classDetail))
+	var classDetail = *s.classDetail
+	opPutClassDetail := clientv3.OpPut(classKey, ToJson(classDetail))
 	resp, _ := s.cli.Txn(context.Background()).If(cmpClassDetail).Then(opPutClassDetail).Commit()
 	if resp != nil && resp.Succeeded {
 		// If local node is local Cluster's master node, local node will put Cluster key of the class
