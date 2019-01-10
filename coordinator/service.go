@@ -711,8 +711,9 @@ RetryJoinOriginalCluster:
 					goto RetryJoin
 				}
 			}
+		} else {
+			err = s.createCluster()
 		}
-		err = s.createCluster()
 	}
 	masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(s.MetaClient.Data().ClusterID,
 		10)+"-master", clientv3.WithPrefix())
@@ -1306,9 +1307,6 @@ RetryJoinTarget:
 		s.cli.Delete(context.Background(), workClusterKey)
 	}
 	if joinSuccess {
-		metaData := s.MetaClient.Data()
-		metaData.ClusterID = clusterId
-		err = s.MetaClient.SetData(&metaData)
 		go s.watchWorkCluster(clusterId)
 		return err
 	}
