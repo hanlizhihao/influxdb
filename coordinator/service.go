@@ -109,7 +109,7 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		httpConfig:       httpConfig,
 		udpConfig:        udpConfig,
 		classDetail:      &ClassDetail{},
-		rpcQuery:         NewRpcService(mapper, &nodes),
+		rpcQuery:         NewRpcService(mapper, nodes),
 		Cluster:          false,
 		classes:          new(Classes),
 		measurement:      make(map[string]interface{}),
@@ -256,6 +256,8 @@ func (s *Service) processNewMeasurement() {
 		if !ok {
 			s.Logger.Warn("Http Service handler balance new measurement point channel closed")
 		}
+		s.Logger.Info("Global create measurement ", zap.ByteString("name",
+			newMeasurementPoint.Points[0].Name()))
 		// create new measurement
 		failedPoints := make([]models.Point, 0)
 		for _, point := range newMeasurementPoint.Points {
@@ -359,6 +361,7 @@ func (s *Service) watchClassesInfo() {
 	classesWatch := s.cli.Watch(context.Background(), TSDBClassesInfo)
 	for classesInfo := range classesWatch {
 		for _, event := range classesInfo.Events {
+			s.Logger.Info("tsdb-classes changed")
 			s.buildMeasurementIndex(event.Kv.Value)
 		}
 	}
@@ -412,6 +415,7 @@ func (s *Service) watchDatabasesInfo() {
 	}
 	databaseInfo := s.cli.Watch(context.Background(), TSDBDatabase, clientv3.WithPrefix())
 	for database := range databaseInfo {
+		s.Logger.Info("The database has changed,db")
 		for _, db := range database.Events {
 			localDBInfo := make(map[string]map[string]Rp, len(s.MetaClient.Databases()))
 			s.dbsMu.Lock()
@@ -528,6 +532,7 @@ func (s *Service) watchContinuesQuery() {
 	}
 	cqInfo := s.cli.Watch(context.Background(), TSDBcq, clientv3.WithPrefix())
 	for cq := range cqInfo {
+		s.Logger.Info("Continues query changed")
 		for _, ev := range cq.Events {
 			var latestCqs Cqs
 			ParseJson(ev.Kv.Value, &latestCqs)
@@ -909,11 +914,46 @@ func (s *Service) initAllClusterInfo(allClusterInfo *AvailableClusterInfo) (erro
 	}
 	return nil, nodes
 }
+func (s *Service) addRpcServiceNodes(node Node) {
+	s.rpcQuery.nodes = append(s.rpcQuery.nodes, node)
+}
+func (s *Service) removeRpcServiceNode(node Node) {
+	index := -1
+	for i, n := range s.rpcQuery.nodes {
+		if n.Id == node.Id {
+			index = i
+			break
+		}
+	}
+	if index != -1 {
+		if index+1 == len(s.rpcQuery.nodes) {
+			s.rpcQuery.nodes = s.rpcQuery.nodes[0:index]
+			return
+		}
+		s.rpcQuery.nodes = append(s.rpcQuery.nodes[0:index], s.rpcQuery.nodes[index+1:]...)
+	}
+}
+func (s *Service) initRpcServiceNodes() {
+	metaData := s.MetaClient.Data()
+	commonNodeKey := TSDBWorkKey + strconv.FormatUint(metaData.ClusterID, 10) + "-node-"
+	resp, err := s.cli.Get(context.Background(), commonNodeKey, clientv3.WithPrefix())
+	s.CheckErrorExit("Init Rpc Service nodes failed", err)
+	if resp != nil && resp.Count > 0 {
+		for _, v := range resp.Kvs {
+			var node Node
+			ParseJson(v.Value, &node)
+			if node.Id != metaData.NodeID {
+				s.rpcQuery.nodes = append(s.rpcQuery.nodes, node)
+			}
+		}
+	}
+}
 
 // Watch node of the Cluster, change Cluster information and change subscriber
 func (s *Service) watchWorkCluster(clusterId uint64) {
 	clusterIdStr := strconv.FormatUint(clusterId, 10)
 	clusterKey := TSDBWorkKey + clusterIdStr
+	s.initRpcServiceNodes()
 	workAllNode := s.cli.Watch(context.Background(), clusterKey+"-", clientv3.WithPrefix())
 	var node Node
 	for nodeEvent := range workAllNode {
@@ -923,6 +963,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 				continue
 			}
 			if mvccpb.DELETE == ev.Type {
+				s.removeRpcServiceNode(node)
 				for _, db := range s.MetaClient.Databases() {
 					if ContainsStr(IgnoreDBS, db.Name) {
 						continue
@@ -968,6 +1009,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 				continue
 			}
 			if mvccpb.PUT == ev.Type {
+				s.addRpcServiceNodes(node)
 				for _, db := range s.MetaClient.Databases() {
 					if ContainsStr(IgnoreDBS, db.Name) {
 						continue
@@ -1160,6 +1202,8 @@ func (s *Service) watchClassCluster() {
 			// every node need update consistent hash
 			var changedNode Node
 			ParseJson(event.Kv.Value, &changedNode)
+			s.Logger.Info("Get tsdb-cla-" + strconv.FormatUint(s.MetaClient.Data().ClassID, 10) +
+				"-cluster change event, cluster id" + strconv.FormatUint(changedNode.ClusterId, 10))
 			if event.Type == mvccpb.DELETE {
 				if event.Kv.Value == nil {
 					continue
@@ -1298,8 +1342,7 @@ RetryJoinTarget:
 				ClusterId: clusterId,
 			}
 			workClusterInfo.Number++
-			joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, &cmp)
-			if !joinSuccess {
+			if joinSuccess = s.putClusterNode(node, workClusterInfo, workClusterKey, &cmp); !joinSuccess {
 				goto RetryJoinTarget
 			}
 		}

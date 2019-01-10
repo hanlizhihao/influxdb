@@ -113,8 +113,8 @@ func (qb *HttpBalance) SetMasterNode(node *consistent.Node) {
 func (qb *HttpBalance) query(c *int32, r *http.Request, resultChan chan *query.Result, ip string) {
 	var err error
 	r.URL, err = url.Parse("http://" + ip + "/query?" + r.Form.Encode())
-	r.Header.Add("distribute", "")
-	r.Header.Add("balance", "")
+	r.Header.Add("distribute", "distribute")
+	r.Header.Add("balance", "balance")
 	resp, err := qb.transport.RoundTrip(r)
 	defer resp.Body.Close()
 	if err != nil {
@@ -159,7 +159,7 @@ func (qb *HttpBalance) forwardRequest(measurement string, response *http.Respons
 	w := *response
 	if ips == nil || len(ips) == 0 {
 		qb.Logger.Error("Balance error !!! Measurement does not exist in any node " +
-			"in the cluster, the name of measurement is " + measurement)
+			"in the class, the name of measurement is " + measurement)
 		w.WriteHeader(404)
 		_, err = w.Write([]byte("Measurement don't exist, Please try again later \n"))
 		if err != nil {
@@ -174,7 +174,7 @@ func (qb *HttpBalance) forwardRequest(measurement string, response *http.Respons
 		index = rand.Intn(len(ips) - 1)
 	}
 	r.URL, err = url.Parse("http://" + ips[index] + "/query?" + r.Form.Encode())
-	r.Header.Add("balance", "")
+	r.Header.Add("balance", "balance")
 	resp, err := qb.transport.RoundTrip(r)
 	if err != nil {
 		qb.Logger.Error("Balance error !!! ")

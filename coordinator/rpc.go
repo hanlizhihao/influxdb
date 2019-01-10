@@ -36,7 +36,7 @@ type RpcService struct {
 	Logger      *zap.Logger
 	closed      bool
 
-	nodes      *[]Node
+	nodes      []Node
 	MetaClient interface {
 		Data() meta.Data
 	}
@@ -44,7 +44,7 @@ type RpcService struct {
 	queryExecutor *QueryExecutor
 }
 
-func NewRpcService(lsm *query.ShardMapper, n *[]Node) *RpcService {
+func NewRpcService(lsm *query.ShardMapper, n []Node) *RpcService {
 	return &RpcService{
 		rpcConfig:     NewRpcConfig(),
 		shardMapper:   lsm,
@@ -126,6 +126,7 @@ func NewQuery(lsm *query.ShardMapper, n *[]Node) *QueryExecutor {
 }
 
 func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterator) error {
+	rq.Logger.Debug("DistributeQuery start")
 	if t := param.timeRange.Min.Add(DefaultTimeRangeLimit); t.After(param.timeRange.Max) {
 		return rq.BoosterQuery(param, iterator)
 	}
@@ -189,6 +190,7 @@ func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterato
 	}
 }
 func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
+	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 1)
 	sources = append(sources, &param.source)

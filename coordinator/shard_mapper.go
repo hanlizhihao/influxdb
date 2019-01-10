@@ -37,6 +37,9 @@ func (e *LocalShardMapper) MapShards(sources influxql.Sources, t influxql.TimeRa
 	a := &LocalShardMapping{
 		ShardMap: make(map[Source]tsdb.ShardGroup),
 		s:        e.service,
+		qb: &DefaultQueryBooster{
+			s: e.service,
+		},
 	}
 
 	tmin := time.Unix(0, t.MinTimeNano())
@@ -105,7 +108,8 @@ type LocalShardMapping struct {
 	// this time instead.
 	MaxTime time.Time
 
-	s *Service
+	s  *Service
+	qb QueryBooster
 }
 
 func (a *LocalShardMapping) FieldDimensions(m *influxql.Measurement) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
@@ -178,6 +182,12 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 	count := 0
 	resultCh := make(chan query.Iterator)
 	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
+	rpcParam := &RpcParam{
+		source:    *m,
+		timeRange: timeRange,
+		opt:       opt,
+	}
+	a.qb.Query(ctxTimeOut, *rpcParam, resultCh)
 	defer cancel()
 	for _, node := range a.s.ch.MasterNodes {
 		if node.Id != a.s.masterNode.Id {
@@ -188,11 +198,7 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 			}
 			go func() {
 				var it *query.Iterator
-				err = client.Call("RpcService.BoosterQuery", RpcParam{
-					source:    *m,
-					timeRange: timeRange,
-					opt:       opt,
-				}, it)
+				err = client.Call("RpcService.DistributeQuery", *rpcParam, it)
 				resultCh <- *it
 				if err != nil {
 					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
@@ -246,6 +252,7 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 	if err != nil {
 		return localIterator, err
 	}
+
 	itrs = append(itrs, localIterator)
 	if count == 0 {
 		return query.Iterators(itrs).Merge(opt)
@@ -312,4 +319,34 @@ func (a *LocalShardMapping) Close() error {
 type Source struct {
 	Database        string
 	RetentionPolicy string
+}
+
+type QueryBooster interface {
+	Query(ctx context.Context, param RpcParam, result chan query.Iterator) error
+}
+
+type DefaultQueryBooster struct {
+	s *Service
+}
+
+func (qb *DefaultQueryBooster) Query(ctx context.Context, param RpcParam, result chan query.Iterator) error {
+	for _, n := range qb.s.rpcQuery.nodes {
+		client, err := rpc.Dial("tcp", n.Ip+DefaultRpcBindAddress)
+		if err != nil {
+			return err
+		}
+		go func() {
+			var it *query.Iterator
+			err = client.Call("RpcService.DistributeQuery", RpcParam{
+				source:    param.source,
+				timeRange: param.timeRange,
+				opt:       param.opt,
+			}, it)
+			result <- *it
+			if err != nil {
+				qb.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
+			}
+		}()
+	}
+	return nil
 }
