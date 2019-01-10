@@ -603,6 +603,7 @@ func (s *Service) setMetaDataNodeId(nodeId uint64) error {
 	originMetaData.NodeID = nodeId
 	return s.MetaClient.SetData(&originMetaData)
 }
+
 func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey string, cmp *clientv3.Cmp) bool {
 	nodeKey := clusterKey + "-node-"
 	ops := make([]clientv3.Op, 0)
@@ -610,38 +611,6 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 	var resp *clientv3.TxnResponse
 	var err error
 	originMasterNodeKey := clusterKey + "-master"
-	// If cluster limit equals number, recruit info delete
-	if cluster.Number >= cluster.Limit {
-	RetryChange:
-		recruitResp, err := s.cli.Get(context.Background(), TSDBRecruitClustersKey)
-		s.CheckErrorExit("Get recruit cluster info failed", err)
-		var recruit RecruitClusters
-		ParseJson(recruitResp.Kvs[0].Value, &recruit)
-		latestIds := make([]uint64, len(recruit.ClusterIds))
-		index := -1
-		targetIndex := -1
-	Cluster:
-		for i, id := range recruit.ClusterIds {
-			for y := i + 1; y < len(recruit.ClusterIds); y++ {
-				if id == recruit.ClusterIds[y] {
-					continue Cluster
-				}
-			}
-			latestIds = append(latestIds, id)
-			index++
-			if id == cluster.ClusterId {
-				targetIndex = index
-			}
-		}
-		latestIds = append(latestIds[0:targetIndex], latestIds[targetIndex+1:]...)
-		recruit.Number = int32(len(latestIds))
-		cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruitResp.Kvs[0].Value))
-		op := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruit))
-		resp, err := s.cli.Txn(context.Background()).If(cmp).Then(op).Commit()
-		if resp == nil || !resp.Succeeded {
-			goto RetryChange
-		}
-	}
 	if cluster.MasterUsable {
 		ops = append(ops, clientv3.OpPut(clusterKey, ToJson(cluster)))
 		resp, err = s.cli.Txn(context.Background()).If(*cmp).Then(ops...).Commit()
@@ -652,11 +621,13 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 		resp, err = s.cli.Txn(context.Background()).If(*cmp).Then(ops...).Commit()
 	}
 	if resp != nil && resp.Succeeded && err == nil {
+		// change meta data
 		var metaData = s.MetaClient.Data()
 		metaData.ClassID = cluster.ClassId
 		metaData.ClusterID = cluster.ClusterId
 		// if class id is null, it is exception
 		err = s.MetaClient.SetData(&metaData)
+		// change master node
 		var masterNode Node
 		masterNodeResp, err := s.cli.Get(context.Background(), originMasterNodeKey, clientv3.WithPrefix())
 		s.CheckErrorExit("Join Cluster Success, but master node dont't exist", err)
@@ -667,14 +638,6 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 		ParseJson(masterNodeResp.Kvs[0].Value, &masterNode)
 		masterNode.ClusterId = cluster.ClusterId
 		s.masterNode = &masterNode
-		nodeResp, err := s.cli.Get(context.Background(), nodeKey, clientv3.WithPrefix())
-		s.CheckErrorExit("Join Cluster Success, but common node get failed", err)
-		nodes := make([]Node, nodeResp.Count)
-		for _, kv := range nodeResp.Kvs {
-			var node Node
-			ParseJson(kv.Value, &node)
-			nodes = append(nodes, node)
-		}
 		return true
 	}
 	return false
@@ -1243,6 +1206,7 @@ func (s *Service) watchClassCluster() {
 				}
 				continue
 			}
+			// New Cluster join
 			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(changedNode.ClusterId, 10))
 			if err == nil && resp != nil && resp.Count > 0 {
 				var cluster WorkClusterInfo
