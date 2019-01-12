@@ -109,7 +109,7 @@ func (rs *RpcService) Open() error {
 type RpcParam struct {
 	Source    []byte
 	TimeRange []byte
-	Opt       query.IteratorOptions
+	Opt       *query.IteratorOptions
 }
 type RpcResponse struct {
 	It []byte
@@ -118,14 +118,13 @@ type RpcResponse struct {
 func GetRpcParam(s influxql.Measurement, o query.IteratorOptions) *RpcParam {
 	return &RpcParam{
 		Source: ToJsonByte(s),
-		Opt:    o,
+		Opt:    &o,
 	}
 }
-func ParseRpcParam(p RpcParam) (influxql.Measurement, query.IteratorOptions) {
+func ParseRpcParam(p RpcParam) (influxql.Measurement, *query.IteratorOptions) {
 	var s influxql.Measurement
-	var opt query.IteratorOptions
 	ParseJson(p.Source, &s)
-	return s, opt
+	return s, p.Opt
 }
 
 type QueryExecutor struct {
@@ -164,7 +163,7 @@ func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *RpcResponse) erro
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.BoosterCreateIterator(tc, &source, opt)
+		it, err := localShardMapping.BoosterCreateIterator(tc, &source, *opt)
 		if err == nil {
 			iterator.It = ToJsonByte(it)
 			return nil
@@ -190,7 +189,7 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *RpcResponse) err
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.LocalCreateIterator(tc, &source, opt)
+		it, err := localShardMapping.LocalCreateIterator(tc, &source, *opt)
 		if err == nil {
 			iterator.It = ToJsonByte(it)
 			return nil

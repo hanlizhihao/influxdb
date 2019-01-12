@@ -260,10 +260,9 @@ func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influx
 }
 
 func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
-	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
 	resultCh := make(chan *query.Iterator)
 	ctxTimeOut := context.Background()
-	rpcParam := GetRpcParam(*m, timeRange, opt)
+	rpcParam := GetRpcParam(*m, opt)
 	var wait sync.WaitGroup
 	for _, node := range a.s.ch.MasterNodes {
 		if node.Id != a.s.masterNode.Id {
@@ -379,7 +378,7 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 			rewriteOpt.EndTime = max.UnixNano()
 		}
 
-		rpcParam := GetRpcParam(*m, opt)
+		rpcParam := GetRpcParam(*m, rewriteOpt)
 		client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
 		if err != nil {
 			qb.s.Logger.Error("Get Rpc client failed", zap.Error(err))
