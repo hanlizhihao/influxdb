@@ -102,7 +102,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * classIpMap，当ip数组数量小于等于1，重新build，使用map索引时，出现失效，则删除数组元素 - 待验证
 * 属于本地class，但series不属于本地的数据处理失败，暂时未作处理，只是重试3次
 * 异步EtcdSerivce写入本地失败，暂时未处理
-* 连接池设计
+* 负载均衡连接池与rpc连接池设计
 * watch前先同步本地metaData至最新
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
 * 弹性Hash算法

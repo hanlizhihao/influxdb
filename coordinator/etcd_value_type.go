@@ -35,6 +35,7 @@ type (
 		MasterUsable bool     `json:"master"`
 		MasterId     uint64   `json:"master_id"`
 		MasterHost   string   `json:"master_host"`
+		MasterIp     string   `json:"master_ip"`
 	}
 	// tsdb-available-clusters
 	AvailableClusterInfo struct {
