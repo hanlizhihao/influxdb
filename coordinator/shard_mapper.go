@@ -232,7 +232,9 @@ func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influx
 	defer close(resultCh)
 	go func(itrs []query.Iterator) {
 		it, err := a.LocalCreateIterator(ctxTimeOut, m, opt)
-		a.s.Logger.Error(err.Error())
+		if err != nil {
+			a.s.Logger.Error(err.Error())
+		}
 		itrs = append(itrs, it)
 	}(itrs)
 	count := 0
