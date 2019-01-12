@@ -131,7 +131,7 @@ func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterato
 		return rq.BoosterQuery(param, iterator)
 	}
 	// The time interval of parameters exceeds the limit
-	nodes := *rq.nodes
+	nodes := rq.nodes
 	m := rq.MetaClient.Data()
 	duration := (param.timeRange.Max.Second() - param.timeRange.Min.Second()) / len(nodes)
 	itCh := make(chan query.Iterator)
@@ -192,7 +192,7 @@ func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterato
 func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
-	sources := make([]influxql.Source, 1)
+	sources := make([]influxql.Source, 0)
 	sources = append(sources, &param.source)
 	sg, err := sm.MapShards(sources, param.timeRange, query.SelectOptions{})
 	if err != nil {
