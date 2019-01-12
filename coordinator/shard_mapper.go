@@ -363,22 +363,23 @@ type DefaultQueryBooster struct {
 
 func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions,
 	result chan *query.Iterator) error {
-	min := time.Unix(opt.StartTime, 0)
-	max := time.Unix(opt.EndTime, 0)
+	min := time.Unix(0, opt.StartTime)
+	max := time.Unix(0, opt.EndTime)
 	var duration int
 	if len(qb.s.rpcQuery.nodes) > 0 {
 		duration = (max.Second() - min.Second()) / len(qb.s.rpcQuery.nodes)
 	}
 	var wait sync.WaitGroup
 	for i, node := range qb.s.rpcQuery.nodes {
-		rewriteParam := influxql.TimeRange{}
-		rewriteParam.Max = min.Add(time.Duration(duration))
-		rewriteParam.Min = min
-		min = rewriteParam.Max
+		rewriteOpt := opt
+		rewriteOpt.EndTime = min.Add(time.Duration(duration)).UnixNano()
+		rewriteOpt.StartTime = min.UnixNano()
+		min = time.Unix(0, rewriteOpt.EndTime)
 		if i == len(qb.s.rpcQuery.nodes)-1 {
-			rewriteParam.Max = max
+			rewriteOpt.EndTime = max.UnixNano()
 		}
-		rpcParam := GetRpcParam(*m, rewriteParam, opt)
+
+		rpcParam := GetRpcParam(*m, opt)
 		client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
 		if err != nil {
 			qb.s.Logger.Error("Get Rpc client failed", zap.Error(err))

@@ -106,6 +106,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * watch前先同步本地metaData至最新
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
 * 弹性Hash算法
+* 确定timeRange来源
 ## 使用注意
 * 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 * 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接

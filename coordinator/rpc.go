@@ -109,27 +109,23 @@ func (rs *RpcService) Open() error {
 type RpcParam struct {
 	Source    []byte
 	TimeRange []byte
-	Opt       []byte
+	Opt       query.IteratorOptions
 }
 type RpcResponse struct {
 	It []byte
 }
 
-func GetRpcParam(s influxql.Measurement, t influxql.TimeRange, o query.IteratorOptions) *RpcParam {
+func GetRpcParam(s influxql.Measurement, o query.IteratorOptions) *RpcParam {
 	return &RpcParam{
-		Source:    ToJsonByte(s),
-		TimeRange: ToJsonByte(t),
-		Opt:       ToJsonByte(o),
+		Source: ToJsonByte(s),
+		Opt:    o,
 	}
 }
-func ParseRpcParam(p RpcParam) (influxql.Measurement, influxql.TimeRange, query.IteratorOptions) {
+func ParseRpcParam(p RpcParam) (influxql.Measurement, query.IteratorOptions) {
 	var s influxql.Measurement
-	var t influxql.TimeRange
 	var opt query.IteratorOptions
 	ParseJson(p.Source, &s)
-	ParseJson(p.TimeRange, &t)
-	ParseJson(p.Opt, &opt)
-	return s, t, opt
+	return s, opt
 }
 
 type QueryExecutor struct {
@@ -151,11 +147,15 @@ func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 }
 
 func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *RpcResponse) error {
-	source, timeRange, opt := ParseRpcParam(p)
+	source, opt := ParseRpcParam(p)
 	rq.Logger.Debug("DistributeQuery start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 0)
 	sources = append(sources, &source)
+	timeRange := influxql.TimeRange{
+		Min: time.Unix(0, opt.StartTime),
+		Max: time.Unix(0, opt.EndTime),
+	}
 	sg, err := sm.MapShards(sources, timeRange, query.SelectOptions{})
 	if err != nil {
 		return err
@@ -173,11 +173,15 @@ func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *RpcResponse) erro
 	return errors.New("QueryExecutor Query failed")
 }
 func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *RpcResponse) error {
-	source, timeRange, opt := ParseRpcParam(param)
+	source, opt := ParseRpcParam(param)
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 0)
 	sources = append(sources, &source)
+	timeRange := influxql.TimeRange{
+		Min: time.Unix(0, opt.StartTime),
+		Max: time.Unix(0, opt.EndTime),
+	}
 	sg, err := sm.MapShards(sources, timeRange, query.SelectOptions{})
 	if err != nil {
 		return err
