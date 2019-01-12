@@ -273,10 +273,10 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 			wait.Add(1)
 			go func(resultCh chan *query.Iterator) {
 				defer wait.Done()
-				var it query.Iterator
-				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, &it)
+				var resp RpcResponse
+				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, &resp)
 				if err == nil {
-					resultCh <- &it
+					resultCh <- &resp.It
 				} else {
 					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
 				}
@@ -384,10 +384,10 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 		wait.Add(1)
 		go func(client *rpc.Client, i chan *query.Iterator, rpcParam *RpcParam) {
 			defer wait.Done()
-			var it query.Iterator
-			if err := client.Call("QueryExecutor.BoosterQuery", *rpcParam, &it); err == nil {
-				if it != nil {
-					i <- &it
+			var response RpcResponse
+			if err := client.Call("QueryExecutor.BoosterQuery", *rpcParam, &response); err == nil {
+				if &response != nil {
+					i <- &response.It
 				}
 			} else {
 				qb.s.Logger.Error("Booster Query failed", zap.Error(err))

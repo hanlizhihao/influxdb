@@ -112,7 +112,7 @@ type RpcParam struct {
 	Opt       *query.IteratorOptions
 }
 type RpcResponse struct {
-	It interface{}
+	It query.Iterator
 }
 
 func GetRpcParam(s influxql.Measurement, o query.IteratorOptions) *RpcParam {
@@ -165,13 +165,13 @@ func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *RpcResponse) erro
 		defer cancel()
 		it, err := localShardMapping.BoosterCreateIterator(tc, &source, *opt)
 		if err == nil {
-			iterator.It = ToJsonByte(it)
+			iterator.It = it
 			return nil
 		}
 	}
 	return errors.New("QueryExecutor Query failed")
 }
-func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
+func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *RpcResponse) error {
 	source, opt := ParseRpcParam(param)
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
@@ -191,7 +191,7 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) 
 		defer cancel()
 		it, err := localShardMapping.LocalCreateIterator(tc, &source, *opt)
 		if err == nil {
-			*iterator = it
+			iterator.It = it
 			return nil
 		}
 	}
