@@ -387,12 +387,10 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 		wait.Add(1)
 		go func(client *rpc.Client, i chan *query.Iterator, rpcParam *RpcParam) {
 			defer wait.Done()
-			var it RpcResponse
+			var it query.Iterator
 			if err := client.Call("QueryExecutor.BoosterQuery", *rpcParam, &it); err == nil {
-				var iterators query.Iterator
-				ParseJson(it.It, &iterators)
-				if iterators != nil {
-					i <- &iterators
+				if it != nil {
+					i <- &it
 				}
 			} else {
 				qb.s.Logger.Error("Booster Query failed", zap.Error(err))
