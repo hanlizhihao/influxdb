@@ -156,16 +156,6 @@ func (s *Service) Open() error {
 	if err != nil {
 		return err
 	}
-	for _, db := range s.MetaClient.Databases() {
-		if ContainsStr(IgnoreDBS, db.Name) {
-			continue
-		}
-		for _, rp := range db.RetentionPolicies {
-			subscriberName := db.Name + rp.Name + ip + s.httpConfig.BindAddress
-			err := s.MetaClient.DropSubscription(db.Name, rp.Name, subscriberName)
-			s.CheckErrPrintLog("Watch cluster "+subscriberName+"deleted, Drop subscription failed", err)
-		}
-	}
 	s.ip = ip
 	s.cli, err = clientv3.New(clientv3.Config{
 		Endpoints:            []string{s.etcdConfig.EtcdAddress},

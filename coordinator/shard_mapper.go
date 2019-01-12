@@ -5,6 +5,7 @@ import (
 	"go.uber.org/zap"
 	"io"
 	"net/rpc"
+	"sync"
 	"time"
 
 	"github.com/influxdata/influxdb/query"
@@ -224,100 +225,86 @@ func (a *LocalShardMapping) LocalCreateIterator(ctx context.Context, m *influxql
 }
 
 func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
+	var wait sync.WaitGroup
 	itrs := make([]query.Iterator, 0)
+	resultCh := make(chan *query.Iterator, 10)
 	var err error
 	// Booster query execute local CrateIterator, judge execute rpc
-	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Second*10)
-	resultCh := make(chan query.Iterator)
-	defer close(resultCh)
-	go func(resultCh chan query.Iterator) {
+	wait.Add(1)
+	go func(resultCh chan *query.Iterator, ctxTimeOut context.Context, m *influxql.Measurement, opt query.IteratorOptions) {
+		defer wait.Done()
 		it, err := a.LocalCreateIterator(ctxTimeOut, m, opt)
-		if err != nil {
-			a.s.Logger.Error(err.Error())
+		a.s.CheckErrPrintLog("LocalCreateIterator failed", err)
+		if it != nil {
+			resultCh <- &it
 		}
-		resultCh <- it
-	}(resultCh)
-	count := 0
+	}(resultCh, ctx, m, opt)
 	// juge execute rpc
 	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
 	if t := time.Unix(opt.StartTime, 0).Add(DefaultTimeRangeLimit); t.Before(timeRange.Max) {
 		// execute booster rpc
-		count, err = a.qb.Query(ctxTimeOut, m, opt, resultCh)
+		wait.Add(1)
+		go func(ctxTimeOut context.Context, m *influxql.Measurement, opt query.IteratorOptions, resultCh chan *query.Iterator) {
+			defer wait.Done()
+			err = a.qb.Query(ctxTimeOut, m, opt, resultCh)
+		}(ctx, m, opt, resultCh)
 	}
-	count++
-	a.s.CheckErrPrintLog("Local Booster Query failed", err)
-	go func(itrs []query.Iterator) {
-		for i := range resultCh {
-			count--
-			if i != nil {
-				itrs = append(itrs, i)
-			}
-			if count == 0 {
-				cancel()
-				break
-			}
-		}
-	}(itrs)
-	select {
-	case <-ctxTimeOut.Done():
-		return query.Iterators(itrs).Merge(opt)
+	go func(resultCh chan *query.Iterator) {
+		wait.Wait()
+		defer close(resultCh)
+	}(resultCh)
+	for i := range resultCh {
+		itrs = append(itrs, *i)
 	}
+	return query.Iterators(itrs).Merge(opt)
 }
 
 func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
 	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
-	resultCh := make(chan query.Iterator)
-	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Second*10)
+	resultCh := make(chan *query.Iterator)
+	ctxTimeOut := context.Background()
 	rpcParam := GetRpcParam(*m, timeRange, opt)
-	count := 0
-	defer cancel()
+	var wait sync.WaitGroup
 	for _, node := range a.s.ch.MasterNodes {
 		if node.Id != a.s.masterNode.Id {
-			count++
 			client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
 			if err != nil {
 				return nil, err
 			}
-			go func() {
+			wait.Add(1)
+			go func(resultCh chan *query.Iterator) {
+				defer wait.Done()
 				var response RpcResponse
 				var it query.Iterator
 				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, &response)
 				if err == nil {
 					ParseJson(response.It, &it)
 				}
-				resultCh <- it
+				resultCh <- &it
 				if err != nil {
 					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
 				}
-			}()
+			}(resultCh)
 		}
 	}
-	itrs := make([]query.Iterator, 0, count)
-	localIterator, err := a.BoosterCreateIterator(ctxTimeOut, m, opt)
-	if err != nil {
-		return localIterator, err
-	}
-
-	itrs = append(itrs, localIterator)
-	if count == 0 {
-		return query.Iterators(itrs).Merge(opt)
-	}
-	go func(itrs []query.Iterator) {
-		for i := range resultCh {
-			count--
-			if i != nil {
-				itrs = append(itrs, i)
-			}
-			if count == 0 {
-				cancel()
-				break
-			}
+	itrs := make([]query.Iterator, 0)
+	wait.Add(1)
+	go func(result chan *query.Iterator, ctxTimeOut context.Context, m *influxql.Measurement, opt query.IteratorOptions) {
+		defer wait.Done()
+		localIterator, err := a.BoosterCreateIterator(ctxTimeOut, m, opt)
+		a.s.CheckErrPrintLog("BoosterCreateIterator failed ", err)
+		if localIterator != nil {
+			result <- &localIterator
 		}
-	}(itrs)
-	select {
-	case <-ctxTimeOut.Done():
-		return query.Iterators(itrs).Merge(opt)
+	}(resultCh, ctxTimeOut, m, opt)
+	go func(resultCh chan *query.Iterator) {
+		wait.Wait()
+		defer close(resultCh)
+	}(resultCh)
+	for i := range resultCh {
+		itrs = append(itrs, *i)
 	}
+	return query.Iterators(itrs).Merge(opt)
 }
 
 func (a *LocalShardMapping) IteratorCost(m *influxql.Measurement, opt query.IteratorOptions) (query.IteratorCost, error) {
@@ -367,17 +354,22 @@ type Source struct {
 }
 
 type QueryBooster interface {
-	Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions, result chan query.Iterator) (int, error)
+	Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions, result chan *query.Iterator) error
 }
 
 type DefaultQueryBooster struct {
 	s *Service
 }
 
-func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions, result chan query.Iterator) (int, error) {
+func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions,
+	result chan *query.Iterator) error {
 	min := time.Unix(opt.StartTime, 0)
 	max := time.Unix(opt.EndTime, 0)
-	duration := (max.Second() - min.Second()) / len(qb.s.rpcQuery.nodes)
+	var duration int
+	if len(qb.s.rpcQuery.nodes) > 0 {
+		duration = (max.Second() - min.Second()) / len(qb.s.rpcQuery.nodes)
+	}
+	var wait sync.WaitGroup
 	for i, node := range qb.s.rpcQuery.nodes {
 		rewriteParam := influxql.TimeRange{}
 		rewriteParam.Max = min.Add(time.Duration(duration))
@@ -388,21 +380,25 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 		}
 		rpcParam := GetRpcParam(*m, rewriteParam, opt)
 		client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
-		go func(client *rpc.Client, i chan query.Iterator) {
+		if err != nil {
+			qb.s.Logger.Error("Get Rpc client failed", zap.Error(err))
+			continue
+		}
+		wait.Add(1)
+		go func(client *rpc.Client, i chan *query.Iterator, rpcParam *RpcParam) {
+			defer wait.Done()
 			var it RpcResponse
-			err = client.Call("QueryExecutor.BoosterQuery", *rpcParam, &it)
-			if err != nil {
-				qb.s.Logger.Error("Booster Query failed", zap.Error(err))
-				return
-			}
-			if &it != nil {
+			if err := client.Call("QueryExecutor.BoosterQuery", *rpcParam, &it); err == nil {
 				var iterators query.Iterator
 				ParseJson(it.It, &iterators)
-				i <- iterators
+				if &it != nil {
+					i <- &iterators
+				}
 			} else {
-				i <- nil
+				qb.s.Logger.Error("Booster Query failed", zap.Error(err))
 			}
-		}(client, result)
+		}(client, result, rpcParam)
 	}
-	return len(qb.s.rpcQuery.nodes), nil
+	wait.Wait()
+	return nil
 }
