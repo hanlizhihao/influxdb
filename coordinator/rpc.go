@@ -78,6 +78,7 @@ func (rs *RpcService) Open() error {
 		return err
 	}
 	listener, err := net.ListenTCP("tcp", tcpAddr)
+	rs.closed = false
 	if err != nil {
 		return err
 	}
