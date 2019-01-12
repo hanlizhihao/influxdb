@@ -183,9 +183,9 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 	resultCh := make(chan query.Iterator)
 	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
 	rpcParam := &RpcParam{
-		source:    *m,
-		timeRange: timeRange,
-		opt:       opt,
+		Source:    *m,
+		TimeRange: timeRange,
+		Opt:       opt,
 	}
 	err := a.qb.Query(ctxTimeOut, *rpcParam, resultCh)
 	a.s.CheckErrPrintLog("Local Booster Query failed", err)
@@ -316,7 +316,7 @@ func (a *LocalShardMapping) Close() error {
 	return nil
 }
 
-// Source contains the database and retention policy source for data.
+// Source contains the database and retention policy Source for data.
 type Source struct {
 	Database        string
 	RetentionPolicy string
@@ -339,9 +339,9 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, param RpcParam, result
 		go func(client *rpc.Client, result chan query.Iterator) {
 			var it = new(query.Iterator)
 			err = client.Call("QueryExecutor.BoosterQuery", RpcParam{
-				source:    param.source,
-				timeRange: param.timeRange,
-				opt:       param.opt,
+				Source:    param.Source,
+				TimeRange: param.TimeRange,
+				Opt:       param.Opt,
 			}, it)
 			if it != nil {
 				result <- *it

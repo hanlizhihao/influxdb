@@ -29,7 +29,7 @@ func NewRpcConfig() RpcConfig {
 	}
 }
 
-// shards, err := shardMapper.MapShards(c.stmt.Sources, timeRange, sopt)
+// shards, err := shardMapper.MapShards(c.stmt.Sources, TimeRange, sopt)
 type RpcService struct {
 	shardMapper *query.ShardMapper
 	rpcConfig   RpcConfig
@@ -107,9 +107,9 @@ func (rs *RpcService) Open() error {
 }
 
 type RpcParam struct {
-	source    influxql.Measurement
-	timeRange influxql.TimeRange
-	opt       query.IteratorOptions
+	Source    influxql.Measurement
+	TimeRange influxql.TimeRange
+	Opt       query.IteratorOptions
 }
 
 type QueryExecutor struct {
@@ -132,27 +132,27 @@ func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 
 func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterator) error {
 	rq.Logger.Debug("DistributeQuery start")
-	if t := param.timeRange.Min.Add(DefaultTimeRangeLimit); t.After(param.timeRange.Max) {
+	if t := param.TimeRange.Min.Add(DefaultTimeRangeLimit); t.After(param.TimeRange.Max) {
 		return rq.BoosterQuery(param, iterator)
 	}
 	// The time interval of parameters exceeds the limit
 	nodes := rq.nodes
 	m := rq.MetaClient.Data()
-	duration := (param.timeRange.Max.Second() - param.timeRange.Min.Second()) / len(nodes)
+	duration := (param.TimeRange.Max.Second() - param.TimeRange.Min.Second()) / len(nodes)
 	itCh := make(chan query.Iterator)
 	iterators := make([]query.Iterator, len(nodes)-1)
 	defer close(itCh)
 	c := context.Background()
 	tc, cancel := context.WithTimeout(c, time.Second*2)
 	defer cancel()
-	startTime := param.timeRange.Min
+	startTime := param.TimeRange.Min
 	for i, node := range nodes {
 		rewriteParam := param
-		rewriteParam.timeRange.Max = startTime.Add(time.Duration(duration))
-		rewriteParam.timeRange.Min = startTime
-		startTime = rewriteParam.timeRange.Max
+		rewriteParam.TimeRange.Max = startTime.Add(time.Duration(duration))
+		rewriteParam.TimeRange.Min = startTime
+		startTime = rewriteParam.TimeRange.Max
 		if i == len(nodes)-1 {
-			rewriteParam.timeRange.Max = param.timeRange.Max
+			rewriteParam.TimeRange.Max = param.TimeRange.Max
 		}
 		var it *query.Iterator
 		if node.Id == m.NodeID {
@@ -186,7 +186,7 @@ func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterato
 		if len(iterators) < len(nodes) {
 			return rq.BoosterQuery(param, iterator)
 		}
-		result, err := query.Iterators(iterators).Merge(param.opt)
+		result, err := query.Iterators(iterators).Merge(param.Opt)
 		if err != nil {
 			return err
 		}
@@ -198,8 +198,8 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) 
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 0)
-	sources = append(sources, &param.source)
-	sg, err := sm.MapShards(sources, param.timeRange, query.SelectOptions{})
+	sources = append(sources, &param.Source)
+	sg, err := sm.MapShards(sources, param.TimeRange, query.SelectOptions{})
 	if err != nil {
 		return err
 	}
@@ -207,7 +207,7 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) 
 	tc, cancel := context.WithTimeout(c, time.Second*2)
 	defer cancel()
 	go func(i *query.Iterator, cancel func()) {
-		it, err := sg.CreateIterator(tc, &param.source, param.opt)
+		it, err := sg.CreateIterator(tc, &param.Source, param.Opt)
 		if err == nil {
 			iterator = &it
 		}

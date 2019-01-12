@@ -60,7 +60,7 @@ func TestQueryExecutor_ExecuteQuery_SelectStatement(t *testing.T) {
 		}
 		sh.FieldDimensionsFn = func(measurements []string) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
 			if !reflect.DeepEqual(measurements, []string{"cpu"}) {
-				t.Fatalf("unexpected source: %#v", measurements)
+				t.Fatalf("unexpected Source: %#v", measurements)
 			}
 			return map[string]influxql.DataType{"value": influxql.Float}, nil, nil
 		}
@@ -112,7 +112,7 @@ func TestQueryExecutor_ExecuteQuery_MaxSelectBucketsN(t *testing.T) {
 		}
 		sh.FieldDimensionsFn = func(measurements []string) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
 			if !reflect.DeepEqual(measurements, []string{"cpu"}) {
-				t.Fatalf("unexpected source: %#v", measurements)
+				t.Fatalf("unexpected Source: %#v", measurements)
 			}
 			return map[string]influxql.DataType{"value": influxql.Float}, nil, nil
 		}
@@ -204,7 +204,7 @@ func TestStatementExecutor_ExecuteQuery_WriteInto(t *testing.T) {
 				}
 				sh.FieldDimensionsFn = func(measurements []string) (fields map[string]influxql.DataType, dimensions map[string]struct{}, err error) {
 					if !reflect.DeepEqual(measurements, []string{"cpu"}) {
-						t.Fatalf("unexpected source: %#v", measurements)
+						t.Fatalf("unexpected Source: %#v", measurements)
 					}
 					return map[string]influxql.DataType{"value": influxql.Float}, nil, nil
 				}
