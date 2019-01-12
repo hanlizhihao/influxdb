@@ -108,7 +108,7 @@ type RpcParam struct {
 }
 
 type QueryExecutor struct {
-	nodes      *[]Node
+	nodes      []Node
 	MetaClient interface {
 		Data() meta.Data
 	}
@@ -117,7 +117,7 @@ type QueryExecutor struct {
 	ip          string
 }
 
-func NewQuery(lsm *query.ShardMapper, n *[]Node) *QueryExecutor {
+func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 	return &QueryExecutor{
 		shardMapper: lsm,
 		Logger:      zap.NewNop(),
