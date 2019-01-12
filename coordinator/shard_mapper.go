@@ -177,32 +177,8 @@ func (a *LocalShardMapping) MapType(m *influxql.Measurement, field string) influ
 	return typ
 }
 
-func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
-	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
-	count := 0
-	resultCh := make(chan query.Iterator)
-	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
-	rpcParam := GetRpcParam(*m, timeRange, opt)
-	err := a.qb.Query(ctxTimeOut, *rpcParam, resultCh)
-	a.s.CheckErrPrintLog("Local Booster Query failed", err)
-	defer cancel()
-	for _, node := range a.s.ch.MasterNodes {
-		if node.Id != a.s.masterNode.Id {
-			count++
-			client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
-			if err != nil {
-				return nil, err
-			}
-			go func() {
-				var it *query.Iterator
-				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, it)
-				resultCh <- *it
-				if err != nil {
-					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
-				}
-			}()
-		}
-	}
+func (a *LocalShardMapping) LocalCreateIterator(ctx context.Context, m *influxql.Measurement,
+	opt query.IteratorOptions) (query.Iterator, error) {
 	source := Source{
 		Database:        m.Database,
 		RetentionPolicy: m.RetentionPolicy,
@@ -244,8 +220,74 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 
 		return query.Iterators(inputs).Merge(opt)
 	}
+	return sg.CreateIterator(ctx, m, opt)
+}
+
+func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
+	itrs := make([]query.Iterator, 0)
+	var err error
+	// Booster query execute local CrateIterator, judge execute rpc
+	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
+	resultCh := make(chan query.Iterator)
+	defer close(resultCh)
+	go func(itrs []query.Iterator) {
+		it, err := a.LocalCreateIterator(ctxTimeOut, m, opt)
+		a.s.Logger.Error(err.Error())
+		itrs = append(itrs, it)
+	}(itrs)
+	count := 0
+	// juge execute rpc
+	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
+	if t := time.Unix(opt.StartTime, 0).Add(DefaultTimeRangeLimit); t.Before(timeRange.Max) {
+		// execute booster rpc
+		count, err = a.qb.Query(ctxTimeOut, m, opt, resultCh)
+	}
+	count++
+	a.s.CheckErrPrintLog("Local Booster Query failed", err)
+	go func(itrs []query.Iterator) {
+		for i := range resultCh {
+			count--
+			if i != nil {
+				itrs = append(itrs, i)
+			}
+			if count == 0 {
+				cancel()
+				break
+			}
+		}
+	}(itrs)
+	select {
+	case <-ctxTimeOut.Done():
+		return query.Iterators(itrs).Merge(opt)
+	}
+}
+
+func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
+	timeRange := influxql.TimeRange{Min: time.Unix(opt.StartTime, 0), Max: time.Unix(opt.EndTime, 0)}
+	resultCh := make(chan query.Iterator)
+	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
+	rpcParam := GetRpcParam(*m, timeRange, opt)
+	count := 0
+	defer cancel()
+	for _, node := range a.s.ch.MasterNodes {
+		if node.Id != a.s.masterNode.Id {
+			count++
+			client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
+			if err != nil {
+				return nil, err
+			}
+			go func() {
+				var it *query.Iterator
+				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, it)
+				resultCh <- *it
+				if err != nil {
+					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
+				}
+			}()
+		}
+	}
 	itrs := make([]query.Iterator, 0, count)
-	localIterator, err := sg.CreateIterator(ctx, m, opt)
+	localIterator, err := a.BoosterCreateIterator(ctxTimeOut, m, opt)
 	if err != nil {
 		return localIterator, err
 	}
@@ -319,35 +361,38 @@ type Source struct {
 }
 
 type QueryBooster interface {
-	Query(ctx context.Context, param RpcParam, result chan query.Iterator) error
+	Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions, result chan query.Iterator) (int, error)
 }
 
 type DefaultQueryBooster struct {
 	s *Service
 }
 
-func (qb *DefaultQueryBooster) Query(ctx context.Context, param RpcParam, result chan query.Iterator) error {
-	for _, n := range qb.s.rpcQuery.nodes {
-		client, err := rpc.Dial("tcp", n.Ip+DefaultRpcBindAddress)
-		if err != nil {
-			return err
+func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions, result chan query.Iterator) (int, error) {
+	min := time.Unix(opt.StartTime, 0)
+	max := time.Unix(opt.EndTime, 0)
+	duration := (max.Second() - min.Second()) / len(qb.s.rpcQuery.nodes)
+	for i, node := range qb.s.rpcQuery.nodes {
+		rewriteParam := influxql.TimeRange{}
+		rewriteParam.Max = min.Add(time.Duration(duration))
+		rewriteParam.Min = min
+		min = rewriteParam.Max
+		if i == len(qb.s.rpcQuery.nodes)-1 {
+			rewriteParam.Max = max
 		}
-		go func(client *rpc.Client, result chan query.Iterator) {
-			var it = new(query.Iterator)
-			err = client.Call("QueryExecutor.BoosterQuery", RpcParam{
-				Source:    param.Source,
-				TimeRange: param.TimeRange,
-				Opt:       param.Opt,
-			}, it)
-			if it != nil {
-				result <- *it
-			} else {
-				qb.s.Logger.Warn("Rpc")
-			}
+		rpcParam := GetRpcParam(*m, rewriteParam, opt)
+		client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
+		go func(client *rpc.Client, i chan query.Iterator) {
+			it := new(query.Iterator)
+			err = client.Call("RpcService.BoosterQuery", rpcParam, it)
 			if err != nil {
-				qb.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
+				qb.s.Logger.Info("Distribute Query failed")
+				return
+			}
+			if it != nil {
+				i <- *it
 			}
 		}(client, result)
 	}
-	return nil
+	return len(qb.s.rpcQuery.nodes), nil
 }
