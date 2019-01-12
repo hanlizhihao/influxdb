@@ -1339,6 +1339,7 @@ RetryJoinTarget:
 				Id:        s.MetaClient.Data().NodeID,
 				Host:      s.ip + s.httpConfig.BindAddress,
 				UdpHost:   s.ip + s.udpConfig.BindAddress,
+				Ip:        s.ip,
 				ClusterId: clusterId,
 			}
 			workClusterInfo.Number++
