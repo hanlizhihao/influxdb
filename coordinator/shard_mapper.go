@@ -391,7 +391,7 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 			if err := client.Call("QueryExecutor.BoosterQuery", *rpcParam, &it); err == nil {
 				var iterators query.Iterator
 				ParseJson(it.It, &iterators)
-				if &it != nil {
+				if iterators != nil {
 					i <- &iterators
 				}
 			} else {

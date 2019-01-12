@@ -186,7 +186,7 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *RpcResponse) err
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.CreateIterator(tc, &source, opt)
+		it, err := localShardMapping.LocalCreateIterator(tc, &source, opt)
 		if err == nil {
 			iterator.It = ToJsonByte(it)
 			return nil
