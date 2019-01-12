@@ -336,7 +336,7 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, param RpcParam, result
 		if err != nil {
 			return err
 		}
-		go func() {
+		go func(client *rpc.Client, result chan query.Iterator) {
 			var it = new(query.Iterator)
 			err = client.Call("QueryExecutor.BoosterQuery", RpcParam{
 				source:    param.source,
@@ -351,7 +351,7 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, param RpcParam, result
 			if err != nil {
 				qb.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
 			}
-		}()
+		}(client, result)
 	}
 	return nil
 }
