@@ -1163,6 +1163,7 @@ func (s *Service) watchClassCluster() {
 			s.classDetail[node.Ip] = node
 		}
 	}
+	s.buildConsistentHash()
 	// watch class detail
 	classNodeEventChan := s.cli.Watch(context.Background(), clusterOfClassKey, clientv3.WithPrefix())
 	for classNodeInfo := range classNodeEventChan {

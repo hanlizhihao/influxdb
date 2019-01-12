@@ -187,7 +187,8 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 		timeRange: timeRange,
 		opt:       opt,
 	}
-	a.qb.Query(ctxTimeOut, *rpcParam, resultCh)
+	err := a.qb.Query(ctxTimeOut, *rpcParam, resultCh)
+	a.s.CheckErrPrintLog("Local Booster Query failed", err)
 	defer cancel()
 	for _, node := range a.s.ch.MasterNodes {
 		if node.Id != a.s.masterNode.Id {

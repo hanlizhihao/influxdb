@@ -81,7 +81,8 @@ func (rs *RpcService) Open() error {
 	if err != nil {
 		return err
 	}
-	go func() {
+	go func(listener *net.TCPListener) {
+		rs.Logger.Info("Rpc Query Open success")
 		for {
 			if rs.closed {
 				return
@@ -95,13 +96,12 @@ func (rs *RpcService) Open() error {
 				conn.RemoteAddr().String()))
 			go rpc.ServeConn(conn)
 		}
-	}()
+	}(listener)
 	ip, err := GetLocalHostIp()
 	if err != nil {
 		return err
 	}
 	rs.ip = ip
-	rs.Logger.Info("Rpc Query Open success")
 	return nil
 }
 
