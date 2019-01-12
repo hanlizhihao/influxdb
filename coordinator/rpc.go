@@ -74,6 +74,9 @@ func (rs *RpcService) Open() error {
 	rs.queryExecutor.MetaClient = rs.MetaClient
 	err := rpc.Register(rs.queryExecutor)
 	tcpAddr, err := net.ResolveTCPAddr("tcp", rs.rpcConfig.BindAddress)
+	if err != nil {
+		return err
+	}
 	listener, err := net.ListenTCP("tcp", tcpAddr)
 	if err != nil {
 		return err
@@ -85,6 +88,7 @@ func (rs *RpcService) Open() error {
 			}
 			conn, err := listener.Accept()
 			if err != nil {
+				rs.Logger.Error("Rpc process connection error", zap.Error(err))
 				continue
 			}
 			rs.Logger.Debug("Rpc Query Service processing connection, addr", zap.String("addr",
