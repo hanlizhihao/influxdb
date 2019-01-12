@@ -273,14 +273,11 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 			wait.Add(1)
 			go func(resultCh chan *query.Iterator) {
 				defer wait.Done()
-				var response RpcResponse
 				var it query.Iterator
-				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, &response)
+				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, &it)
 				if err == nil {
-					ParseJson(response.It, &it)
-				}
-				resultCh <- &it
-				if err != nil {
+					resultCh <- &it
+				} else {
 					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
 				}
 			}(resultCh)
