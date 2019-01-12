@@ -182,11 +182,7 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 	count := 0
 	resultCh := make(chan query.Iterator)
 	ctxTimeOut, cancel := context.WithTimeout(ctx, time.Minute*1)
-	rpcParam := &RpcParam{
-		Source:    *m,
-		TimeRange: timeRange,
-		Opt:       opt,
-	}
+	rpcParam := GetRpcParam(*m, timeRange, opt)
 	err := a.qb.Query(ctxTimeOut, *rpcParam, resultCh)
 	a.s.CheckErrPrintLog("Local Booster Query failed", err)
 	defer cancel()

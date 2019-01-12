@@ -107,9 +107,26 @@ func (rs *RpcService) Open() error {
 }
 
 type RpcParam struct {
-	Source    influxql.Measurement
-	TimeRange influxql.TimeRange
-	Opt       query.IteratorOptions
+	Source    []byte
+	TimeRange []byte
+	Opt       []byte
+}
+
+func GetRpcParam(s influxql.Measurement, t influxql.TimeRange, o query.IteratorOptions) *RpcParam {
+	return &RpcParam{
+		Source:    ToJsonByte(s),
+		TimeRange: ToJsonByte(t),
+		Opt:       ToJsonByte(o),
+	}
+}
+func ParseRpcParam(p RpcParam) (influxql.Measurement, influxql.TimeRange, query.IteratorOptions) {
+	var s influxql.Measurement
+	var t influxql.TimeRange
+	var opt query.IteratorOptions
+	ParseJson(p.Source, &s)
+	ParseJson(p.TimeRange, &t)
+	ParseJson(p.Opt, &opt)
+	return s, t, opt
 }
 
 type QueryExecutor struct {
@@ -130,33 +147,34 @@ func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 	}
 }
 
-func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterator) error {
+func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *query.Iterator) error {
+	source, timeRange, opt := ParseRpcParam(p)
 	rq.Logger.Debug("DistributeQuery start")
-	if t := param.TimeRange.Min.Add(DefaultTimeRangeLimit); t.After(param.TimeRange.Max) {
-		return rq.BoosterQuery(param, iterator)
+	if t := timeRange.Min.Add(DefaultTimeRangeLimit); t.After(timeRange.Max) {
+		return rq.localQuery(source, timeRange, opt, iterator)
 	}
 	// The time interval of parameters exceeds the limit
 	nodes := rq.nodes
 	m := rq.MetaClient.Data()
-	duration := (param.TimeRange.Max.Second() - param.TimeRange.Min.Second()) / len(nodes)
+	duration := (timeRange.Max.Second() - timeRange.Min.Second()) / len(nodes)
 	itCh := make(chan query.Iterator)
 	iterators := make([]query.Iterator, len(nodes)-1)
 	defer close(itCh)
 	c := context.Background()
 	tc, cancel := context.WithTimeout(c, time.Second*2)
 	defer cancel()
-	startTime := param.TimeRange.Min
+	startTime := timeRange.Min
 	for i, node := range nodes {
-		rewriteParam := param
-		rewriteParam.TimeRange.Max = startTime.Add(time.Duration(duration))
-		rewriteParam.TimeRange.Min = startTime
-		startTime = rewriteParam.TimeRange.Max
+		rewriteParam := influxql.TimeRange{}
+		rewriteParam.Max = startTime.Add(time.Duration(duration))
+		rewriteParam.Min = startTime
+		startTime = rewriteParam.Max
 		if i == len(nodes)-1 {
-			rewriteParam.TimeRange.Max = param.TimeRange.Max
+			rewriteParam.Max = timeRange.Max
 		}
 		var it *query.Iterator
 		if node.Id == m.NodeID {
-			err := rq.BoosterQuery(rewriteParam, it)
+			err := rq.localQuery(source, timeRange, opt, it)
 			if err != nil {
 				return err
 			}
@@ -184,9 +202,9 @@ func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterato
 	select {
 	case <-tc.Done():
 		if len(iterators) < len(nodes) {
-			return rq.BoosterQuery(param, iterator)
+			return rq.localQuery(source, timeRange, opt, iterator)
 		}
-		result, err := query.Iterators(iterators).Merge(param.Opt)
+		result, err := query.Iterators(iterators).Merge(opt)
 		if err != nil {
 			return err
 		}
@@ -194,12 +212,13 @@ func (rq *QueryExecutor) DistributeQuery(param RpcParam, iterator *query.Iterato
 		return nil
 	}
 }
-func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
+func (rq *QueryExecutor) localQuery(s influxql.Measurement, t influxql.TimeRange, opt query.IteratorOptions,
+	iterator *query.Iterator) error {
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 0)
-	sources = append(sources, &param.Source)
-	sg, err := sm.MapShards(sources, param.TimeRange, query.SelectOptions{})
+	sources = append(sources, &s)
+	sg, err := sm.MapShards(sources, t, query.SelectOptions{})
 	if err != nil {
 		return err
 	}
@@ -207,7 +226,7 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) 
 	tc, cancel := context.WithTimeout(c, time.Second*2)
 	defer cancel()
 	go func(i *query.Iterator, cancel func()) {
-		it, err := sg.CreateIterator(tc, &param.Source, param.Opt)
+		it, err := sg.CreateIterator(tc, &s, opt)
 		if err == nil {
 			iterator = &it
 		}
@@ -220,4 +239,8 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) 
 		}
 		return nil
 	}
+}
+func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *query.Iterator) error {
+	source, timeRange, opt := ParseRpcParam(param)
+	return rq.localQuery(source, timeRange, opt, iterator)
 }

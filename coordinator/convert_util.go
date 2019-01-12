@@ -11,6 +11,13 @@ func ToJson(value interface{}) string {
 	}
 	return string(dataByte)
 }
+func ToJsonByte(value interface{}) []byte {
+	dataByte, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return dataByte
+}
 func ParseJson(data []byte, target interface{}) {
 	err := json.Unmarshal(data, target)
 	if err != nil {
