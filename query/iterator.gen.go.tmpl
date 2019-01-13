@@ -43,20 +43,20 @@ func new{{$k.Name}}Iterators(itrs []Iterator) []{{$k.Name}}Iterator {
 
 // buf{{$k.Name}}Iterator represents a buffered {{$k.Name}}Iterator.
 type buf{{$k.Name}}Iterator struct {
-	itr {{$k.Name}}Iterator
-	buf *{{$k.Name}}Point
+	Itr {{$k.Name}}Iterator
+	Buf *{{$k.Name}}Point
 }
 
 // newBuf{{$k.Name}}Iterator returns a buffered {{$k.Name}}Iterator.
 func newBuf{{$k.Name}}Iterator(itr {{$k.Name}}Iterator) *buf{{$k.Name}}Iterator {
-	return &buf{{$k.Name}}Iterator{itr: itr}
+	return &buf{{$k.Name}}Iterator{Itr: itr}
 }
 
 // Stats returns statistics from the input iterator.
-func (itr *buf{{$k.Name}}Iterator) Stats() IteratorStats { return itr.itr.Stats() }
+func (itr *buf{{$k.Name}}Iterator) Stats() IteratorStats { return itr.Itr.Stats() }
 
 // Close closes the underlying iterator.
-func (itr *buf{{$k.Name}}Iterator) Close() error { return itr.itr.Close() }
+func (itr *buf{{$k.Name}}Iterator) Close() error { return itr.Itr.Close() }
 
 // peek returns the next point without removing it from the iterator.
 func (itr *buf{{$k.Name}}Iterator) peek() (*{{$k.Name}}Point, error) {
@@ -80,12 +80,12 @@ func (itr *buf{{$k.Name}}Iterator) peekTime() (int64, error) {
 
 // Next returns the current buffer, if exists, or calls the underlying iterator.
 func (itr *buf{{$k.Name}}Iterator) Next() (*{{$k.Name}}Point, error) {
-	buf := itr.buf
+	buf := itr.Buf
 	if buf != nil {
-		itr.buf = nil
+		itr.Buf = nil
 		return buf, nil
 	}
-	return itr.itr.Next()
+	return itr.Itr.Next()
 }
 
 // NextInWindow returns the next value if it is between [startTime, endTime).
@@ -102,34 +102,34 @@ func (itr *buf{{$k.Name}}Iterator) NextInWindow(startTime, endTime int64) (*{{$k
 }
 
 // unread sets v to the buffer. It is read on the next call to Next().
-func (itr *buf{{$k.Name}}Iterator) unread(v *{{$k.Name}}Point) { itr.buf = v }
+func (itr *buf{{$k.Name}}Iterator) unread(v *{{$k.Name}}Point) { itr.Buf = v }
 
 // {{$k.name}}MergeIterator represents an iterator that combines multiple {{$k.name}} iterators.
 type {{$k.name}}MergeIterator struct {
-	inputs []{{$k.Name}}Iterator
-	heap   *{{$k.name}}MergeHeap
-	init   bool
+	Inputs []{{$k.Name}}Iterator
+	Heap   *{{$k.name}}MergeHeap
+	Init   bool
 
 	closed bool
 	mu     sync.RWMutex
 
 	// Current iterator and window.
-	curr   *{{$k.name}}MergeHeapItem
-	window struct {
-		name      string
-		tags      string
-		startTime int64
-		endTime   int64
+	Curr   *{{$k.name}}MergeHeapItem
+	Window struct {
+		Name      string
+		Tags      string
+		StartTime int64
+		EndTime   int64
 	}
 }
 
 // new{{$k.Name}}MergeIterator returns a new instance of {{$k.name}}MergeIterator.
 func new{{$k.Name}}MergeIterator(inputs []{{$k.Name}}Iterator, opt IteratorOptions) *{{$k.name}}MergeIterator {
 	itr := &{{$k.name}}MergeIterator{
-		inputs: inputs,
-		heap: &{{$k.name}}MergeHeap{
-			items: make([]*{{$k.name}}MergeHeapItem, 0, len(inputs)),
-			opt:   opt,
+		Inputs: inputs,
+		Heap: &{{$k.name}}MergeHeap{
+			Items: make([]*{{$k.name}}MergeHeapItem, 0, len(inputs)),
+			Opt:   opt,
 		},
 	}
 
@@ -139,7 +139,7 @@ func new{{$k.Name}}MergeIterator(inputs []{{$k.Name}}Iterator, opt IteratorOptio
 		bufInput := newBuf{{$k.Name}}Iterator(input)
 
 		// Append to the heap.
-		itr.heap.items = append(itr.heap.items, &{{$k.name}}MergeHeapItem{itr: bufInput})
+		itr.Heap.Items = append(itr.Heap.Items, &{{$k.name}}MergeHeapItem{itr: bufInput})
 	}
 
 	return itr
@@ -159,12 +159,12 @@ func (itr *{{$k.name}}MergeIterator) Close() error {
 	itr.mu.Lock()
 	defer itr.mu.Unlock()
 
-	for _, input := range itr.inputs {
+	for _, input := range itr.Inputs {
 		input.Close()
 	}
-	itr.curr = nil
-	itr.inputs = nil
-	itr.heap.items = nil
+	itr.Curr = nil
+	itr.Inputs = nil
+	itr.Heap.Items = nil
 	itr.closed = true
 	return nil
 }
@@ -182,61 +182,61 @@ func (itr *{{$k.name}}MergeIterator) Next() (*{{$k.Name}}Point, error) {
 	// Queries can only be interrupted after the Select() call completes so any operations
 	// done during iterator creation cannot be interrupted, which is why we do it here
 	// instead so an interrupt can happen while initializing the heap.
-	if !itr.init {
-		items := itr.heap.items
-		itr.heap.items = make([]*{{$k.name}}MergeHeapItem, 0, len(items))
+	if !itr.Init {
+		items := itr.Heap.Items
+		itr.Heap.Items = make([]*{{$k.name}}MergeHeapItem, 0, len(items))
 		for _, item := range items {
 			if p, err := item.itr.peek(); err != nil {
 				return nil, err
 			} else if p == nil {
 				continue
 			}
-			itr.heap.items = append(itr.heap.items, item)
+			itr.Heap.Items = append(itr.Heap.Items, item)
 		}
-		heap.Init(itr.heap)
-		itr.init = true
+		heap.Init(itr.Heap)
+		itr.Init = true
 	}
 
 	for {
 		// Retrieve the next iterator if we don't have one.
-		if itr.curr == nil {
-			if len(itr.heap.items) == 0 {
+		if itr.Curr == nil {
+			if len(itr.Heap.Items) == 0 {
 				return nil, nil
 			}
-			itr.curr = heap.Pop(itr.heap).(*{{$k.name}}MergeHeapItem)
+			itr.Curr = heap.Pop(itr.Heap).(*{{$k.name}}MergeHeapItem)
 
 			// Read point and set current window.
-			p, err := itr.curr.itr.Next()
+			p, err := itr.Curr.Itr.Next()
 			if err != nil {
 				return nil, err
 			}
-			tags := p.Tags.Subset(itr.heap.opt.Dimensions)
-			itr.window.name, itr.window.tags = p.Name, tags.ID()
-			itr.window.startTime, itr.window.endTime = itr.heap.opt.Window(p.Time)
+			tags := p.Tags.Subset(itr.Heap.Opt.Dimensions)
+			itr.Window.Name, itr.Window.Tags = p.Name, tags.ID()
+			itr.Window.StartTime, itr.Window.EndTime = itr.Heap.Opt.Window(p.Time)
 			return p, nil
 		}
 
 		// Read the next point from the current iterator.
-		p, err := itr.curr.itr.Next()
+		p, err := itr.Curr.Itr.Next()
 		if err != nil {
 			return nil, err
 		}
 
 		// If there are no more points then remove iterator from heap and find next.
 		if p == nil {
-			itr.curr = nil
+			itr.Curr = nil
 			continue
 		}
 
 		// Check if the point is inside of our current window.
 		inWindow := true
-		if window := itr.window; window.name != p.Name {
+		if window := itr.Window; window.Name != p.Name {
 			inWindow = false
-		} else if tags := p.Tags.Subset(itr.heap.opt.Dimensions); window.tags != tags.ID() {
+		} else if tags := p.Tags.Subset(itr.Heap.Opt.Dimensions); window.Tags != tags.ID() {
 			inWindow = false
-		} else if opt := itr.heap.opt; opt.Ascending && p.Time >= window.endTime {
+		} else if opt := itr.Heap.Opt; opt.Ascending && p.Time >= window.EndTime {
 			inWindow = false
-		} else if !opt.Ascending && p.Time < window.startTime {
+		} else if !opt.Ascending && p.Time < window.StartTime {
 			inWindow = false
 		}
 

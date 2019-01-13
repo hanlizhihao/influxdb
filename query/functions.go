@@ -94,7 +94,7 @@ func NewFloatMeanReducer() *FloatMeanReducer {
 	return &FloatMeanReducer{}
 }
 
-// AggregateFloat aggregates a point into the reducer.
+// AggregateFloat aggregates a Point into the reducer.
 func (r *FloatMeanReducer) AggregateFloat(p *FloatPoint) {
 	if p.Aggregated >= 2 {
 		r.sum += p.Value * float64(p.Aggregated)
@@ -105,7 +105,7 @@ func (r *FloatMeanReducer) AggregateFloat(p *FloatPoint) {
 	}
 }
 
-// Emit emits the mean of the aggregated points as a single point.
+// Emit emits the mean of the aggregated points as a single Point.
 func (r *FloatMeanReducer) Emit() []FloatPoint {
 	return []FloatPoint{{
 		Time:       ZeroTime,
@@ -125,7 +125,7 @@ func NewIntegerMeanReducer() *IntegerMeanReducer {
 	return &IntegerMeanReducer{}
 }
 
-// AggregateInteger aggregates a point into the reducer.
+// AggregateInteger aggregates a Point into the reducer.
 func (r *IntegerMeanReducer) AggregateInteger(p *IntegerPoint) {
 	if p.Aggregated >= 2 {
 		r.sum += p.Value * int64(p.Aggregated)
@@ -136,7 +136,7 @@ func (r *IntegerMeanReducer) AggregateInteger(p *IntegerPoint) {
 	}
 }
 
-// Emit emits the mean of the aggregated points as a single point.
+// Emit emits the mean of the aggregated points as a single Point.
 func (r *IntegerMeanReducer) Emit() []FloatPoint {
 	return []FloatPoint{{
 		Time:       ZeroTime,
@@ -156,7 +156,7 @@ func NewUnsignedMeanReducer() *UnsignedMeanReducer {
 	return &UnsignedMeanReducer{}
 }
 
-// AggregateUnsigned aggregates a point into the reducer.
+// AggregateUnsigned aggregates a Point into the reducer.
 func (r *UnsignedMeanReducer) AggregateUnsigned(p *UnsignedPoint) {
 	if p.Aggregated >= 2 {
 		r.sum += p.Value * uint64(p.Aggregated)
@@ -167,7 +167,7 @@ func (r *UnsignedMeanReducer) AggregateUnsigned(p *UnsignedPoint) {
 	}
 }
 
-// Emit emits the mean of the aggregated points as a single point.
+// Emit emits the mean of the aggregated points as a single Point.
 func (r *UnsignedMeanReducer) Emit() []FloatPoint {
 	return []FloatPoint{{
 		Time:       ZeroTime,
@@ -282,11 +282,11 @@ func NewFloatDerivativeReducer(interval Interval, isNonNegative, ascending bool)
 	}
 }
 
-// AggregateFloat aggregates a point into the reducer and updates the current window.
+// AggregateFloat aggregates a Point into the reducer and updates the current window.
 func (r *FloatDerivativeReducer) AggregateFloat(p *FloatPoint) {
-	// Skip past a point when it does not advance the stream. A joined series
+	// Skip past a Point when it does not advance the stream. A joined series
 	// may have multiple points at the same time so we will discard anything
-	// except the first point we encounter.
+	// except the first Point we encounter.
 	if !r.curr.Nil && r.curr.Time == p.Time {
 		return
 	}
@@ -295,7 +295,7 @@ func (r *FloatDerivativeReducer) AggregateFloat(p *FloatPoint) {
 	r.curr = *p
 }
 
-// Emit emits the derivative of the reducer at the current point.
+// Emit emits the derivative of the reducer at the current Point.
 func (r *FloatDerivativeReducer) Emit() []FloatPoint {
 	if !r.prev.Nil {
 		// Calculate the derivative of successive points by dividing the
@@ -307,7 +307,7 @@ func (r *FloatDerivativeReducer) Emit() []FloatPoint {
 		}
 		value := diff / (float64(elapsed) / float64(r.interval.Duration))
 
-		// Mark this point as read by changing the previous point to nil.
+		// Mark this Point as read by changing the previous Point to nil.
 		r.prev.Nil = true
 
 		// Drop negative values for non-negative derivatives.
@@ -339,11 +339,11 @@ func NewIntegerDerivativeReducer(interval Interval, isNonNegative, ascending boo
 	}
 }
 
-// AggregateInteger aggregates a point into the reducer and updates the current window.
+// AggregateInteger aggregates a Point into the reducer and updates the current window.
 func (r *IntegerDerivativeReducer) AggregateInteger(p *IntegerPoint) {
-	// Skip past a point when it does not advance the stream. A joined series
+	// Skip past a Point when it does not advance the stream. A joined series
 	// may have multiple points at the same time so we will discard anything
-	// except the first point we encounter.
+	// except the first Point we encounter.
 	if !r.curr.Nil && r.curr.Time == p.Time {
 		return
 	}
@@ -352,7 +352,7 @@ func (r *IntegerDerivativeReducer) AggregateInteger(p *IntegerPoint) {
 	r.curr = *p
 }
 
-// Emit emits the derivative of the reducer at the current point.
+// Emit emits the derivative of the reducer at the current Point.
 func (r *IntegerDerivativeReducer) Emit() []FloatPoint {
 	if !r.prev.Nil {
 		// Calculate the derivative of successive points by dividing the
@@ -364,7 +364,7 @@ func (r *IntegerDerivativeReducer) Emit() []FloatPoint {
 		}
 		value := diff / (float64(elapsed) / float64(r.interval.Duration))
 
-		// Mark this point as read by changing the previous point to nil.
+		// Mark this Point as read by changing the previous Point to nil.
 		r.prev.Nil = true
 
 		// Drop negative values for non-negative derivatives.
@@ -396,11 +396,11 @@ func NewUnsignedDerivativeReducer(interval Interval, isNonNegative, ascending bo
 	}
 }
 
-// AggregateUnsigned aggregates a point into the reducer and updates the current window.
+// AggregateUnsigned aggregates a Point into the reducer and updates the current window.
 func (r *UnsignedDerivativeReducer) AggregateUnsigned(p *UnsignedPoint) {
-	// Skip past a point when it does not advance the stream. A joined series
+	// Skip past a Point when it does not advance the stream. A joined series
 	// may have multiple points at the same time so we will discard anything
-	// except the first point we encounter.
+	// except the first Point we encounter.
 	if !r.curr.Nil && r.curr.Time == p.Time {
 		return
 	}
@@ -409,7 +409,7 @@ func (r *UnsignedDerivativeReducer) AggregateUnsigned(p *UnsignedPoint) {
 	r.curr = *p
 }
 
-// Emit emits the derivative of the reducer at the current point.
+// Emit emits the derivative of the reducer at the current Point.
 func (r *UnsignedDerivativeReducer) Emit() []FloatPoint {
 	if !r.prev.Nil {
 		// Calculate the derivative of successive points by dividing the
@@ -426,7 +426,7 @@ func (r *UnsignedDerivativeReducer) Emit() []FloatPoint {
 		}
 		value := diff / (float64(elapsed) / float64(r.interval.Duration))
 
-		// Mark this point as read by changing the previous point to nil.
+		// Mark this Point as read by changing the previous Point to nil.
 		r.prev.Nil = true
 
 		// Drop negative values for non-negative derivatives.
@@ -454,11 +454,11 @@ func NewFloatDifferenceReducer(isNonNegative bool) *FloatDifferenceReducer {
 	}
 }
 
-// AggregateFloat aggregates a point into the reducer and updates the current window.
+// AggregateFloat aggregates a Point into the reducer and updates the current window.
 func (r *FloatDifferenceReducer) AggregateFloat(p *FloatPoint) {
-	// Skip past a point when it does not advance the stream. A joined series
+	// Skip past a Point when it does not advance the stream. A joined series
 	// may have multiple points at the same time so we will discard anything
-	// except the first point we encounter.
+	// except the first Point we encounter.
 	if !r.curr.Nil && r.curr.Time == p.Time {
 		return
 	}
@@ -467,7 +467,7 @@ func (r *FloatDifferenceReducer) AggregateFloat(p *FloatPoint) {
 	r.curr = *p
 }
 
-// Emit emits the difference of the reducer at the current point.
+// Emit emits the difference of the reducer at the current Point.
 func (r *FloatDifferenceReducer) Emit() []FloatPoint {
 	if !r.prev.Nil {
 		// Calculate the difference of successive points.
@@ -479,7 +479,7 @@ func (r *FloatDifferenceReducer) Emit() []FloatPoint {
 			return nil
 		}
 
-		// Mark this point as read by changing the previous point to nil.
+		// Mark this Point as read by changing the previous Point to nil.
 		r.prev.Nil = true
 		return []FloatPoint{{Time: r.curr.Time, Value: value}}
 	}
@@ -502,11 +502,11 @@ func NewIntegerDifferenceReducer(isNonNegative bool) *IntegerDifferenceReducer {
 	}
 }
 
-// AggregateInteger aggregates a point into the reducer and updates the current window.
+// AggregateInteger aggregates a Point into the reducer and updates the current window.
 func (r *IntegerDifferenceReducer) AggregateInteger(p *IntegerPoint) {
-	// Skip past a point when it does not advance the stream. A joined series
+	// Skip past a Point when it does not advance the stream. A joined series
 	// may have multiple points at the same time so we will discard anything
-	// except the first point we encounter.
+	// except the first Point we encounter.
 	if !r.curr.Nil && r.curr.Time == p.Time {
 		return
 	}
@@ -515,7 +515,7 @@ func (r *IntegerDifferenceReducer) AggregateInteger(p *IntegerPoint) {
 	r.curr = *p
 }
 
-// Emit emits the difference of the reducer at the current point.
+// Emit emits the difference of the reducer at the current Point.
 func (r *IntegerDifferenceReducer) Emit() []IntegerPoint {
 	if !r.prev.Nil {
 		// Calculate the difference of successive points.
@@ -527,7 +527,7 @@ func (r *IntegerDifferenceReducer) Emit() []IntegerPoint {
 			return nil
 		}
 
-		// Mark this point as read by changing the previous point to nil.
+		// Mark this Point as read by changing the previous Point to nil.
 		r.prev.Nil = true
 
 		return []IntegerPoint{{Time: r.curr.Time, Value: value}}
@@ -551,11 +551,11 @@ func NewUnsignedDifferenceReducer(isNonNegative bool) *UnsignedDifferenceReducer
 	}
 }
 
-// AggregateUnsigned aggregates a point into the reducer and updates the current window.
+// AggregateUnsigned aggregates a Point into the reducer and updates the current window.
 func (r *UnsignedDifferenceReducer) AggregateUnsigned(p *UnsignedPoint) {
-	// Skip past a point when it does not advance the stream. A joined series
+	// Skip past a Point when it does not advance the stream. A joined series
 	// may have multiple points at the same time so we will discard anything
-	// except the first point we encounter.
+	// except the first Point we encounter.
 	if !r.curr.Nil && r.curr.Time == p.Time {
 		return
 	}
@@ -564,7 +564,7 @@ func (r *UnsignedDifferenceReducer) AggregateUnsigned(p *UnsignedPoint) {
 	r.curr = *p
 }
 
-// Emit emits the difference of the reducer at the current point.
+// Emit emits the difference of the reducer at the current Point.
 func (r *UnsignedDifferenceReducer) Emit() []UnsignedPoint {
 	if !r.prev.Nil {
 		// If it is non_negative_difference discard any negative value. Since
@@ -576,7 +576,7 @@ func (r *UnsignedDifferenceReducer) Emit() []UnsignedPoint {
 		// Calculate the difference of successive points.
 		value := r.curr.Value - r.prev.Value
 
-		// Mark this point as read by changing the previous point to nil.
+		// Mark this Point as read by changing the previous Point to nil.
 		r.prev.Nil = true
 
 		return []UnsignedPoint{{Time: r.curr.Time, Value: value}}
@@ -599,7 +599,7 @@ func NewFloatMovingAverageReducer(n int) *FloatMovingAverageReducer {
 	}
 }
 
-// AggregateFloat aggregates a point into the reducer and updates the current window.
+// AggregateFloat aggregates a Point into the reducer and updates the current window.
 func (r *FloatMovingAverageReducer) AggregateFloat(p *FloatPoint) {
 	if len(r.buf) != cap(r.buf) {
 		r.buf = append(r.buf, p.Value)
@@ -616,7 +616,7 @@ func (r *FloatMovingAverageReducer) AggregateFloat(p *FloatPoint) {
 }
 
 // Emit emits the moving average of the current window. Emit should be called
-// after every call to AggregateFloat and it will produce one point if there
+// after every call to AggregateFloat and it will produce one Point if there
 // is enough data to fill a window, otherwise it will produce zero points.
 func (r *FloatMovingAverageReducer) Emit() []FloatPoint {
 	if len(r.buf) != cap(r.buf) {
@@ -646,7 +646,7 @@ func NewIntegerMovingAverageReducer(n int) *IntegerMovingAverageReducer {
 	}
 }
 
-// AggregateInteger aggregates a point into the reducer and updates the current window.
+// AggregateInteger aggregates a Point into the reducer and updates the current window.
 func (r *IntegerMovingAverageReducer) AggregateInteger(p *IntegerPoint) {
 	if len(r.buf) != cap(r.buf) {
 		r.buf = append(r.buf, p.Value)
@@ -663,7 +663,7 @@ func (r *IntegerMovingAverageReducer) AggregateInteger(p *IntegerPoint) {
 }
 
 // Emit emits the moving average of the current window. Emit should be called
-// after every call to AggregateInteger and it will produce one point if there
+// after every call to AggregateInteger and it will produce one Point if there
 // is enough data to fill a window, otherwise it will produce zero points.
 func (r *IntegerMovingAverageReducer) Emit() []FloatPoint {
 	if len(r.buf) != cap(r.buf) {
@@ -693,7 +693,7 @@ func NewUnsignedMovingAverageReducer(n int) *UnsignedMovingAverageReducer {
 	}
 }
 
-// AggregateUnsigned aggregates a point into the reducer and updates the current window.
+// AggregateUnsigned aggregates a Point into the reducer and updates the current window.
 func (r *UnsignedMovingAverageReducer) AggregateUnsigned(p *UnsignedPoint) {
 	if len(r.buf) != cap(r.buf) {
 		r.buf = append(r.buf, p.Value)
@@ -710,7 +710,7 @@ func (r *UnsignedMovingAverageReducer) AggregateUnsigned(p *UnsignedPoint) {
 }
 
 // Emit emits the moving average of the current window. Emit should be called
-// after every call to AggregateUnsigned and it will produce one point if there
+// after every call to AggregateUnsigned and it will produce one Point if there
 // is enough data to fill a window, otherwise it will produce zero points.
 func (r *UnsignedMovingAverageReducer) Emit() []FloatPoint {
 	if len(r.buf) != cap(r.buf) {
@@ -1111,7 +1111,7 @@ func (r *ChandeMomentumOscillatorReducer) Emit() []FloatPoint {
 	}
 }
 
-// FloatCumulativeSumReducer cumulates the values from each point.
+// FloatCumulativeSumReducer cumulates the values from each Point.
 type FloatCumulativeSumReducer struct {
 	curr FloatPoint
 }
@@ -1137,7 +1137,7 @@ func (r *FloatCumulativeSumReducer) Emit() []FloatPoint {
 	return pts
 }
 
-// IntegerCumulativeSumReducer cumulates the values from each point.
+// IntegerCumulativeSumReducer cumulates the values from each Point.
 type IntegerCumulativeSumReducer struct {
 	curr IntegerPoint
 }
@@ -1163,7 +1163,7 @@ func (r *IntegerCumulativeSumReducer) Emit() []IntegerPoint {
 	return pts
 }
 
-// UnsignedCumulativeSumReducer cumulates the values from each point.
+// UnsignedCumulativeSumReducer cumulates the values from each Point.
 type UnsignedCumulativeSumReducer struct {
 	curr UnsignedPoint
 }
@@ -1259,12 +1259,12 @@ func (r *FloatHoltWintersReducer) aggregate(time int64, value float64) {
 	})
 }
 
-// AggregateFloat aggregates a point into the reducer and updates the current window.
+// AggregateFloat aggregates a Point into the reducer and updates the current window.
 func (r *FloatHoltWintersReducer) AggregateFloat(p *FloatPoint) {
 	r.aggregate(p.Time, p.Value)
 }
 
-// AggregateInteger aggregates a point into the reducer and updates the current window.
+// AggregateInteger aggregates a Point into the reducer and updates the current window.
 func (r *FloatHoltWintersReducer) AggregateInteger(p *IntegerPoint) {
 	r.aggregate(p.Time, float64(p.Value))
 }
@@ -1301,7 +1301,7 @@ func (r *FloatHoltWintersReducer) Emit() []FloatPoint {
 			continue
 		}
 		t += r.interval
-		// Add any missing values before the next point
+		// Add any missing values before the next Point
 		for rounded != t {
 			// Add in a NaN so we can skip it later.
 			r.y = append(r.y, math.NaN())
@@ -1561,9 +1561,9 @@ func NewFloatIntegralReducer(interval Interval, opt IteratorOptions) *FloatInteg
 	}
 }
 
-// AggregateFloat aggregates a point into the reducer.
+// AggregateFloat aggregates a Point into the reducer.
 func (r *FloatIntegralReducer) AggregateFloat(p *FloatPoint) {
-	// If this is the first point, just save it
+	// If this is the first Point, just save it
 	if r.prev.Nil {
 		r.prev = *p
 		if !r.opt.Interval.IsZero() {
@@ -1579,8 +1579,8 @@ func (r *FloatIntegralReducer) AggregateFloat(p *FloatPoint) {
 		return
 	}
 
-	// If this point has the same timestamp as the previous one,
-	// skip the point. Points sent into this reducer are expected
+	// If this Point has the same timestamp as the previous one,
+	// skip the Point. Points sent into this reducer are expected
 	// to be fed in order.
 	if r.prev.Time == p.Time {
 		r.prev = *p
@@ -1597,7 +1597,7 @@ func (r *FloatIntegralReducer) AggregateFloat(p *FloatPoint) {
 			r.prev.Time = r.window.end
 		}
 
-		// Emit the current point through the channel and then clear it.
+		// Emit the current Point through the channel and then clear it.
 		r.ch <- FloatPoint{Time: r.window.start, Value: r.sum}
 		if r.opt.Ascending {
 			r.window.start, r.window.end = r.opt.Window(p.Time)
@@ -1613,7 +1613,7 @@ func (r *FloatIntegralReducer) AggregateFloat(p *FloatPoint) {
 	r.prev = *p
 }
 
-// Emit emits the time-integral of the aggregated points as a single point.
+// Emit emits the time-integral of the aggregated points as a single Point.
 // InfluxQL convention dictates that outside a group-by-time clause we return
 // a timestamp of zero.  Within a group-by-time, we can set the time to ZeroTime
 // and a higher level will change it to the start of the time group.
@@ -1632,9 +1632,9 @@ func (r *FloatIntegralReducer) Emit() []FloatPoint {
 // Close flushes any in progress points to ensure any remaining points are
 // emitted.
 func (r *FloatIntegralReducer) Close() error {
-	// If our last point is at the start time, then discard this point since
+	// If our last Point is at the start time, then discard this Point since
 	// there is no area within this bucket. Otherwise, send off what we
-	// currently have as the final point.
+	// currently have as the final Point.
 	if !r.prev.Nil && r.prev.Time != r.window.start {
 		r.ch <- FloatPoint{Time: r.window.start, Value: r.sum}
 	}
@@ -1665,9 +1665,9 @@ func NewIntegerIntegralReducer(interval Interval, opt IteratorOptions) *IntegerI
 	}
 }
 
-// AggregateInteger aggregates a point into the reducer.
+// AggregateInteger aggregates a Point into the reducer.
 func (r *IntegerIntegralReducer) AggregateInteger(p *IntegerPoint) {
-	// If this is the first point, just save it
+	// If this is the first Point, just save it
 	if r.prev.Nil {
 		r.prev = *p
 
@@ -1688,8 +1688,8 @@ func (r *IntegerIntegralReducer) AggregateInteger(p *IntegerPoint) {
 		return
 	}
 
-	// If this point has the same timestamp as the previous one,
-	// skip the point. Points sent into this reducer are expected
+	// If this Point has the same timestamp as the previous one,
+	// skip the Point. Points sent into this reducer are expected
 	// to be fed in order.
 	value := float64(p.Value)
 	if r.prev.Time == p.Time {
@@ -1706,7 +1706,7 @@ func (r *IntegerIntegralReducer) AggregateInteger(p *IntegerPoint) {
 			r.prev.Time = r.window.end
 		}
 
-		// Emit the current point through the channel and then clear it.
+		// Emit the current Point through the channel and then clear it.
 		r.ch <- FloatPoint{Time: r.window.start, Value: r.sum}
 		if r.opt.Ascending {
 			r.window.start, r.window.end = r.opt.Window(p.Time)
@@ -1722,7 +1722,7 @@ func (r *IntegerIntegralReducer) AggregateInteger(p *IntegerPoint) {
 	r.prev = *p
 }
 
-// Emit emits the time-integral of the aggregated points as a single FLOAT point
+// Emit emits the time-integral of the aggregated points as a single FLOAT Point
 // InfluxQL convention dictates that outside a group-by-time clause we return
 // a timestamp of zero.  Within a group-by-time, we can set the time to ZeroTime
 // and a higher level will change it to the start of the time group.
@@ -1741,9 +1741,9 @@ func (r *IntegerIntegralReducer) Emit() []FloatPoint {
 // Close flushes any in progress points to ensure any remaining points are
 // emitted.
 func (r *IntegerIntegralReducer) Close() error {
-	// If our last point is at the start time, then discard this point since
+	// If our last Point is at the start time, then discard this Point since
 	// there is no area within this bucket. Otherwise, send off what we
-	// currently have as the final point.
+	// currently have as the final Point.
 	if !r.prev.Nil && r.prev.Time != r.window.start {
 		r.ch <- FloatPoint{Time: r.window.start, Value: r.sum}
 	}
@@ -1774,9 +1774,9 @@ func NewUnsignedIntegralReducer(interval Interval, opt IteratorOptions) *Unsigne
 	}
 }
 
-// AggregateUnsigned aggregates a point into the reducer.
+// AggregateUnsigned aggregates a Point into the reducer.
 func (r *UnsignedIntegralReducer) AggregateUnsigned(p *UnsignedPoint) {
-	// If this is the first point, just save it
+	// If this is the first Point, just save it
 	if r.prev.Nil {
 		r.prev = *p
 
@@ -1797,8 +1797,8 @@ func (r *UnsignedIntegralReducer) AggregateUnsigned(p *UnsignedPoint) {
 		return
 	}
 
-	// If this point has the same timestamp as the previous one,
-	// skip the point. Points sent into this reducer are expected
+	// If this Point has the same timestamp as the previous one,
+	// skip the Point. Points sent into this reducer are expected
 	// to be fed in order.
 	value := float64(p.Value)
 	if r.prev.Time == p.Time {
@@ -1815,7 +1815,7 @@ func (r *UnsignedIntegralReducer) AggregateUnsigned(p *UnsignedPoint) {
 			r.prev.Time = r.window.end
 		}
 
-		// Emit the current point through the channel and then clear it.
+		// Emit the current Point through the channel and then clear it.
 		r.ch <- FloatPoint{Time: r.window.start, Value: r.sum}
 		if r.opt.Ascending {
 			r.window.start, r.window.end = r.opt.Window(p.Time)
@@ -1831,7 +1831,7 @@ func (r *UnsignedIntegralReducer) AggregateUnsigned(p *UnsignedPoint) {
 	r.prev = *p
 }
 
-// Emit emits the time-integral of the aggregated points as a single FLOAT point
+// Emit emits the time-integral of the aggregated points as a single FLOAT Point
 // InfluxQL convention dictates that outside a group-by-time clause we return
 // a timestamp of zero.  Within a group-by-time, we can set the time to ZeroTime
 // and a higher level will change it to the start of the time group.
@@ -1850,9 +1850,9 @@ func (r *UnsignedIntegralReducer) Emit() []FloatPoint {
 // Close flushes any in progress points to ensure any remaining points are
 // emitted.
 func (r *UnsignedIntegralReducer) Close() error {
-	// If our last point is at the start time, then discard this point since
+	// If our last Point is at the start time, then discard this Point since
 	// there is no area within this bucket. Otherwise, send off what we
-	// currently have as the final point.
+	// currently have as the final Point.
 	if !r.prev.Nil && r.prev.Time != r.window.start {
 		r.ch <- FloatPoint{Time: r.window.start, Value: r.sum}
 	}
@@ -1877,7 +1877,7 @@ func NewFloatTopReducer(n int) *FloatTopReducer {
 
 func (r *FloatTopReducer) AggregateFloat(p *FloatPoint) {
 	if r.h.Len() == cap(r.h.points) {
-		// Compare the minimum point and the aggregated point. If our value is
+		// Compare the minimum Point and the aggregated Point. If our value is
 		// larger, replace the current min value.
 		if !r.h.cmp(&r.h.points[0], p) {
 			return
@@ -1894,8 +1894,8 @@ func (r *FloatTopReducer) AggregateFloat(p *FloatPoint) {
 
 func (r *FloatTopReducer) Emit() []FloatPoint {
 	// Ensure the points are sorted with the maximum value last. While the
-	// first point may be the minimum value, the rest is not guaranteed to be
-	// in any particular order while it is a heap.
+	// first Point may be the minimum value, the rest is not guaranteed to be
+	// in any particular order while it is a Heap.
 	points := make([]FloatPoint, len(r.h.points))
 	for i, p := range r.h.points {
 		p.Aggregated = 0
@@ -1923,7 +1923,7 @@ func NewIntegerTopReducer(n int) *IntegerTopReducer {
 
 func (r *IntegerTopReducer) AggregateInteger(p *IntegerPoint) {
 	if r.h.Len() == cap(r.h.points) {
-		// Compare the minimum point and the aggregated point. If our value is
+		// Compare the minimum Point and the aggregated Point. If our value is
 		// larger, replace the current min value.
 		if !r.h.cmp(&r.h.points[0], p) {
 			return
@@ -1940,8 +1940,8 @@ func (r *IntegerTopReducer) AggregateInteger(p *IntegerPoint) {
 
 func (r *IntegerTopReducer) Emit() []IntegerPoint {
 	// Ensure the points are sorted with the maximum value last. While the
-	// first point may be the minimum value, the rest is not guaranteed to be
-	// in any particular order while it is a heap.
+	// first Point may be the minimum value, the rest is not guaranteed to be
+	// in any particular order while it is a Heap.
 	points := make([]IntegerPoint, len(r.h.points))
 	for i, p := range r.h.points {
 		p.Aggregated = 0
@@ -1969,7 +1969,7 @@ func NewUnsignedTopReducer(n int) *UnsignedTopReducer {
 
 func (r *UnsignedTopReducer) AggregateUnsigned(p *UnsignedPoint) {
 	if r.h.Len() == cap(r.h.points) {
-		// Compare the minimum point and the aggregated point. If our value is
+		// Compare the minimum Point and the aggregated Point. If our value is
 		// larger, replace the current min value.
 		if !r.h.cmp(&r.h.points[0], p) {
 			return
@@ -1986,8 +1986,8 @@ func (r *UnsignedTopReducer) AggregateUnsigned(p *UnsignedPoint) {
 
 func (r *UnsignedTopReducer) Emit() []UnsignedPoint {
 	// Ensure the points are sorted with the maximum value last. While the
-	// first point may be the minimum value, the rest is not guaranteed to be
-	// in any particular order while it is a heap.
+	// first Point may be the minimum value, the rest is not guaranteed to be
+	// in any particular order while it is a Heap.
 	points := make([]UnsignedPoint, len(r.h.points))
 	for i, p := range r.h.points {
 		p.Aggregated = 0
@@ -2015,7 +2015,7 @@ func NewFloatBottomReducer(n int) *FloatBottomReducer {
 
 func (r *FloatBottomReducer) AggregateFloat(p *FloatPoint) {
 	if r.h.Len() == cap(r.h.points) {
-		// Compare the minimum point and the aggregated point. If our value is
+		// Compare the minimum Point and the aggregated Point. If our value is
 		// larger, replace the current min value.
 		if !r.h.cmp(&r.h.points[0], p) {
 			return
@@ -2032,8 +2032,8 @@ func (r *FloatBottomReducer) AggregateFloat(p *FloatPoint) {
 
 func (r *FloatBottomReducer) Emit() []FloatPoint {
 	// Ensure the points are sorted with the maximum value last. While the
-	// first point may be the minimum value, the rest is not guaranteed to be
-	// in any particular order while it is a heap.
+	// first Point may be the minimum value, the rest is not guaranteed to be
+	// in any particular order while it is a Heap.
 	points := make([]FloatPoint, len(r.h.points))
 	for i, p := range r.h.points {
 		p.Aggregated = 0
@@ -2061,7 +2061,7 @@ func NewIntegerBottomReducer(n int) *IntegerBottomReducer {
 
 func (r *IntegerBottomReducer) AggregateInteger(p *IntegerPoint) {
 	if r.h.Len() == cap(r.h.points) {
-		// Compare the minimum point and the aggregated point. If our value is
+		// Compare the minimum Point and the aggregated Point. If our value is
 		// larger, replace the current min value.
 		if !r.h.cmp(&r.h.points[0], p) {
 			return
@@ -2078,8 +2078,8 @@ func (r *IntegerBottomReducer) AggregateInteger(p *IntegerPoint) {
 
 func (r *IntegerBottomReducer) Emit() []IntegerPoint {
 	// Ensure the points are sorted with the maximum value last. While the
-	// first point may be the minimum value, the rest is not guaranteed to be
-	// in any particular order while it is a heap.
+	// first Point may be the minimum value, the rest is not guaranteed to be
+	// in any particular order while it is a Heap.
 	points := make([]IntegerPoint, len(r.h.points))
 	for i, p := range r.h.points {
 		p.Aggregated = 0
@@ -2107,7 +2107,7 @@ func NewUnsignedBottomReducer(n int) *UnsignedBottomReducer {
 
 func (r *UnsignedBottomReducer) AggregateUnsigned(p *UnsignedPoint) {
 	if r.h.Len() == cap(r.h.points) {
-		// Compare the minimum point and the aggregated point. If our value is
+		// Compare the minimum Point and the aggregated Point. If our value is
 		// larger, replace the current min value.
 		if !r.h.cmp(&r.h.points[0], p) {
 			return
@@ -2124,8 +2124,8 @@ func (r *UnsignedBottomReducer) AggregateUnsigned(p *UnsignedPoint) {
 
 func (r *UnsignedBottomReducer) Emit() []UnsignedPoint {
 	// Ensure the points are sorted with the maximum value last. While the
-	// first point may be the minimum value, the rest is not guaranteed to be
-	// in any particular order while it is a heap.
+	// first Point may be the minimum value, the rest is not guaranteed to be
+	// in any particular order while it is a Heap.
 	points := make([]UnsignedPoint, len(r.h.points))
 	for i, p := range r.h.points {
 		p.Aggregated = 0

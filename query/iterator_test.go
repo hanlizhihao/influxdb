@@ -1499,17 +1499,17 @@ func TestIterator_EncodeDecode(t *testing.T) {
 	if p, err := fdec.Next(); err != nil {
 		t.Fatalf("unexpected error(0): %#v", err)
 	} else if !reflect.DeepEqual(p, &query.FloatPoint{Name: "cpu", Tags: ParseTags("host=A"), Time: 0, Value: 0}) {
-		t.Fatalf("unexpected point(0); %#v", p)
+		t.Fatalf("unexpected Point(0); %#v", p)
 	}
 	if p, err := fdec.Next(); err != nil {
 		t.Fatalf("unexpected error(1): %#v", err)
 	} else if !reflect.DeepEqual(p, &query.FloatPoint{Name: "mem", Tags: ParseTags("host=B"), Time: 1, Value: 10}) {
-		t.Fatalf("unexpected point(1); %#v", p)
+		t.Fatalf("unexpected Point(1); %#v", p)
 	}
 	if p, err := fdec.Next(); err != nil {
 		t.Fatalf("unexpected error(eof): %#v", err)
 	} else if p != nil {
-		t.Fatalf("unexpected point(eof); %#v", p)
+		t.Fatalf("unexpected Point(eof); %#v", p)
 	}
 }
 
@@ -1532,7 +1532,7 @@ func (itr *FloatIterator) Next() (*query.FloatPoint, error) {
 		return nil, nil
 	}
 
-	// If we have asked for a delay, then delay the returning of the point
+	// If we have asked for a delay, then delay the returning of the Point
 	// until either an (optional) context is done or the time has passed.
 	if itr.Delay > 0 {
 		var done <-chan struct{}
@@ -1551,8 +1551,8 @@ func (itr *FloatIterator) Next() (*query.FloatPoint, error) {
 	v := &itr.Points[0]
 	itr.Points = itr.Points[1:]
 
-	// Copy the returned point into a static point that we return.
-	// This actual storage engine returns a point from the same memory location
+	// Copy the returned Point into a static Point that we return.
+	// This actual storage engine returns a Point from the same memory location
 	// so we need to test that the query engine does not misuse this memory.
 	itr.point.Name = v.Name
 	itr.point.Tags = v.Tags
@@ -1594,8 +1594,8 @@ func (itr *IntegerIterator) Next() (*query.IntegerPoint, error) {
 	v := &itr.Points[0]
 	itr.Points = itr.Points[1:]
 
-	// Copy the returned point into a static point that we return.
-	// This actual storage engine returns a point from the same memory location
+	// Copy the returned Point into a static Point that we return.
+	// This actual storage engine returns a Point from the same memory location
 	// so we need to test that the query engine does not misuse this memory.
 	itr.point.Name = v.Name
 	itr.point.Tags = v.Tags
@@ -1637,8 +1637,8 @@ func (itr *UnsignedIterator) Next() (*query.UnsignedPoint, error) {
 	v := &itr.Points[0]
 	itr.Points = itr.Points[1:]
 
-	// Copy the returned point into a static point that we return.
-	// This actual storage engine returns a point from the same memory location
+	// Copy the returned Point into a static Point that we return.
+	// This actual storage engine returns a Point from the same memory location
 	// so we need to test that the query engine does not misuse this memory.
 	itr.point.Name = v.Name
 	itr.point.Tags = v.Tags
@@ -1680,8 +1680,8 @@ func (itr *StringIterator) Next() (*query.StringPoint, error) {
 	v := &itr.Points[0]
 	itr.Points = itr.Points[1:]
 
-	// Copy the returned point into a static point that we return.
-	// This actual storage engine returns a point from the same memory location
+	// Copy the returned Point into a static Point that we return.
+	// This actual storage engine returns a Point from the same memory location
 	// so we need to test that the query engine does not misuse this memory.
 	itr.point.Name = v.Name
 	itr.point.Tags = v.Tags
@@ -1723,8 +1723,8 @@ func (itr *BooleanIterator) Next() (*query.BooleanPoint, error) {
 	v := &itr.Points[0]
 	itr.Points = itr.Points[1:]
 
-	// Copy the returned point into a static point that we return.
-	// This actual storage engine returns a point from the same memory location
+	// Copy the returned Point into a static Point that we return.
+	// This actual storage engine returns a Point from the same memory location
 	// so we need to test that the query engine does not misuse this memory.
 	itr.point.Name = v.Name
 	itr.point.Tags = v.Tags

@@ -1097,7 +1097,7 @@ func benchmarkCallIterator(b *testing.B, opt query.IteratorOptions, pointN int) 
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		// Create a lightweight point generator.
+		// Create a lightweight Point generator.
 		p := query.FloatPoint{Name: "cpu", Value: 100}
 		input := FloatPointGenerator{
 			N:  pointN,
@@ -1120,7 +1120,7 @@ func BenchmarkSampleIterator_1M(b *testing.B)   { benchmarkSampleIterator(b, 100
 func benchmarkSampleIterator(b *testing.B, pointN int) {
 	b.ReportAllocs()
 
-	// Create a lightweight point generator.
+	// Create a lightweight Point generator.
 	p := query.FloatPoint{Name: "cpu"}
 	input := FloatPointGenerator{
 		N: pointN,
@@ -1148,7 +1148,7 @@ func benchmarkDistinctIterator(b *testing.B, pointN int) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		// Create a lightweight point generator.
+		// Create a lightweight Point generator.
 		p := query.FloatPoint{Name: "cpu"}
 		input := FloatPointGenerator{
 			N: pointN,
@@ -1175,7 +1175,7 @@ func benchmarkModeIterator(b *testing.B, pointN int) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		// Create a lightweight point generator.
+		// Create a lightweight Point generator.
 		p := query.FloatPoint{Name: "cpu"}
 		input := FloatPointGenerator{
 			N: pointN,

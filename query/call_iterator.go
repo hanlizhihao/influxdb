@@ -27,7 +27,7 @@ reduce function is passed a previous and current value and the new timestamp,
 value, and auxilary fields are returned from it.
 
 For raw aggregate iterators, you can use the reduceSliceIterators which pass
-in a slice of all points to the function and return a point. For more complex
+in a slice of all points to the function and return a Point. For more complex
 iterator types, you may need to create your own iterators by hand.
 
 Once your iterator is complete, you'll need to add it to the NewCallIterator()
@@ -354,7 +354,7 @@ func newFirstIterator(input Iterator, opt IteratorOptions) (Iterator, error) {
 	}
 }
 
-// FloatFirstReduce returns the first point sorted by time.
+// FloatFirstReduce returns the first Point sorted by time.
 func FloatFirstReduce(prev, curr *FloatPoint) (int64, float64, []interface{}) {
 	if prev == nil || curr.Time < prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -362,7 +362,7 @@ func FloatFirstReduce(prev, curr *FloatPoint) (int64, float64, []interface{}) {
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// IntegerFirstReduce returns the first point sorted by time.
+// IntegerFirstReduce returns the first Point sorted by time.
 func IntegerFirstReduce(prev, curr *IntegerPoint) (int64, int64, []interface{}) {
 	if prev == nil || curr.Time < prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -370,7 +370,7 @@ func IntegerFirstReduce(prev, curr *IntegerPoint) (int64, int64, []interface{}) 
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// UnsignedFirstReduce returns the first point sorted by time.
+// UnsignedFirstReduce returns the first Point sorted by time.
 func UnsignedFirstReduce(prev, curr *UnsignedPoint) (int64, uint64, []interface{}) {
 	if prev == nil || curr.Time < prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -378,7 +378,7 @@ func UnsignedFirstReduce(prev, curr *UnsignedPoint) (int64, uint64, []interface{
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// StringFirstReduce returns the first point sorted by time.
+// StringFirstReduce returns the first Point sorted by time.
 func StringFirstReduce(prev, curr *StringPoint) (int64, string, []interface{}) {
 	if prev == nil || curr.Time < prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -386,7 +386,7 @@ func StringFirstReduce(prev, curr *StringPoint) (int64, string, []interface{}) {
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// BooleanFirstReduce returns the first point sorted by time.
+// BooleanFirstReduce returns the first Point sorted by time.
 func BooleanFirstReduce(prev, curr *BooleanPoint) (int64, bool, []interface{}) {
 	if prev == nil || curr.Time < prev.Time || (curr.Time == prev.Time && !curr.Value && prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -432,7 +432,7 @@ func newLastIterator(input Iterator, opt IteratorOptions) (Iterator, error) {
 	}
 }
 
-// FloatLastReduce returns the last point sorted by time.
+// FloatLastReduce returns the last Point sorted by time.
 func FloatLastReduce(prev, curr *FloatPoint) (int64, float64, []interface{}) {
 	if prev == nil || curr.Time > prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -440,7 +440,7 @@ func FloatLastReduce(prev, curr *FloatPoint) (int64, float64, []interface{}) {
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// IntegerLastReduce returns the last point sorted by time.
+// IntegerLastReduce returns the last Point sorted by time.
 func IntegerLastReduce(prev, curr *IntegerPoint) (int64, int64, []interface{}) {
 	if prev == nil || curr.Time > prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -448,7 +448,7 @@ func IntegerLastReduce(prev, curr *IntegerPoint) (int64, int64, []interface{}) {
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// UnsignedLastReduce returns the last point sorted by time.
+// UnsignedLastReduce returns the last Point sorted by time.
 func UnsignedLastReduce(prev, curr *UnsignedPoint) (int64, uint64, []interface{}) {
 	if prev == nil || curr.Time > prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -456,7 +456,7 @@ func UnsignedLastReduce(prev, curr *UnsignedPoint) (int64, uint64, []interface{}
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// StringLastReduce returns the first point sorted by time.
+// StringLastReduce returns the first Point sorted by time.
 func StringLastReduce(prev, curr *StringPoint) (int64, string, []interface{}) {
 	if prev == nil || curr.Time > prev.Time || (curr.Time == prev.Time && curr.Value > prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -464,7 +464,7 @@ func StringLastReduce(prev, curr *StringPoint) (int64, string, []interface{}) {
 	return prev.Time, prev.Value, prev.Aux
 }
 
-// BooleanLastReduce returns the first point sorted by time.
+// BooleanLastReduce returns the first Point sorted by time.
 func BooleanLastReduce(prev, curr *BooleanPoint) (int64, bool, []interface{}) {
 	if prev == nil || curr.Time > prev.Time || (curr.Time == prev.Time && curr.Value && !prev.Value) {
 		return curr.Time, curr.Value, cloneAux(curr.Aux)
@@ -847,7 +847,7 @@ func newStddevIterator(input Iterator, opt IteratorOptions) (Iterator, error) {
 
 // FloatStddevReduceSlice returns the stddev value within a window.
 func FloatStddevReduceSlice(a []FloatPoint) []FloatPoint {
-	// If there is only one point then return NaN.
+	// If there is only one Point then return NaN.
 	if len(a) < 2 {
 		return []FloatPoint{{Time: ZeroTime, Value: math.NaN()}}
 	}
@@ -879,7 +879,7 @@ func FloatStddevReduceSlice(a []FloatPoint) []FloatPoint {
 
 // IntegerStddevReduceSlice returns the stddev value within a window.
 func IntegerStddevReduceSlice(a []IntegerPoint) []FloatPoint {
-	// If there is only one point then return NaN.
+	// If there is only one Point then return NaN.
 	if len(a) < 2 {
 		return []FloatPoint{{Time: ZeroTime, Value: math.NaN()}}
 	}
@@ -905,7 +905,7 @@ func IntegerStddevReduceSlice(a []IntegerPoint) []FloatPoint {
 
 // UnsignedStddevReduceSlice returns the stddev value within a window.
 func UnsignedStddevReduceSlice(a []UnsignedPoint) []FloatPoint {
-	// If there is only one point then return NaN.
+	// If there is only one Point then return NaN.
 	if len(a) < 2 {
 		return []FloatPoint{{Time: ZeroTime, Value: math.NaN()}}
 	}

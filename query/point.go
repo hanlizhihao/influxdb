@@ -57,7 +57,7 @@ func (a Points) Clone() []Point {
 		case *BooleanPoint:
 			other[i] = p.Clone()
 		default:
-			panic(fmt.Sprintf("unable to clone point: %T", p))
+			panic(fmt.Sprintf("unable to clone Point: %T", p))
 		}
 	}
 	return other
@@ -347,19 +347,19 @@ func (dec *PointDecoder) DecodePoint(p *Point) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue

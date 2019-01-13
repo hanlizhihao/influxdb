@@ -60,7 +60,7 @@ func (itr *bufFloatIterator) Stats() IteratorStats { return itr.itr.Stats() }
 // Close closes the underlying iterator.
 func (itr *bufFloatIterator) Close() error { return itr.itr.Close() }
 
-// peek returns the next point without removing it from the iterator.
+// peek returns the next Point without removing it from the iterator.
 func (itr *bufFloatIterator) peek() (*FloatPoint, error) {
 	p, err := itr.Next()
 	if err != nil {
@@ -70,7 +70,7 @@ func (itr *bufFloatIterator) peek() (*FloatPoint, error) {
 	return p, nil
 }
 
-// peekTime returns the time of the next point.
+// peekTime returns the time of the next Point.
 // Returns zero time if no more points available.
 func (itr *bufFloatIterator) peekTime() (int64, error) {
 	p, err := itr.peek()
@@ -135,12 +135,12 @@ func newFloatMergeIterator(inputs []FloatIterator, opt IteratorOptions) *floatMe
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Wrap in buffer, ignore any inputs without anymore points.
+		// Wrap in buffer, ignore any Inputs without anymore points.
 		bufInput := newBufFloatIterator(input)
 
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &floatMergeHeapItem{itr: bufInput})
 	}
 
@@ -171,7 +171,7 @@ func (itr *floatMergeIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *floatMergeIterator) Next() (*FloatPoint, error) {
 	itr.mu.RLock()
 	defer itr.mu.RUnlock()
@@ -179,11 +179,11 @@ func (itr *floatMergeIterator) Next() (*FloatPoint, error) {
 		return nil, nil
 	}
 
-	// Initialize the heap. This needs to be done lazily on the first call to this iterator
+	// Initialize the Heap. This needs to be done lazily on the first call to this iterator
 	// so that iterator initialization done through the Select() call returns quickly.
 	// Queries can only be interrupted after the Select() call completes so any operations
 	// done during iterator creation cannot be interrupted, which is why we do it here
-	// instead so an interrupt can happen while initializing the heap.
+	// instead so an interrupt can happen while initializing the Heap.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*floatMergeHeapItem, 0, len(items))
@@ -207,7 +207,7 @@ func (itr *floatMergeIterator) Next() (*FloatPoint, error) {
 			}
 			itr.curr = heap.Pop(itr.heap).(*floatMergeHeapItem)
 
-			// Read point and set current window.
+			// Read Point and set current window.
 			p, err := itr.curr.itr.Next()
 			if err != nil {
 				return nil, err
@@ -218,19 +218,19 @@ func (itr *floatMergeIterator) Next() (*FloatPoint, error) {
 			return p, nil
 		}
 
-		// Read the next point from the current iterator.
+		// Read the next Point from the current iterator.
 		p, err := itr.curr.itr.Next()
 		if err != nil {
 			return nil, err
 		}
 
-		// If there are no more points then remove iterator from heap and find next.
+		// If there are no more points then remove iterator from Heap and find next.
 		if p == nil {
 			itr.curr = nil
 			continue
 		}
 
-		// Check if the point is inside of our current window.
+		// Check if the Point is inside of our current window.
 		inWindow := true
 		if window := itr.window; window.name != p.Name {
 			inWindow = false
@@ -242,7 +242,7 @@ func (itr *floatMergeIterator) Next() (*FloatPoint, error) {
 			inWindow = false
 		}
 
-		// If it's outside our window then push iterator back on the heap and find new iterator.
+		// If it's outside our window then push iterator back on the Heap and find new iterator.
 		if !inWindow {
 			itr.curr.itr.unread(p)
 			heap.Push(itr.heap, itr.curr)
@@ -254,7 +254,7 @@ func (itr *floatMergeIterator) Next() (*FloatPoint, error) {
 	}
 }
 
-// floatMergeHeap represents a heap of floatMergeHeapItems.
+// floatMergeHeap represents a Heap of floatMergeHeapItems.
 // Items are sorted by their next window and then by name/tags.
 type floatMergeHeap struct {
 	opt   IteratorOptions
@@ -314,25 +314,25 @@ type floatMergeHeapItem struct {
 
 // floatSortedMergeIterator is an iterator that sorts and merges multiple iterators into one.
 type floatSortedMergeIterator struct {
-	inputs []FloatIterator
-	heap   *floatSortedMergeHeap
-	init   bool
+	Inputs []FloatIterator
+	Heap   *floatSortedMergeHeap
+	Init   bool
 }
 
 // newFloatSortedMergeIterator returns an instance of floatSortedMergeIterator.
 func newFloatSortedMergeIterator(inputs []FloatIterator, opt IteratorOptions) Iterator {
 	itr := &floatSortedMergeIterator{
-		inputs: inputs,
-		heap: &floatSortedMergeHeap{
-			items: make([]*floatSortedMergeHeapItem, 0, len(inputs)),
-			opt:   opt,
+		Inputs: inputs,
+		Heap: &floatSortedMergeHeap{
+			Items: make([]*floatSortedMergeHeapItem, 0, len(inputs)),
+			Opt:   opt,
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Append to the heap.
-		itr.heap.items = append(itr.heap.items, &floatSortedMergeHeapItem{itr: input})
+		// Append to the Heap.
+		itr.Heap.Items = append(itr.Heap.Items, &floatSortedMergeHeapItem{Itr: input})
 	}
 
 	return itr
@@ -341,7 +341,7 @@ func newFloatSortedMergeIterator(inputs []FloatIterator, opt IteratorOptions) It
 // Stats returns an aggregation of stats from the underlying iterators.
 func (itr *floatSortedMergeIterator) Stats() IteratorStats {
 	var stats IteratorStats
-	for _, input := range itr.inputs {
+	for _, input := range itr.Inputs {
 		stats.Add(input.Stats())
 	}
 	return stats
@@ -349,7 +349,7 @@ func (itr *floatSortedMergeIterator) Stats() IteratorStats {
 
 // Close closes the underlying iterators.
 func (itr *floatSortedMergeIterator) Close() error {
-	for _, input := range itr.inputs {
+	for _, input := range itr.Inputs {
 		input.Close()
 	}
 	return nil
@@ -358,50 +358,50 @@ func (itr *floatSortedMergeIterator) Close() error {
 // Next returns the next points from the iterator.
 func (itr *floatSortedMergeIterator) Next() (*FloatPoint, error) { return itr.pop() }
 
-// pop returns the next point from the heap.
-// Reads the next point from item's cursor and puts it back on the heap.
+// pop returns the next Point from the Heap.
+// Reads the next Point from item's cursor and puts it back on the Heap.
 func (itr *floatSortedMergeIterator) pop() (*FloatPoint, error) {
-	// Initialize the heap. See the MergeIterator to see why this has to be done lazily.
-	if !itr.init {
-		items := itr.heap.items
-		itr.heap.items = make([]*floatSortedMergeHeapItem, 0, len(items))
+	// Initialize the Heap. See the MergeIterator to see why this has to be done lazily.
+	if !itr.Init {
+		items := itr.Heap.Items
+		itr.Heap.Items = make([]*floatSortedMergeHeapItem, 0, len(items))
 		for _, item := range items {
 			var err error
-			if item.point, err = item.itr.Next(); err != nil {
+			if item.Point, err = item.Itr.Next(); err != nil {
 				return nil, err
-			} else if item.point == nil {
+			} else if item.Point == nil {
 				continue
 			}
-			itr.heap.items = append(itr.heap.items, item)
+			itr.Heap.Items = append(itr.Heap.Items, item)
 		}
-		heap.Init(itr.heap)
-		itr.init = true
+		heap.Init(itr.Heap)
+		itr.Init = true
 	}
 
-	if len(itr.heap.items) == 0 {
+	if len(itr.Heap.Items) == 0 {
 		return nil, nil
 	}
 
-	// Read the next item from the heap.
-	item := heap.Pop(itr.heap).(*floatSortedMergeHeapItem)
+	// Read the next item from the Heap.
+	item := heap.Pop(itr.Heap).(*floatSortedMergeHeapItem)
 	if item.err != nil {
 		return nil, item.err
-	} else if item.point == nil {
+	} else if item.Point == nil {
 		return nil, nil
 	}
 
-	// Copy the point for return.
-	p := item.point.Clone()
+	// Copy the Point for return.
+	p := item.Point.Clone()
 
-	// Read the next item from the cursor. Push back to heap if one exists.
-	if item.point, item.err = item.itr.Next(); item.point != nil {
-		heap.Push(itr.heap, item)
+	// Read the next item from the cursor. Push back to Heap if one exists.
+	if item.Point, item.err = item.Itr.Next(); item.Point != nil {
+		heap.Push(itr.Heap, item)
 	}
 
 	return p, nil
 }
 
-// floatSortedMergeHeap represents a heap of floatSortedMergeHeapItems.
+// floatSortedMergeHeap represents a Heap of floatSortedMergeHeapItems.
 // Items are sorted with the following priority:
 //     - By their measurement name;
 //     - By their tag keys/values;
@@ -409,19 +409,19 @@ func (itr *floatSortedMergeIterator) pop() (*FloatPoint, error) {
 //     - By their Aux field values.
 //
 type floatSortedMergeHeap struct {
-	opt   IteratorOptions
-	items []*floatSortedMergeHeapItem
+	Opt   IteratorOptions
+	Items []*floatSortedMergeHeapItem
 }
 
-func (h *floatSortedMergeHeap) Len() int      { return len(h.items) }
-func (h *floatSortedMergeHeap) Swap(i, j int) { h.items[i], h.items[j] = h.items[j], h.items[i] }
+func (h *floatSortedMergeHeap) Len() int      { return len(h.Items) }
+func (h *floatSortedMergeHeap) Swap(i, j int) { h.Items[i], h.Items[j] = h.Items[j], h.Items[i] }
 func (h *floatSortedMergeHeap) Less(i, j int) bool {
-	x, y := h.items[i].point, h.items[j].point
+	x, y := h.Items[i].Point, h.Items[j].Point
 
-	if h.opt.Ascending {
+	if h.Opt.Ascending {
 		if x.Name != y.Name {
 			return x.Name < y.Name
-		} else if xTags, yTags := x.Tags.Subset(h.opt.Dimensions), y.Tags.Subset(h.opt.Dimensions); !xTags.Equals(&yTags) {
+		} else if xTags, yTags := x.Tags.Subset(h.Opt.Dimensions), y.Tags.Subset(h.Opt.Dimensions); !xTags.Equals(&yTags) {
 			return xTags.ID() < yTags.ID()
 		}
 
@@ -448,7 +448,7 @@ func (h *floatSortedMergeHeap) Less(i, j int) bool {
 
 	if x.Name != y.Name {
 		return x.Name > y.Name
-	} else if xTags, yTags := x.Tags.Subset(h.opt.Dimensions), y.Tags.Subset(h.opt.Dimensions); !xTags.Equals(&yTags) {
+	} else if xTags, yTags := x.Tags.Subset(h.Opt.Dimensions), y.Tags.Subset(h.Opt.Dimensions); !xTags.Equals(&yTags) {
 		return xTags.ID() > yTags.ID()
 	}
 
@@ -474,21 +474,21 @@ func (h *floatSortedMergeHeap) Less(i, j int) bool {
 }
 
 func (h *floatSortedMergeHeap) Push(x interface{}) {
-	h.items = append(h.items, x.(*floatSortedMergeHeapItem))
+	h.Items = append(h.Items, x.(*floatSortedMergeHeapItem))
 }
 
 func (h *floatSortedMergeHeap) Pop() interface{} {
-	old := h.items
+	old := h.Items
 	n := len(old)
 	item := old[n-1]
-	h.items = old[0 : n-1]
+	h.Items = old[0 : n-1]
 	return item
 }
 
 type floatSortedMergeHeapItem struct {
-	point *FloatPoint
+	Point *FloatPoint
 	err   error
-	itr   FloatIterator
+	Itr   FloatIterator
 }
 
 // floatIteratorScanner scans the results of a FloatIterator into a map.
@@ -612,7 +612,7 @@ func (itr *floatParallelIterator) Close() error {
 	return itr.input.Close()
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *floatParallelIterator) Next() (*FloatPoint, error) {
 	v, ok := <-itr.ch
 	if !ok {
@@ -621,13 +621,13 @@ func (itr *floatParallelIterator) Next() (*FloatPoint, error) {
 	return v.point, v.err
 }
 
-// monitor runs in a separate goroutine and actively pulls the next point.
+// monitor runs in a separate goroutine and actively pulls the next Point.
 func (itr *floatParallelIterator) monitor() {
 	defer close(itr.ch)
 	defer itr.wg.Done()
 
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p != nil {
 			p = p.Clone()
@@ -672,7 +672,7 @@ func (itr *floatLimitIterator) Stats() IteratorStats { return itr.input.Stats() 
 // Close closes the underlying iterators.
 func (itr *floatLimitIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *floatLimitIterator) Next() (*FloatPoint, error) {
 	for {
 		p, err := itr.input.Next()
@@ -690,12 +690,12 @@ func (itr *floatLimitIterator) Next() (*FloatPoint, error) {
 		// Increment counter.
 		itr.n++
 
-		// Read next point if not beyond the offset.
+		// Read next Point if not beyond the offset.
 		if itr.n <= itr.opt.Offset {
 			continue
 		}
 
-		// Read next point if we're beyond the limit.
+		// Read next Point if we're beyond the limit.
 		if itr.opt.Limit > 0 && (itr.n-itr.opt.Offset) > itr.opt.Limit {
 			continue
 		}
@@ -778,10 +778,10 @@ func (itr *floatFillIterator) Next() (*FloatPoint, error) {
 		return nil, err
 	}
 
-	// Check if the next point is outside of our window or is nil.
+	// Check if the next Point is outside of our window or is nil.
 	if p == nil || p.Name != itr.window.name || p.Tags.ID() != itr.window.tags.ID() {
-		// If we are inside of an interval, unread the point and continue below to
-		// constructing a new point.
+		// If we are inside of an interval, unread the Point and continue below to
+		// constructing a new Point.
 		if itr.opt.Ascending && itr.window.time <= itr.endTime {
 			itr.input.unread(p)
 			p = nil
@@ -792,7 +792,7 @@ func (itr *floatFillIterator) Next() (*FloatPoint, error) {
 			goto CONSTRUCT
 		}
 
-		// We are *not* in a current interval. If there is no next point,
+		// We are *not* in a current interval. If there is no next Point,
 		// we are at the end of all intervals.
 		if p == nil {
 			return nil, nil
@@ -810,7 +810,7 @@ func (itr *floatFillIterator) Next() (*FloatPoint, error) {
 		itr.prev = FloatPoint{Nil: true}
 	}
 
-	// Check if the point is our next expected point.
+	// Check if the Point is our next expected Point.
 CONSTRUCT:
 	if p == nil || (itr.opt.Ascending && p.Time > itr.window.time) || (!itr.opt.Ascending && p.Time < itr.window.time) {
 		if p != nil {
@@ -924,19 +924,19 @@ func (itr *floatInterruptIterator) Close() error         { return itr.input.Clos
 func (itr *floatInterruptIterator) Next() (*FloatPoint, error) {
 	// Only check if the channel is closed every N points. This
 	// intentionally checks on both 0 and N so that if the iterator
-	// has been interrupted before the first point is emitted it will
+	// has been interrupted before the first Point is emitted it will
 	// not emit any points.
 	if itr.count&0xFF == 0xFF {
 		select {
 		case <-itr.closing:
 			return nil, itr.Close()
 		default:
-			// Reset iterator count to zero and fall through to emit the next point.
+			// Reset iterator count to zero and fall through to emit the next Point.
 			itr.count = 0
 		}
 	}
 
-	// Increment the counter for every point read.
+	// Increment the counter for every Point read.
 	itr.count++
 	return itr.input.Next()
 }
@@ -1029,7 +1029,7 @@ func (itr *floatReduceFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -1043,7 +1043,7 @@ type floatReduceFloatPoint struct {
 	Emitter    FloatPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *floatReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Calculate next window.
@@ -1062,7 +1062,7 @@ func (itr *floatReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -1072,7 +1072,7 @@ func (itr *floatReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*floatReduceFloatPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -1085,7 +1085,7 @@ func (itr *floatReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -1094,7 +1094,7 @@ func (itr *floatReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -1153,7 +1153,7 @@ func (itr *floatReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	return a, nil
 }
 
-// floatStreamFloatIterator streams inputs into the iterator and emits points gradually.
+// floatStreamFloatIterator streams Inputs into the iterator and emits points gradually.
 type floatStreamFloatIterator struct {
 	input  *bufFloatIterator
 	create func() (FloatPointAggregator, FloatPointEmitter)
@@ -1191,14 +1191,14 @@ func (itr *floatStreamFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *floatStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -1206,7 +1206,7 @@ func (itr *floatStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -1309,7 +1309,7 @@ func (itr *floatReduceIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -1323,7 +1323,7 @@ type floatReduceIntegerPoint struct {
 	Emitter    IntegerPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *floatReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Calculate next window.
@@ -1342,7 +1342,7 @@ func (itr *floatReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -1352,7 +1352,7 @@ func (itr *floatReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*floatReduceIntegerPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -1365,7 +1365,7 @@ func (itr *floatReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -1374,7 +1374,7 @@ func (itr *floatReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -1433,7 +1433,7 @@ func (itr *floatReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	return a, nil
 }
 
-// floatStreamIntegerIterator streams inputs into the iterator and emits points gradually.
+// floatStreamIntegerIterator streams Inputs into the iterator and emits points gradually.
 type floatStreamIntegerIterator struct {
 	input  *bufFloatIterator
 	create func() (FloatPointAggregator, IntegerPointEmitter)
@@ -1471,14 +1471,14 @@ func (itr *floatStreamIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *floatStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -1486,7 +1486,7 @@ func (itr *floatStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -1589,7 +1589,7 @@ func (itr *floatReduceUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -1603,7 +1603,7 @@ type floatReduceUnsignedPoint struct {
 	Emitter    UnsignedPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *floatReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Calculate next window.
@@ -1622,7 +1622,7 @@ func (itr *floatReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -1632,7 +1632,7 @@ func (itr *floatReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*floatReduceUnsignedPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -1645,7 +1645,7 @@ func (itr *floatReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -1654,7 +1654,7 @@ func (itr *floatReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -1713,7 +1713,7 @@ func (itr *floatReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	return a, nil
 }
 
-// floatStreamUnsignedIterator streams inputs into the iterator and emits points gradually.
+// floatStreamUnsignedIterator streams Inputs into the iterator and emits points gradually.
 type floatStreamUnsignedIterator struct {
 	input  *bufFloatIterator
 	create func() (FloatPointAggregator, UnsignedPointEmitter)
@@ -1751,14 +1751,14 @@ func (itr *floatStreamUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *floatStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -1766,7 +1766,7 @@ func (itr *floatStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -1869,7 +1869,7 @@ func (itr *floatReduceStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -1883,7 +1883,7 @@ type floatReduceStringPoint struct {
 	Emitter    StringPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *floatReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Calculate next window.
@@ -1902,7 +1902,7 @@ func (itr *floatReduceStringIterator) reduce() ([]StringPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -1912,7 +1912,7 @@ func (itr *floatReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*floatReduceStringPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -1925,7 +1925,7 @@ func (itr *floatReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -1934,7 +1934,7 @@ func (itr *floatReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -1993,7 +1993,7 @@ func (itr *floatReduceStringIterator) reduce() ([]StringPoint, error) {
 	return a, nil
 }
 
-// floatStreamStringIterator streams inputs into the iterator and emits points gradually.
+// floatStreamStringIterator streams Inputs into the iterator and emits points gradually.
 type floatStreamStringIterator struct {
 	input  *bufFloatIterator
 	create func() (FloatPointAggregator, StringPointEmitter)
@@ -2031,14 +2031,14 @@ func (itr *floatStreamStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *floatStreamStringIterator) reduce() ([]StringPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -2046,7 +2046,7 @@ func (itr *floatStreamStringIterator) reduce() ([]StringPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -2149,7 +2149,7 @@ func (itr *floatReduceBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -2163,7 +2163,7 @@ type floatReduceBooleanPoint struct {
 	Emitter    BooleanPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *floatReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Calculate next window.
@@ -2182,7 +2182,7 @@ func (itr *floatReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -2192,7 +2192,7 @@ func (itr *floatReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*floatReduceBooleanPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -2205,7 +2205,7 @@ func (itr *floatReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -2214,7 +2214,7 @@ func (itr *floatReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -2273,7 +2273,7 @@ func (itr *floatReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	return a, nil
 }
 
-// floatStreamBooleanIterator streams inputs into the iterator and emits points gradually.
+// floatStreamBooleanIterator streams Inputs into the iterator and emits points gradually.
 type floatStreamBooleanIterator struct {
 	input  *bufFloatIterator
 	create func() (FloatPointAggregator, BooleanPointEmitter)
@@ -2311,14 +2311,14 @@ func (itr *floatStreamBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *floatStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -2326,7 +2326,7 @@ func (itr *floatStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -2577,10 +2577,10 @@ func (itr *floatDedupeIterator) Stats() IteratorStats { return itr.input.Stats()
 // Close closes the iterator and all child iterators.
 func (itr *floatDedupeIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next unique point from the input iterator.
+// Next returns the next unique Point from the input iterator.
 func (itr *floatDedupeIterator) Next() (*FloatPoint, error) {
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p == nil || err != nil {
 			return nil, err
@@ -2592,12 +2592,12 @@ func (itr *floatDedupeIterator) Next() (*FloatPoint, error) {
 			return nil, err
 		}
 
-		// If the point has already been output then move to the next point.
+		// If the Point has already been output then move to the next Point.
 		if _, ok := itr.m[string(buf)]; ok {
 			continue
 		}
 
-		// Otherwise mark it as emitted and return point.
+		// Otherwise mark it as emitted and return Point.
 		itr.m[string(buf)] = struct{}{}
 		return p, nil
 	}
@@ -2631,11 +2631,11 @@ func (itr *floatReaderIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *floatReaderIterator) Next() (*FloatPoint, error) {
-	// OPTIMIZE(benbjohnson): Reuse point on iterator.
+	// OPTIMIZE(benbjohnson): Reuse Point on iterator.
 
-	// Unmarshal next point.
+	// Unmarshal next Point.
 	p := &FloatPoint{}
 	if err := itr.dec.DecodeFloatPoint(p); err == io.EOF {
 		return nil, nil
@@ -2684,7 +2684,7 @@ func (itr *bufIntegerIterator) Stats() IteratorStats { return itr.itr.Stats() }
 // Close closes the underlying iterator.
 func (itr *bufIntegerIterator) Close() error { return itr.itr.Close() }
 
-// peek returns the next point without removing it from the iterator.
+// peek returns the next Point without removing it from the iterator.
 func (itr *bufIntegerIterator) peek() (*IntegerPoint, error) {
 	p, err := itr.Next()
 	if err != nil {
@@ -2694,7 +2694,7 @@ func (itr *bufIntegerIterator) peek() (*IntegerPoint, error) {
 	return p, nil
 }
 
-// peekTime returns the time of the next point.
+// peekTime returns the time of the next Point.
 // Returns zero time if no more points available.
 func (itr *bufIntegerIterator) peekTime() (int64, error) {
 	p, err := itr.peek()
@@ -2759,12 +2759,12 @@ func newIntegerMergeIterator(inputs []IntegerIterator, opt IteratorOptions) *int
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Wrap in buffer, ignore any inputs without anymore points.
+		// Wrap in buffer, ignore any Inputs without anymore points.
 		bufInput := newBufIntegerIterator(input)
 
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &integerMergeHeapItem{itr: bufInput})
 	}
 
@@ -2795,7 +2795,7 @@ func (itr *integerMergeIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *integerMergeIterator) Next() (*IntegerPoint, error) {
 	itr.mu.RLock()
 	defer itr.mu.RUnlock()
@@ -2803,11 +2803,11 @@ func (itr *integerMergeIterator) Next() (*IntegerPoint, error) {
 		return nil, nil
 	}
 
-	// Initialize the heap. This needs to be done lazily on the first call to this iterator
+	// Initialize the Heap. This needs to be done lazily on the first call to this iterator
 	// so that iterator initialization done through the Select() call returns quickly.
 	// Queries can only be interrupted after the Select() call completes so any operations
 	// done during iterator creation cannot be interrupted, which is why we do it here
-	// instead so an interrupt can happen while initializing the heap.
+	// instead so an interrupt can happen while initializing the Heap.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*integerMergeHeapItem, 0, len(items))
@@ -2831,7 +2831,7 @@ func (itr *integerMergeIterator) Next() (*IntegerPoint, error) {
 			}
 			itr.curr = heap.Pop(itr.heap).(*integerMergeHeapItem)
 
-			// Read point and set current window.
+			// Read Point and set current window.
 			p, err := itr.curr.itr.Next()
 			if err != nil {
 				return nil, err
@@ -2842,19 +2842,19 @@ func (itr *integerMergeIterator) Next() (*IntegerPoint, error) {
 			return p, nil
 		}
 
-		// Read the next point from the current iterator.
+		// Read the next Point from the current iterator.
 		p, err := itr.curr.itr.Next()
 		if err != nil {
 			return nil, err
 		}
 
-		// If there are no more points then remove iterator from heap and find next.
+		// If there are no more points then remove iterator from Heap and find next.
 		if p == nil {
 			itr.curr = nil
 			continue
 		}
 
-		// Check if the point is inside of our current window.
+		// Check if the Point is inside of our current window.
 		inWindow := true
 		if window := itr.window; window.name != p.Name {
 			inWindow = false
@@ -2866,7 +2866,7 @@ func (itr *integerMergeIterator) Next() (*IntegerPoint, error) {
 			inWindow = false
 		}
 
-		// If it's outside our window then push iterator back on the heap and find new iterator.
+		// If it's outside our window then push iterator back on the Heap and find new iterator.
 		if !inWindow {
 			itr.curr.itr.unread(p)
 			heap.Push(itr.heap, itr.curr)
@@ -2878,7 +2878,7 @@ func (itr *integerMergeIterator) Next() (*IntegerPoint, error) {
 	}
 }
 
-// integerMergeHeap represents a heap of integerMergeHeapItems.
+// integerMergeHeap represents a Heap of integerMergeHeapItems.
 // Items are sorted by their next window and then by name/tags.
 type integerMergeHeap struct {
 	opt   IteratorOptions
@@ -2953,9 +2953,9 @@ func newIntegerSortedMergeIterator(inputs []IntegerIterator, opt IteratorOptions
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &integerSortedMergeHeapItem{itr: input})
 	}
 
@@ -2982,10 +2982,10 @@ func (itr *integerSortedMergeIterator) Close() error {
 // Next returns the next points from the iterator.
 func (itr *integerSortedMergeIterator) Next() (*IntegerPoint, error) { return itr.pop() }
 
-// pop returns the next point from the heap.
-// Reads the next point from item's cursor and puts it back on the heap.
+// pop returns the next Point from the Heap.
+// Reads the next Point from item's cursor and puts it back on the Heap.
 func (itr *integerSortedMergeIterator) pop() (*IntegerPoint, error) {
-	// Initialize the heap. See the MergeIterator to see why this has to be done lazily.
+	// Initialize the Heap. See the MergeIterator to see why this has to be done lazily.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*integerSortedMergeHeapItem, 0, len(items))
@@ -3006,7 +3006,7 @@ func (itr *integerSortedMergeIterator) pop() (*IntegerPoint, error) {
 		return nil, nil
 	}
 
-	// Read the next item from the heap.
+	// Read the next item from the Heap.
 	item := heap.Pop(itr.heap).(*integerSortedMergeHeapItem)
 	if item.err != nil {
 		return nil, item.err
@@ -3014,10 +3014,10 @@ func (itr *integerSortedMergeIterator) pop() (*IntegerPoint, error) {
 		return nil, nil
 	}
 
-	// Copy the point for return.
+	// Copy the Point for return.
 	p := item.point.Clone()
 
-	// Read the next item from the cursor. Push back to heap if one exists.
+	// Read the next item from the cursor. Push back to Heap if one exists.
 	if item.point, item.err = item.itr.Next(); item.point != nil {
 		heap.Push(itr.heap, item)
 	}
@@ -3025,7 +3025,7 @@ func (itr *integerSortedMergeIterator) pop() (*IntegerPoint, error) {
 	return p, nil
 }
 
-// integerSortedMergeHeap represents a heap of integerSortedMergeHeapItems.
+// integerSortedMergeHeap represents a Heap of integerSortedMergeHeapItems.
 // Items are sorted with the following priority:
 //     - By their measurement name;
 //     - By their tag keys/values;
@@ -3236,7 +3236,7 @@ func (itr *integerParallelIterator) Close() error {
 	return itr.input.Close()
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *integerParallelIterator) Next() (*IntegerPoint, error) {
 	v, ok := <-itr.ch
 	if !ok {
@@ -3245,13 +3245,13 @@ func (itr *integerParallelIterator) Next() (*IntegerPoint, error) {
 	return v.point, v.err
 }
 
-// monitor runs in a separate goroutine and actively pulls the next point.
+// monitor runs in a separate goroutine and actively pulls the next Point.
 func (itr *integerParallelIterator) monitor() {
 	defer close(itr.ch)
 	defer itr.wg.Done()
 
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p != nil {
 			p = p.Clone()
@@ -3296,7 +3296,7 @@ func (itr *integerLimitIterator) Stats() IteratorStats { return itr.input.Stats(
 // Close closes the underlying iterators.
 func (itr *integerLimitIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *integerLimitIterator) Next() (*IntegerPoint, error) {
 	for {
 		p, err := itr.input.Next()
@@ -3314,12 +3314,12 @@ func (itr *integerLimitIterator) Next() (*IntegerPoint, error) {
 		// Increment counter.
 		itr.n++
 
-		// Read next point if not beyond the offset.
+		// Read next Point if not beyond the offset.
 		if itr.n <= itr.opt.Offset {
 			continue
 		}
 
-		// Read next point if we're beyond the limit.
+		// Read next Point if we're beyond the limit.
 		if itr.opt.Limit > 0 && (itr.n-itr.opt.Offset) > itr.opt.Limit {
 			continue
 		}
@@ -3402,10 +3402,10 @@ func (itr *integerFillIterator) Next() (*IntegerPoint, error) {
 		return nil, err
 	}
 
-	// Check if the next point is outside of our window or is nil.
+	// Check if the next Point is outside of our window or is nil.
 	if p == nil || p.Name != itr.window.name || p.Tags.ID() != itr.window.tags.ID() {
-		// If we are inside of an interval, unread the point and continue below to
-		// constructing a new point.
+		// If we are inside of an interval, unread the Point and continue below to
+		// constructing a new Point.
 		if itr.opt.Ascending && itr.window.time <= itr.endTime {
 			itr.input.unread(p)
 			p = nil
@@ -3416,7 +3416,7 @@ func (itr *integerFillIterator) Next() (*IntegerPoint, error) {
 			goto CONSTRUCT
 		}
 
-		// We are *not* in a current interval. If there is no next point,
+		// We are *not* in a current interval. If there is no next Point,
 		// we are at the end of all intervals.
 		if p == nil {
 			return nil, nil
@@ -3434,7 +3434,7 @@ func (itr *integerFillIterator) Next() (*IntegerPoint, error) {
 		itr.prev = IntegerPoint{Nil: true}
 	}
 
-	// Check if the point is our next expected point.
+	// Check if the Point is our next expected Point.
 CONSTRUCT:
 	if p == nil || (itr.opt.Ascending && p.Time > itr.window.time) || (!itr.opt.Ascending && p.Time < itr.window.time) {
 		if p != nil {
@@ -3548,19 +3548,19 @@ func (itr *integerInterruptIterator) Close() error         { return itr.input.Cl
 func (itr *integerInterruptIterator) Next() (*IntegerPoint, error) {
 	// Only check if the channel is closed every N points. This
 	// intentionally checks on both 0 and N so that if the iterator
-	// has been interrupted before the first point is emitted it will
+	// has been interrupted before the first Point is emitted it will
 	// not emit any points.
 	if itr.count&0xFF == 0xFF {
 		select {
 		case <-itr.closing:
 			return nil, itr.Close()
 		default:
-			// Reset iterator count to zero and fall through to emit the next point.
+			// Reset iterator count to zero and fall through to emit the next Point.
 			itr.count = 0
 		}
 	}
 
-	// Increment the counter for every point read.
+	// Increment the counter for every Point read.
 	itr.count++
 	return itr.input.Next()
 }
@@ -3653,7 +3653,7 @@ func (itr *integerReduceFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -3667,7 +3667,7 @@ type integerReduceFloatPoint struct {
 	Emitter    FloatPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *integerReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Calculate next window.
@@ -3686,7 +3686,7 @@ func (itr *integerReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -3696,7 +3696,7 @@ func (itr *integerReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*integerReduceFloatPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -3709,7 +3709,7 @@ func (itr *integerReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -3718,7 +3718,7 @@ func (itr *integerReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -3777,7 +3777,7 @@ func (itr *integerReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	return a, nil
 }
 
-// integerStreamFloatIterator streams inputs into the iterator and emits points gradually.
+// integerStreamFloatIterator streams Inputs into the iterator and emits points gradually.
 type integerStreamFloatIterator struct {
 	input  *bufIntegerIterator
 	create func() (IntegerPointAggregator, FloatPointEmitter)
@@ -3815,14 +3815,14 @@ func (itr *integerStreamFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *integerStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -3830,7 +3830,7 @@ func (itr *integerStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -3933,7 +3933,7 @@ func (itr *integerReduceIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -3947,7 +3947,7 @@ type integerReduceIntegerPoint struct {
 	Emitter    IntegerPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *integerReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Calculate next window.
@@ -3966,7 +3966,7 @@ func (itr *integerReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -3976,7 +3976,7 @@ func (itr *integerReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*integerReduceIntegerPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -3989,7 +3989,7 @@ func (itr *integerReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -3998,7 +3998,7 @@ func (itr *integerReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -4057,7 +4057,7 @@ func (itr *integerReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	return a, nil
 }
 
-// integerStreamIntegerIterator streams inputs into the iterator and emits points gradually.
+// integerStreamIntegerIterator streams Inputs into the iterator and emits points gradually.
 type integerStreamIntegerIterator struct {
 	input  *bufIntegerIterator
 	create func() (IntegerPointAggregator, IntegerPointEmitter)
@@ -4095,14 +4095,14 @@ func (itr *integerStreamIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *integerStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -4110,7 +4110,7 @@ func (itr *integerStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -4213,7 +4213,7 @@ func (itr *integerReduceUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -4227,7 +4227,7 @@ type integerReduceUnsignedPoint struct {
 	Emitter    UnsignedPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *integerReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Calculate next window.
@@ -4246,7 +4246,7 @@ func (itr *integerReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -4256,7 +4256,7 @@ func (itr *integerReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*integerReduceUnsignedPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -4269,7 +4269,7 @@ func (itr *integerReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -4278,7 +4278,7 @@ func (itr *integerReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -4337,7 +4337,7 @@ func (itr *integerReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	return a, nil
 }
 
-// integerStreamUnsignedIterator streams inputs into the iterator and emits points gradually.
+// integerStreamUnsignedIterator streams Inputs into the iterator and emits points gradually.
 type integerStreamUnsignedIterator struct {
 	input  *bufIntegerIterator
 	create func() (IntegerPointAggregator, UnsignedPointEmitter)
@@ -4375,14 +4375,14 @@ func (itr *integerStreamUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *integerStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -4390,7 +4390,7 @@ func (itr *integerStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -4493,7 +4493,7 @@ func (itr *integerReduceStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -4507,7 +4507,7 @@ type integerReduceStringPoint struct {
 	Emitter    StringPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *integerReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Calculate next window.
@@ -4526,7 +4526,7 @@ func (itr *integerReduceStringIterator) reduce() ([]StringPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -4536,7 +4536,7 @@ func (itr *integerReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*integerReduceStringPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -4549,7 +4549,7 @@ func (itr *integerReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -4558,7 +4558,7 @@ func (itr *integerReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -4617,7 +4617,7 @@ func (itr *integerReduceStringIterator) reduce() ([]StringPoint, error) {
 	return a, nil
 }
 
-// integerStreamStringIterator streams inputs into the iterator and emits points gradually.
+// integerStreamStringIterator streams Inputs into the iterator and emits points gradually.
 type integerStreamStringIterator struct {
 	input  *bufIntegerIterator
 	create func() (IntegerPointAggregator, StringPointEmitter)
@@ -4655,14 +4655,14 @@ func (itr *integerStreamStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *integerStreamStringIterator) reduce() ([]StringPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -4670,7 +4670,7 @@ func (itr *integerStreamStringIterator) reduce() ([]StringPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -4773,7 +4773,7 @@ func (itr *integerReduceBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -4787,7 +4787,7 @@ type integerReduceBooleanPoint struct {
 	Emitter    BooleanPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *integerReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Calculate next window.
@@ -4806,7 +4806,7 @@ func (itr *integerReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -4816,7 +4816,7 @@ func (itr *integerReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*integerReduceBooleanPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -4829,7 +4829,7 @@ func (itr *integerReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -4838,7 +4838,7 @@ func (itr *integerReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -4897,7 +4897,7 @@ func (itr *integerReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	return a, nil
 }
 
-// integerStreamBooleanIterator streams inputs into the iterator and emits points gradually.
+// integerStreamBooleanIterator streams Inputs into the iterator and emits points gradually.
 type integerStreamBooleanIterator struct {
 	input  *bufIntegerIterator
 	create func() (IntegerPointAggregator, BooleanPointEmitter)
@@ -4935,14 +4935,14 @@ func (itr *integerStreamBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *integerStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -4950,7 +4950,7 @@ func (itr *integerStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -5201,10 +5201,10 @@ func (itr *integerDedupeIterator) Stats() IteratorStats { return itr.input.Stats
 // Close closes the iterator and all child iterators.
 func (itr *integerDedupeIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next unique point from the input iterator.
+// Next returns the next unique Point from the input iterator.
 func (itr *integerDedupeIterator) Next() (*IntegerPoint, error) {
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p == nil || err != nil {
 			return nil, err
@@ -5216,12 +5216,12 @@ func (itr *integerDedupeIterator) Next() (*IntegerPoint, error) {
 			return nil, err
 		}
 
-		// If the point has already been output then move to the next point.
+		// If the Point has already been output then move to the next Point.
 		if _, ok := itr.m[string(buf)]; ok {
 			continue
 		}
 
-		// Otherwise mark it as emitted and return point.
+		// Otherwise mark it as emitted and return Point.
 		itr.m[string(buf)] = struct{}{}
 		return p, nil
 	}
@@ -5255,11 +5255,11 @@ func (itr *integerReaderIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *integerReaderIterator) Next() (*IntegerPoint, error) {
-	// OPTIMIZE(benbjohnson): Reuse point on iterator.
+	// OPTIMIZE(benbjohnson): Reuse Point on iterator.
 
-	// Unmarshal next point.
+	// Unmarshal next Point.
 	p := &IntegerPoint{}
 	if err := itr.dec.DecodeIntegerPoint(p); err == io.EOF {
 		return nil, nil
@@ -5308,7 +5308,7 @@ func (itr *bufUnsignedIterator) Stats() IteratorStats { return itr.itr.Stats() }
 // Close closes the underlying iterator.
 func (itr *bufUnsignedIterator) Close() error { return itr.itr.Close() }
 
-// peek returns the next point without removing it from the iterator.
+// peek returns the next Point without removing it from the iterator.
 func (itr *bufUnsignedIterator) peek() (*UnsignedPoint, error) {
 	p, err := itr.Next()
 	if err != nil {
@@ -5318,7 +5318,7 @@ func (itr *bufUnsignedIterator) peek() (*UnsignedPoint, error) {
 	return p, nil
 }
 
-// peekTime returns the time of the next point.
+// peekTime returns the time of the next Point.
 // Returns zero time if no more points available.
 func (itr *bufUnsignedIterator) peekTime() (int64, error) {
 	p, err := itr.peek()
@@ -5383,12 +5383,12 @@ func newUnsignedMergeIterator(inputs []UnsignedIterator, opt IteratorOptions) *u
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Wrap in buffer, ignore any inputs without anymore points.
+		// Wrap in buffer, ignore any Inputs without anymore points.
 		bufInput := newBufUnsignedIterator(input)
 
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &unsignedMergeHeapItem{itr: bufInput})
 	}
 
@@ -5419,7 +5419,7 @@ func (itr *unsignedMergeIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *unsignedMergeIterator) Next() (*UnsignedPoint, error) {
 	itr.mu.RLock()
 	defer itr.mu.RUnlock()
@@ -5427,11 +5427,11 @@ func (itr *unsignedMergeIterator) Next() (*UnsignedPoint, error) {
 		return nil, nil
 	}
 
-	// Initialize the heap. This needs to be done lazily on the first call to this iterator
+	// Initialize the Heap. This needs to be done lazily on the first call to this iterator
 	// so that iterator initialization done through the Select() call returns quickly.
 	// Queries can only be interrupted after the Select() call completes so any operations
 	// done during iterator creation cannot be interrupted, which is why we do it here
-	// instead so an interrupt can happen while initializing the heap.
+	// instead so an interrupt can happen while initializing the Heap.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*unsignedMergeHeapItem, 0, len(items))
@@ -5455,7 +5455,7 @@ func (itr *unsignedMergeIterator) Next() (*UnsignedPoint, error) {
 			}
 			itr.curr = heap.Pop(itr.heap).(*unsignedMergeHeapItem)
 
-			// Read point and set current window.
+			// Read Point and set current window.
 			p, err := itr.curr.itr.Next()
 			if err != nil {
 				return nil, err
@@ -5466,19 +5466,19 @@ func (itr *unsignedMergeIterator) Next() (*UnsignedPoint, error) {
 			return p, nil
 		}
 
-		// Read the next point from the current iterator.
+		// Read the next Point from the current iterator.
 		p, err := itr.curr.itr.Next()
 		if err != nil {
 			return nil, err
 		}
 
-		// If there are no more points then remove iterator from heap and find next.
+		// If there are no more points then remove iterator from Heap and find next.
 		if p == nil {
 			itr.curr = nil
 			continue
 		}
 
-		// Check if the point is inside of our current window.
+		// Check if the Point is inside of our current window.
 		inWindow := true
 		if window := itr.window; window.name != p.Name {
 			inWindow = false
@@ -5490,7 +5490,7 @@ func (itr *unsignedMergeIterator) Next() (*UnsignedPoint, error) {
 			inWindow = false
 		}
 
-		// If it's outside our window then push iterator back on the heap and find new iterator.
+		// If it's outside our window then push iterator back on the Heap and find new iterator.
 		if !inWindow {
 			itr.curr.itr.unread(p)
 			heap.Push(itr.heap, itr.curr)
@@ -5502,7 +5502,7 @@ func (itr *unsignedMergeIterator) Next() (*UnsignedPoint, error) {
 	}
 }
 
-// unsignedMergeHeap represents a heap of unsignedMergeHeapItems.
+// unsignedMergeHeap represents a Heap of unsignedMergeHeapItems.
 // Items are sorted by their next window and then by name/tags.
 type unsignedMergeHeap struct {
 	opt   IteratorOptions
@@ -5577,9 +5577,9 @@ func newUnsignedSortedMergeIterator(inputs []UnsignedIterator, opt IteratorOptio
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &unsignedSortedMergeHeapItem{itr: input})
 	}
 
@@ -5606,10 +5606,10 @@ func (itr *unsignedSortedMergeIterator) Close() error {
 // Next returns the next points from the iterator.
 func (itr *unsignedSortedMergeIterator) Next() (*UnsignedPoint, error) { return itr.pop() }
 
-// pop returns the next point from the heap.
-// Reads the next point from item's cursor and puts it back on the heap.
+// pop returns the next Point from the Heap.
+// Reads the next Point from item's cursor and puts it back on the Heap.
 func (itr *unsignedSortedMergeIterator) pop() (*UnsignedPoint, error) {
-	// Initialize the heap. See the MergeIterator to see why this has to be done lazily.
+	// Initialize the Heap. See the MergeIterator to see why this has to be done lazily.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*unsignedSortedMergeHeapItem, 0, len(items))
@@ -5630,7 +5630,7 @@ func (itr *unsignedSortedMergeIterator) pop() (*UnsignedPoint, error) {
 		return nil, nil
 	}
 
-	// Read the next item from the heap.
+	// Read the next item from the Heap.
 	item := heap.Pop(itr.heap).(*unsignedSortedMergeHeapItem)
 	if item.err != nil {
 		return nil, item.err
@@ -5638,10 +5638,10 @@ func (itr *unsignedSortedMergeIterator) pop() (*UnsignedPoint, error) {
 		return nil, nil
 	}
 
-	// Copy the point for return.
+	// Copy the Point for return.
 	p := item.point.Clone()
 
-	// Read the next item from the cursor. Push back to heap if one exists.
+	// Read the next item from the cursor. Push back to Heap if one exists.
 	if item.point, item.err = item.itr.Next(); item.point != nil {
 		heap.Push(itr.heap, item)
 	}
@@ -5649,7 +5649,7 @@ func (itr *unsignedSortedMergeIterator) pop() (*UnsignedPoint, error) {
 	return p, nil
 }
 
-// unsignedSortedMergeHeap represents a heap of unsignedSortedMergeHeapItems.
+// unsignedSortedMergeHeap represents a Heap of unsignedSortedMergeHeapItems.
 // Items are sorted with the following priority:
 //     - By their measurement name;
 //     - By their tag keys/values;
@@ -5860,7 +5860,7 @@ func (itr *unsignedParallelIterator) Close() error {
 	return itr.input.Close()
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *unsignedParallelIterator) Next() (*UnsignedPoint, error) {
 	v, ok := <-itr.ch
 	if !ok {
@@ -5869,13 +5869,13 @@ func (itr *unsignedParallelIterator) Next() (*UnsignedPoint, error) {
 	return v.point, v.err
 }
 
-// monitor runs in a separate goroutine and actively pulls the next point.
+// monitor runs in a separate goroutine and actively pulls the next Point.
 func (itr *unsignedParallelIterator) monitor() {
 	defer close(itr.ch)
 	defer itr.wg.Done()
 
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p != nil {
 			p = p.Clone()
@@ -5920,7 +5920,7 @@ func (itr *unsignedLimitIterator) Stats() IteratorStats { return itr.input.Stats
 // Close closes the underlying iterators.
 func (itr *unsignedLimitIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *unsignedLimitIterator) Next() (*UnsignedPoint, error) {
 	for {
 		p, err := itr.input.Next()
@@ -5938,12 +5938,12 @@ func (itr *unsignedLimitIterator) Next() (*UnsignedPoint, error) {
 		// Increment counter.
 		itr.n++
 
-		// Read next point if not beyond the offset.
+		// Read next Point if not beyond the offset.
 		if itr.n <= itr.opt.Offset {
 			continue
 		}
 
-		// Read next point if we're beyond the limit.
+		// Read next Point if we're beyond the limit.
 		if itr.opt.Limit > 0 && (itr.n-itr.opt.Offset) > itr.opt.Limit {
 			continue
 		}
@@ -6026,10 +6026,10 @@ func (itr *unsignedFillIterator) Next() (*UnsignedPoint, error) {
 		return nil, err
 	}
 
-	// Check if the next point is outside of our window or is nil.
+	// Check if the next Point is outside of our window or is nil.
 	if p == nil || p.Name != itr.window.name || p.Tags.ID() != itr.window.tags.ID() {
-		// If we are inside of an interval, unread the point and continue below to
-		// constructing a new point.
+		// If we are inside of an interval, unread the Point and continue below to
+		// constructing a new Point.
 		if itr.opt.Ascending && itr.window.time <= itr.endTime {
 			itr.input.unread(p)
 			p = nil
@@ -6040,7 +6040,7 @@ func (itr *unsignedFillIterator) Next() (*UnsignedPoint, error) {
 			goto CONSTRUCT
 		}
 
-		// We are *not* in a current interval. If there is no next point,
+		// We are *not* in a current interval. If there is no next Point,
 		// we are at the end of all intervals.
 		if p == nil {
 			return nil, nil
@@ -6058,7 +6058,7 @@ func (itr *unsignedFillIterator) Next() (*UnsignedPoint, error) {
 		itr.prev = UnsignedPoint{Nil: true}
 	}
 
-	// Check if the point is our next expected point.
+	// Check if the Point is our next expected Point.
 CONSTRUCT:
 	if p == nil || (itr.opt.Ascending && p.Time > itr.window.time) || (!itr.opt.Ascending && p.Time < itr.window.time) {
 		if p != nil {
@@ -6172,19 +6172,19 @@ func (itr *unsignedInterruptIterator) Close() error         { return itr.input.C
 func (itr *unsignedInterruptIterator) Next() (*UnsignedPoint, error) {
 	// Only check if the channel is closed every N points. This
 	// intentionally checks on both 0 and N so that if the iterator
-	// has been interrupted before the first point is emitted it will
+	// has been interrupted before the first Point is emitted it will
 	// not emit any points.
 	if itr.count&0xFF == 0xFF {
 		select {
 		case <-itr.closing:
 			return nil, itr.Close()
 		default:
-			// Reset iterator count to zero and fall through to emit the next point.
+			// Reset iterator count to zero and fall through to emit the next Point.
 			itr.count = 0
 		}
 	}
 
-	// Increment the counter for every point read.
+	// Increment the counter for every Point read.
 	itr.count++
 	return itr.input.Next()
 }
@@ -6277,7 +6277,7 @@ func (itr *unsignedReduceFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -6291,7 +6291,7 @@ type unsignedReduceFloatPoint struct {
 	Emitter    FloatPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *unsignedReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Calculate next window.
@@ -6310,7 +6310,7 @@ func (itr *unsignedReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -6320,7 +6320,7 @@ func (itr *unsignedReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*unsignedReduceFloatPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -6333,7 +6333,7 @@ func (itr *unsignedReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -6342,7 +6342,7 @@ func (itr *unsignedReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -6401,7 +6401,7 @@ func (itr *unsignedReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	return a, nil
 }
 
-// unsignedStreamFloatIterator streams inputs into the iterator and emits points gradually.
+// unsignedStreamFloatIterator streams Inputs into the iterator and emits points gradually.
 type unsignedStreamFloatIterator struct {
 	input  *bufUnsignedIterator
 	create func() (UnsignedPointAggregator, FloatPointEmitter)
@@ -6439,14 +6439,14 @@ func (itr *unsignedStreamFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *unsignedStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -6454,7 +6454,7 @@ func (itr *unsignedStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -6557,7 +6557,7 @@ func (itr *unsignedReduceIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -6571,7 +6571,7 @@ type unsignedReduceIntegerPoint struct {
 	Emitter    IntegerPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *unsignedReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Calculate next window.
@@ -6590,7 +6590,7 @@ func (itr *unsignedReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -6600,7 +6600,7 @@ func (itr *unsignedReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*unsignedReduceIntegerPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -6613,7 +6613,7 @@ func (itr *unsignedReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -6622,7 +6622,7 @@ func (itr *unsignedReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -6681,7 +6681,7 @@ func (itr *unsignedReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	return a, nil
 }
 
-// unsignedStreamIntegerIterator streams inputs into the iterator and emits points gradually.
+// unsignedStreamIntegerIterator streams Inputs into the iterator and emits points gradually.
 type unsignedStreamIntegerIterator struct {
 	input  *bufUnsignedIterator
 	create func() (UnsignedPointAggregator, IntegerPointEmitter)
@@ -6719,14 +6719,14 @@ func (itr *unsignedStreamIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *unsignedStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -6734,7 +6734,7 @@ func (itr *unsignedStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -6837,7 +6837,7 @@ func (itr *unsignedReduceUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -6851,7 +6851,7 @@ type unsignedReduceUnsignedPoint struct {
 	Emitter    UnsignedPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *unsignedReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Calculate next window.
@@ -6870,7 +6870,7 @@ func (itr *unsignedReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -6880,7 +6880,7 @@ func (itr *unsignedReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*unsignedReduceUnsignedPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -6893,7 +6893,7 @@ func (itr *unsignedReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -6902,7 +6902,7 @@ func (itr *unsignedReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -6961,7 +6961,7 @@ func (itr *unsignedReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	return a, nil
 }
 
-// unsignedStreamUnsignedIterator streams inputs into the iterator and emits points gradually.
+// unsignedStreamUnsignedIterator streams Inputs into the iterator and emits points gradually.
 type unsignedStreamUnsignedIterator struct {
 	input  *bufUnsignedIterator
 	create func() (UnsignedPointAggregator, UnsignedPointEmitter)
@@ -6999,14 +6999,14 @@ func (itr *unsignedStreamUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *unsignedStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -7014,7 +7014,7 @@ func (itr *unsignedStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -7117,7 +7117,7 @@ func (itr *unsignedReduceStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -7131,7 +7131,7 @@ type unsignedReduceStringPoint struct {
 	Emitter    StringPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *unsignedReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Calculate next window.
@@ -7150,7 +7150,7 @@ func (itr *unsignedReduceStringIterator) reduce() ([]StringPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -7160,7 +7160,7 @@ func (itr *unsignedReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*unsignedReduceStringPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -7173,7 +7173,7 @@ func (itr *unsignedReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -7182,7 +7182,7 @@ func (itr *unsignedReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -7241,7 +7241,7 @@ func (itr *unsignedReduceStringIterator) reduce() ([]StringPoint, error) {
 	return a, nil
 }
 
-// unsignedStreamStringIterator streams inputs into the iterator and emits points gradually.
+// unsignedStreamStringIterator streams Inputs into the iterator and emits points gradually.
 type unsignedStreamStringIterator struct {
 	input  *bufUnsignedIterator
 	create func() (UnsignedPointAggregator, StringPointEmitter)
@@ -7279,14 +7279,14 @@ func (itr *unsignedStreamStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *unsignedStreamStringIterator) reduce() ([]StringPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -7294,7 +7294,7 @@ func (itr *unsignedStreamStringIterator) reduce() ([]StringPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -7397,7 +7397,7 @@ func (itr *unsignedReduceBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -7411,7 +7411,7 @@ type unsignedReduceBooleanPoint struct {
 	Emitter    BooleanPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *unsignedReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Calculate next window.
@@ -7430,7 +7430,7 @@ func (itr *unsignedReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -7440,7 +7440,7 @@ func (itr *unsignedReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*unsignedReduceBooleanPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -7453,7 +7453,7 @@ func (itr *unsignedReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -7462,7 +7462,7 @@ func (itr *unsignedReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -7521,7 +7521,7 @@ func (itr *unsignedReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	return a, nil
 }
 
-// unsignedStreamBooleanIterator streams inputs into the iterator and emits points gradually.
+// unsignedStreamBooleanIterator streams Inputs into the iterator and emits points gradually.
 type unsignedStreamBooleanIterator struct {
 	input  *bufUnsignedIterator
 	create func() (UnsignedPointAggregator, BooleanPointEmitter)
@@ -7559,14 +7559,14 @@ func (itr *unsignedStreamBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *unsignedStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -7574,7 +7574,7 @@ func (itr *unsignedStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -7825,10 +7825,10 @@ func (itr *unsignedDedupeIterator) Stats() IteratorStats { return itr.input.Stat
 // Close closes the iterator and all child iterators.
 func (itr *unsignedDedupeIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next unique point from the input iterator.
+// Next returns the next unique Point from the input iterator.
 func (itr *unsignedDedupeIterator) Next() (*UnsignedPoint, error) {
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p == nil || err != nil {
 			return nil, err
@@ -7840,12 +7840,12 @@ func (itr *unsignedDedupeIterator) Next() (*UnsignedPoint, error) {
 			return nil, err
 		}
 
-		// If the point has already been output then move to the next point.
+		// If the Point has already been output then move to the next Point.
 		if _, ok := itr.m[string(buf)]; ok {
 			continue
 		}
 
-		// Otherwise mark it as emitted and return point.
+		// Otherwise mark it as emitted and return Point.
 		itr.m[string(buf)] = struct{}{}
 		return p, nil
 	}
@@ -7879,11 +7879,11 @@ func (itr *unsignedReaderIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *unsignedReaderIterator) Next() (*UnsignedPoint, error) {
-	// OPTIMIZE(benbjohnson): Reuse point on iterator.
+	// OPTIMIZE(benbjohnson): Reuse Point on iterator.
 
-	// Unmarshal next point.
+	// Unmarshal next Point.
 	p := &UnsignedPoint{}
 	if err := itr.dec.DecodeUnsignedPoint(p); err == io.EOF {
 		return nil, nil
@@ -7932,7 +7932,7 @@ func (itr *bufStringIterator) Stats() IteratorStats { return itr.itr.Stats() }
 // Close closes the underlying iterator.
 func (itr *bufStringIterator) Close() error { return itr.itr.Close() }
 
-// peek returns the next point without removing it from the iterator.
+// peek returns the next Point without removing it from the iterator.
 func (itr *bufStringIterator) peek() (*StringPoint, error) {
 	p, err := itr.Next()
 	if err != nil {
@@ -7942,7 +7942,7 @@ func (itr *bufStringIterator) peek() (*StringPoint, error) {
 	return p, nil
 }
 
-// peekTime returns the time of the next point.
+// peekTime returns the time of the next Point.
 // Returns zero time if no more points available.
 func (itr *bufStringIterator) peekTime() (int64, error) {
 	p, err := itr.peek()
@@ -8007,12 +8007,12 @@ func newStringMergeIterator(inputs []StringIterator, opt IteratorOptions) *strin
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Wrap in buffer, ignore any inputs without anymore points.
+		// Wrap in buffer, ignore any Inputs without anymore points.
 		bufInput := newBufStringIterator(input)
 
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &stringMergeHeapItem{itr: bufInput})
 	}
 
@@ -8043,7 +8043,7 @@ func (itr *stringMergeIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *stringMergeIterator) Next() (*StringPoint, error) {
 	itr.mu.RLock()
 	defer itr.mu.RUnlock()
@@ -8051,11 +8051,11 @@ func (itr *stringMergeIterator) Next() (*StringPoint, error) {
 		return nil, nil
 	}
 
-	// Initialize the heap. This needs to be done lazily on the first call to this iterator
+	// Initialize the Heap. This needs to be done lazily on the first call to this iterator
 	// so that iterator initialization done through the Select() call returns quickly.
 	// Queries can only be interrupted after the Select() call completes so any operations
 	// done during iterator creation cannot be interrupted, which is why we do it here
-	// instead so an interrupt can happen while initializing the heap.
+	// instead so an interrupt can happen while initializing the Heap.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*stringMergeHeapItem, 0, len(items))
@@ -8079,7 +8079,7 @@ func (itr *stringMergeIterator) Next() (*StringPoint, error) {
 			}
 			itr.curr = heap.Pop(itr.heap).(*stringMergeHeapItem)
 
-			// Read point and set current window.
+			// Read Point and set current window.
 			p, err := itr.curr.itr.Next()
 			if err != nil {
 				return nil, err
@@ -8090,19 +8090,19 @@ func (itr *stringMergeIterator) Next() (*StringPoint, error) {
 			return p, nil
 		}
 
-		// Read the next point from the current iterator.
+		// Read the next Point from the current iterator.
 		p, err := itr.curr.itr.Next()
 		if err != nil {
 			return nil, err
 		}
 
-		// If there are no more points then remove iterator from heap and find next.
+		// If there are no more points then remove iterator from Heap and find next.
 		if p == nil {
 			itr.curr = nil
 			continue
 		}
 
-		// Check if the point is inside of our current window.
+		// Check if the Point is inside of our current window.
 		inWindow := true
 		if window := itr.window; window.name != p.Name {
 			inWindow = false
@@ -8114,7 +8114,7 @@ func (itr *stringMergeIterator) Next() (*StringPoint, error) {
 			inWindow = false
 		}
 
-		// If it's outside our window then push iterator back on the heap and find new iterator.
+		// If it's outside our window then push iterator back on the Heap and find new iterator.
 		if !inWindow {
 			itr.curr.itr.unread(p)
 			heap.Push(itr.heap, itr.curr)
@@ -8126,7 +8126,7 @@ func (itr *stringMergeIterator) Next() (*StringPoint, error) {
 	}
 }
 
-// stringMergeHeap represents a heap of stringMergeHeapItems.
+// stringMergeHeap represents a Heap of stringMergeHeapItems.
 // Items are sorted by their next window and then by name/tags.
 type stringMergeHeap struct {
 	opt   IteratorOptions
@@ -8201,9 +8201,9 @@ func newStringSortedMergeIterator(inputs []StringIterator, opt IteratorOptions) 
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &stringSortedMergeHeapItem{itr: input})
 	}
 
@@ -8230,10 +8230,10 @@ func (itr *stringSortedMergeIterator) Close() error {
 // Next returns the next points from the iterator.
 func (itr *stringSortedMergeIterator) Next() (*StringPoint, error) { return itr.pop() }
 
-// pop returns the next point from the heap.
-// Reads the next point from item's cursor and puts it back on the heap.
+// pop returns the next Point from the Heap.
+// Reads the next Point from item's cursor and puts it back on the Heap.
 func (itr *stringSortedMergeIterator) pop() (*StringPoint, error) {
-	// Initialize the heap. See the MergeIterator to see why this has to be done lazily.
+	// Initialize the Heap. See the MergeIterator to see why this has to be done lazily.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*stringSortedMergeHeapItem, 0, len(items))
@@ -8254,7 +8254,7 @@ func (itr *stringSortedMergeIterator) pop() (*StringPoint, error) {
 		return nil, nil
 	}
 
-	// Read the next item from the heap.
+	// Read the next item from the Heap.
 	item := heap.Pop(itr.heap).(*stringSortedMergeHeapItem)
 	if item.err != nil {
 		return nil, item.err
@@ -8262,10 +8262,10 @@ func (itr *stringSortedMergeIterator) pop() (*StringPoint, error) {
 		return nil, nil
 	}
 
-	// Copy the point for return.
+	// Copy the Point for return.
 	p := item.point.Clone()
 
-	// Read the next item from the cursor. Push back to heap if one exists.
+	// Read the next item from the cursor. Push back to Heap if one exists.
 	if item.point, item.err = item.itr.Next(); item.point != nil {
 		heap.Push(itr.heap, item)
 	}
@@ -8273,7 +8273,7 @@ func (itr *stringSortedMergeIterator) pop() (*StringPoint, error) {
 	return p, nil
 }
 
-// stringSortedMergeHeap represents a heap of stringSortedMergeHeapItems.
+// stringSortedMergeHeap represents a Heap of stringSortedMergeHeapItems.
 // Items are sorted with the following priority:
 //     - By their measurement name;
 //     - By their tag keys/values;
@@ -8484,7 +8484,7 @@ func (itr *stringParallelIterator) Close() error {
 	return itr.input.Close()
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *stringParallelIterator) Next() (*StringPoint, error) {
 	v, ok := <-itr.ch
 	if !ok {
@@ -8493,13 +8493,13 @@ func (itr *stringParallelIterator) Next() (*StringPoint, error) {
 	return v.point, v.err
 }
 
-// monitor runs in a separate goroutine and actively pulls the next point.
+// monitor runs in a separate goroutine and actively pulls the next Point.
 func (itr *stringParallelIterator) monitor() {
 	defer close(itr.ch)
 	defer itr.wg.Done()
 
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p != nil {
 			p = p.Clone()
@@ -8544,7 +8544,7 @@ func (itr *stringLimitIterator) Stats() IteratorStats { return itr.input.Stats()
 // Close closes the underlying iterators.
 func (itr *stringLimitIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *stringLimitIterator) Next() (*StringPoint, error) {
 	for {
 		p, err := itr.input.Next()
@@ -8562,12 +8562,12 @@ func (itr *stringLimitIterator) Next() (*StringPoint, error) {
 		// Increment counter.
 		itr.n++
 
-		// Read next point if not beyond the offset.
+		// Read next Point if not beyond the offset.
 		if itr.n <= itr.opt.Offset {
 			continue
 		}
 
-		// Read next point if we're beyond the limit.
+		// Read next Point if we're beyond the limit.
 		if itr.opt.Limit > 0 && (itr.n-itr.opt.Offset) > itr.opt.Limit {
 			continue
 		}
@@ -8650,10 +8650,10 @@ func (itr *stringFillIterator) Next() (*StringPoint, error) {
 		return nil, err
 	}
 
-	// Check if the next point is outside of our window or is nil.
+	// Check if the next Point is outside of our window or is nil.
 	if p == nil || p.Name != itr.window.name || p.Tags.ID() != itr.window.tags.ID() {
-		// If we are inside of an interval, unread the point and continue below to
-		// constructing a new point.
+		// If we are inside of an interval, unread the Point and continue below to
+		// constructing a new Point.
 		if itr.opt.Ascending && itr.window.time <= itr.endTime {
 			itr.input.unread(p)
 			p = nil
@@ -8664,7 +8664,7 @@ func (itr *stringFillIterator) Next() (*StringPoint, error) {
 			goto CONSTRUCT
 		}
 
-		// We are *not* in a current interval. If there is no next point,
+		// We are *not* in a current interval. If there is no next Point,
 		// we are at the end of all intervals.
 		if p == nil {
 			return nil, nil
@@ -8682,7 +8682,7 @@ func (itr *stringFillIterator) Next() (*StringPoint, error) {
 		itr.prev = StringPoint{Nil: true}
 	}
 
-	// Check if the point is our next expected point.
+	// Check if the Point is our next expected Point.
 CONSTRUCT:
 	if p == nil || (itr.opt.Ascending && p.Time > itr.window.time) || (!itr.opt.Ascending && p.Time < itr.window.time) {
 		if p != nil {
@@ -8782,19 +8782,19 @@ func (itr *stringInterruptIterator) Close() error         { return itr.input.Clo
 func (itr *stringInterruptIterator) Next() (*StringPoint, error) {
 	// Only check if the channel is closed every N points. This
 	// intentionally checks on both 0 and N so that if the iterator
-	// has been interrupted before the first point is emitted it will
+	// has been interrupted before the first Point is emitted it will
 	// not emit any points.
 	if itr.count&0xFF == 0xFF {
 		select {
 		case <-itr.closing:
 			return nil, itr.Close()
 		default:
-			// Reset iterator count to zero and fall through to emit the next point.
+			// Reset iterator count to zero and fall through to emit the next Point.
 			itr.count = 0
 		}
 	}
 
-	// Increment the counter for every point read.
+	// Increment the counter for every Point read.
 	itr.count++
 	return itr.input.Next()
 }
@@ -8887,7 +8887,7 @@ func (itr *stringReduceFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -8901,7 +8901,7 @@ type stringReduceFloatPoint struct {
 	Emitter    FloatPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *stringReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Calculate next window.
@@ -8920,7 +8920,7 @@ func (itr *stringReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -8930,7 +8930,7 @@ func (itr *stringReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*stringReduceFloatPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -8943,7 +8943,7 @@ func (itr *stringReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -8952,7 +8952,7 @@ func (itr *stringReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -9011,7 +9011,7 @@ func (itr *stringReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	return a, nil
 }
 
-// stringStreamFloatIterator streams inputs into the iterator and emits points gradually.
+// stringStreamFloatIterator streams Inputs into the iterator and emits points gradually.
 type stringStreamFloatIterator struct {
 	input  *bufStringIterator
 	create func() (StringPointAggregator, FloatPointEmitter)
@@ -9049,14 +9049,14 @@ func (itr *stringStreamFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *stringStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -9064,7 +9064,7 @@ func (itr *stringStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -9167,7 +9167,7 @@ func (itr *stringReduceIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -9181,7 +9181,7 @@ type stringReduceIntegerPoint struct {
 	Emitter    IntegerPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *stringReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Calculate next window.
@@ -9200,7 +9200,7 @@ func (itr *stringReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -9210,7 +9210,7 @@ func (itr *stringReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*stringReduceIntegerPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -9223,7 +9223,7 @@ func (itr *stringReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -9232,7 +9232,7 @@ func (itr *stringReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -9291,7 +9291,7 @@ func (itr *stringReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	return a, nil
 }
 
-// stringStreamIntegerIterator streams inputs into the iterator and emits points gradually.
+// stringStreamIntegerIterator streams Inputs into the iterator and emits points gradually.
 type stringStreamIntegerIterator struct {
 	input  *bufStringIterator
 	create func() (StringPointAggregator, IntegerPointEmitter)
@@ -9329,14 +9329,14 @@ func (itr *stringStreamIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *stringStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -9344,7 +9344,7 @@ func (itr *stringStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -9447,7 +9447,7 @@ func (itr *stringReduceUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -9461,7 +9461,7 @@ type stringReduceUnsignedPoint struct {
 	Emitter    UnsignedPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *stringReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Calculate next window.
@@ -9480,7 +9480,7 @@ func (itr *stringReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -9490,7 +9490,7 @@ func (itr *stringReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*stringReduceUnsignedPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -9503,7 +9503,7 @@ func (itr *stringReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -9512,7 +9512,7 @@ func (itr *stringReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -9571,7 +9571,7 @@ func (itr *stringReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	return a, nil
 }
 
-// stringStreamUnsignedIterator streams inputs into the iterator and emits points gradually.
+// stringStreamUnsignedIterator streams Inputs into the iterator and emits points gradually.
 type stringStreamUnsignedIterator struct {
 	input  *bufStringIterator
 	create func() (StringPointAggregator, UnsignedPointEmitter)
@@ -9609,14 +9609,14 @@ func (itr *stringStreamUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *stringStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -9624,7 +9624,7 @@ func (itr *stringStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -9727,7 +9727,7 @@ func (itr *stringReduceStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -9741,7 +9741,7 @@ type stringReduceStringPoint struct {
 	Emitter    StringPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *stringReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Calculate next window.
@@ -9760,7 +9760,7 @@ func (itr *stringReduceStringIterator) reduce() ([]StringPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -9770,7 +9770,7 @@ func (itr *stringReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*stringReduceStringPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -9783,7 +9783,7 @@ func (itr *stringReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -9792,7 +9792,7 @@ func (itr *stringReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -9851,7 +9851,7 @@ func (itr *stringReduceStringIterator) reduce() ([]StringPoint, error) {
 	return a, nil
 }
 
-// stringStreamStringIterator streams inputs into the iterator and emits points gradually.
+// stringStreamStringIterator streams Inputs into the iterator and emits points gradually.
 type stringStreamStringIterator struct {
 	input  *bufStringIterator
 	create func() (StringPointAggregator, StringPointEmitter)
@@ -9889,14 +9889,14 @@ func (itr *stringStreamStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *stringStreamStringIterator) reduce() ([]StringPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -9904,7 +9904,7 @@ func (itr *stringStreamStringIterator) reduce() ([]StringPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -10007,7 +10007,7 @@ func (itr *stringReduceBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -10021,7 +10021,7 @@ type stringReduceBooleanPoint struct {
 	Emitter    BooleanPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *stringReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Calculate next window.
@@ -10040,7 +10040,7 @@ func (itr *stringReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -10050,7 +10050,7 @@ func (itr *stringReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*stringReduceBooleanPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -10063,7 +10063,7 @@ func (itr *stringReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -10072,7 +10072,7 @@ func (itr *stringReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -10131,7 +10131,7 @@ func (itr *stringReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	return a, nil
 }
 
-// stringStreamBooleanIterator streams inputs into the iterator and emits points gradually.
+// stringStreamBooleanIterator streams Inputs into the iterator and emits points gradually.
 type stringStreamBooleanIterator struct {
 	input  *bufStringIterator
 	create func() (StringPointAggregator, BooleanPointEmitter)
@@ -10169,14 +10169,14 @@ func (itr *stringStreamBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *stringStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -10184,7 +10184,7 @@ func (itr *stringStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -10435,10 +10435,10 @@ func (itr *stringDedupeIterator) Stats() IteratorStats { return itr.input.Stats(
 // Close closes the iterator and all child iterators.
 func (itr *stringDedupeIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next unique point from the input iterator.
+// Next returns the next unique Point from the input iterator.
 func (itr *stringDedupeIterator) Next() (*StringPoint, error) {
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p == nil || err != nil {
 			return nil, err
@@ -10450,12 +10450,12 @@ func (itr *stringDedupeIterator) Next() (*StringPoint, error) {
 			return nil, err
 		}
 
-		// If the point has already been output then move to the next point.
+		// If the Point has already been output then move to the next Point.
 		if _, ok := itr.m[string(buf)]; ok {
 			continue
 		}
 
-		// Otherwise mark it as emitted and return point.
+		// Otherwise mark it as emitted and return Point.
 		itr.m[string(buf)] = struct{}{}
 		return p, nil
 	}
@@ -10489,11 +10489,11 @@ func (itr *stringReaderIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *stringReaderIterator) Next() (*StringPoint, error) {
-	// OPTIMIZE(benbjohnson): Reuse point on iterator.
+	// OPTIMIZE(benbjohnson): Reuse Point on iterator.
 
-	// Unmarshal next point.
+	// Unmarshal next Point.
 	p := &StringPoint{}
 	if err := itr.dec.DecodeStringPoint(p); err == io.EOF {
 		return nil, nil
@@ -10542,7 +10542,7 @@ func (itr *bufBooleanIterator) Stats() IteratorStats { return itr.itr.Stats() }
 // Close closes the underlying iterator.
 func (itr *bufBooleanIterator) Close() error { return itr.itr.Close() }
 
-// peek returns the next point without removing it from the iterator.
+// peek returns the next Point without removing it from the iterator.
 func (itr *bufBooleanIterator) peek() (*BooleanPoint, error) {
 	p, err := itr.Next()
 	if err != nil {
@@ -10552,7 +10552,7 @@ func (itr *bufBooleanIterator) peek() (*BooleanPoint, error) {
 	return p, nil
 }
 
-// peekTime returns the time of the next point.
+// peekTime returns the time of the next Point.
 // Returns zero time if no more points available.
 func (itr *bufBooleanIterator) peekTime() (int64, error) {
 	p, err := itr.peek()
@@ -10617,12 +10617,12 @@ func newBooleanMergeIterator(inputs []BooleanIterator, opt IteratorOptions) *boo
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Wrap in buffer, ignore any inputs without anymore points.
+		// Wrap in buffer, ignore any Inputs without anymore points.
 		bufInput := newBufBooleanIterator(input)
 
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &booleanMergeHeapItem{itr: bufInput})
 	}
 
@@ -10653,7 +10653,7 @@ func (itr *booleanMergeIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *booleanMergeIterator) Next() (*BooleanPoint, error) {
 	itr.mu.RLock()
 	defer itr.mu.RUnlock()
@@ -10661,11 +10661,11 @@ func (itr *booleanMergeIterator) Next() (*BooleanPoint, error) {
 		return nil, nil
 	}
 
-	// Initialize the heap. This needs to be done lazily on the first call to this iterator
+	// Initialize the Heap. This needs to be done lazily on the first call to this iterator
 	// so that iterator initialization done through the Select() call returns quickly.
 	// Queries can only be interrupted after the Select() call completes so any operations
 	// done during iterator creation cannot be interrupted, which is why we do it here
-	// instead so an interrupt can happen while initializing the heap.
+	// instead so an interrupt can happen while initializing the Heap.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*booleanMergeHeapItem, 0, len(items))
@@ -10689,7 +10689,7 @@ func (itr *booleanMergeIterator) Next() (*BooleanPoint, error) {
 			}
 			itr.curr = heap.Pop(itr.heap).(*booleanMergeHeapItem)
 
-			// Read point and set current window.
+			// Read Point and set current window.
 			p, err := itr.curr.itr.Next()
 			if err != nil {
 				return nil, err
@@ -10700,19 +10700,19 @@ func (itr *booleanMergeIterator) Next() (*BooleanPoint, error) {
 			return p, nil
 		}
 
-		// Read the next point from the current iterator.
+		// Read the next Point from the current iterator.
 		p, err := itr.curr.itr.Next()
 		if err != nil {
 			return nil, err
 		}
 
-		// If there are no more points then remove iterator from heap and find next.
+		// If there are no more points then remove iterator from Heap and find next.
 		if p == nil {
 			itr.curr = nil
 			continue
 		}
 
-		// Check if the point is inside of our current window.
+		// Check if the Point is inside of our current window.
 		inWindow := true
 		if window := itr.window; window.name != p.Name {
 			inWindow = false
@@ -10724,7 +10724,7 @@ func (itr *booleanMergeIterator) Next() (*BooleanPoint, error) {
 			inWindow = false
 		}
 
-		// If it's outside our window then push iterator back on the heap and find new iterator.
+		// If it's outside our window then push iterator back on the Heap and find new iterator.
 		if !inWindow {
 			itr.curr.itr.unread(p)
 			heap.Push(itr.heap, itr.curr)
@@ -10736,7 +10736,7 @@ func (itr *booleanMergeIterator) Next() (*BooleanPoint, error) {
 	}
 }
 
-// booleanMergeHeap represents a heap of booleanMergeHeapItems.
+// booleanMergeHeap represents a Heap of booleanMergeHeapItems.
 // Items are sorted by their next window and then by name/tags.
 type booleanMergeHeap struct {
 	opt   IteratorOptions
@@ -10811,9 +10811,9 @@ func newBooleanSortedMergeIterator(inputs []BooleanIterator, opt IteratorOptions
 		},
 	}
 
-	// Initialize heap items.
+	// Initialize Heap Items.
 	for _, input := range inputs {
-		// Append to the heap.
+		// Append to the Heap.
 		itr.heap.items = append(itr.heap.items, &booleanSortedMergeHeapItem{itr: input})
 	}
 
@@ -10840,10 +10840,10 @@ func (itr *booleanSortedMergeIterator) Close() error {
 // Next returns the next points from the iterator.
 func (itr *booleanSortedMergeIterator) Next() (*BooleanPoint, error) { return itr.pop() }
 
-// pop returns the next point from the heap.
-// Reads the next point from item's cursor and puts it back on the heap.
+// pop returns the next Point from the Heap.
+// Reads the next Point from item's cursor and puts it back on the Heap.
 func (itr *booleanSortedMergeIterator) pop() (*BooleanPoint, error) {
-	// Initialize the heap. See the MergeIterator to see why this has to be done lazily.
+	// Initialize the Heap. See the MergeIterator to see why this has to be done lazily.
 	if !itr.init {
 		items := itr.heap.items
 		itr.heap.items = make([]*booleanSortedMergeHeapItem, 0, len(items))
@@ -10864,7 +10864,7 @@ func (itr *booleanSortedMergeIterator) pop() (*BooleanPoint, error) {
 		return nil, nil
 	}
 
-	// Read the next item from the heap.
+	// Read the next item from the Heap.
 	item := heap.Pop(itr.heap).(*booleanSortedMergeHeapItem)
 	if item.err != nil {
 		return nil, item.err
@@ -10872,10 +10872,10 @@ func (itr *booleanSortedMergeIterator) pop() (*BooleanPoint, error) {
 		return nil, nil
 	}
 
-	// Copy the point for return.
+	// Copy the Point for return.
 	p := item.point.Clone()
 
-	// Read the next item from the cursor. Push back to heap if one exists.
+	// Read the next item from the cursor. Push back to Heap if one exists.
 	if item.point, item.err = item.itr.Next(); item.point != nil {
 		heap.Push(itr.heap, item)
 	}
@@ -10883,7 +10883,7 @@ func (itr *booleanSortedMergeIterator) pop() (*BooleanPoint, error) {
 	return p, nil
 }
 
-// booleanSortedMergeHeap represents a heap of booleanSortedMergeHeapItems.
+// booleanSortedMergeHeap represents a Heap of booleanSortedMergeHeapItems.
 // Items are sorted with the following priority:
 //     - By their measurement name;
 //     - By their tag keys/values;
@@ -11094,7 +11094,7 @@ func (itr *booleanParallelIterator) Close() error {
 	return itr.input.Close()
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *booleanParallelIterator) Next() (*BooleanPoint, error) {
 	v, ok := <-itr.ch
 	if !ok {
@@ -11103,13 +11103,13 @@ func (itr *booleanParallelIterator) Next() (*BooleanPoint, error) {
 	return v.point, v.err
 }
 
-// monitor runs in a separate goroutine and actively pulls the next point.
+// monitor runs in a separate goroutine and actively pulls the next Point.
 func (itr *booleanParallelIterator) monitor() {
 	defer close(itr.ch)
 	defer itr.wg.Done()
 
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p != nil {
 			p = p.Clone()
@@ -11154,7 +11154,7 @@ func (itr *booleanLimitIterator) Stats() IteratorStats { return itr.input.Stats(
 // Close closes the underlying iterators.
 func (itr *booleanLimitIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *booleanLimitIterator) Next() (*BooleanPoint, error) {
 	for {
 		p, err := itr.input.Next()
@@ -11172,12 +11172,12 @@ func (itr *booleanLimitIterator) Next() (*BooleanPoint, error) {
 		// Increment counter.
 		itr.n++
 
-		// Read next point if not beyond the offset.
+		// Read next Point if not beyond the offset.
 		if itr.n <= itr.opt.Offset {
 			continue
 		}
 
-		// Read next point if we're beyond the limit.
+		// Read next Point if we're beyond the limit.
 		if itr.opt.Limit > 0 && (itr.n-itr.opt.Offset) > itr.opt.Limit {
 			continue
 		}
@@ -11260,10 +11260,10 @@ func (itr *booleanFillIterator) Next() (*BooleanPoint, error) {
 		return nil, err
 	}
 
-	// Check if the next point is outside of our window or is nil.
+	// Check if the next Point is outside of our window or is nil.
 	if p == nil || p.Name != itr.window.name || p.Tags.ID() != itr.window.tags.ID() {
-		// If we are inside of an interval, unread the point and continue below to
-		// constructing a new point.
+		// If we are inside of an interval, unread the Point and continue below to
+		// constructing a new Point.
 		if itr.opt.Ascending && itr.window.time <= itr.endTime {
 			itr.input.unread(p)
 			p = nil
@@ -11274,7 +11274,7 @@ func (itr *booleanFillIterator) Next() (*BooleanPoint, error) {
 			goto CONSTRUCT
 		}
 
-		// We are *not* in a current interval. If there is no next point,
+		// We are *not* in a current interval. If there is no next Point,
 		// we are at the end of all intervals.
 		if p == nil {
 			return nil, nil
@@ -11292,7 +11292,7 @@ func (itr *booleanFillIterator) Next() (*BooleanPoint, error) {
 		itr.prev = BooleanPoint{Nil: true}
 	}
 
-	// Check if the point is our next expected point.
+	// Check if the Point is our next expected Point.
 CONSTRUCT:
 	if p == nil || (itr.opt.Ascending && p.Time > itr.window.time) || (!itr.opt.Ascending && p.Time < itr.window.time) {
 		if p != nil {
@@ -11392,19 +11392,19 @@ func (itr *booleanInterruptIterator) Close() error         { return itr.input.Cl
 func (itr *booleanInterruptIterator) Next() (*BooleanPoint, error) {
 	// Only check if the channel is closed every N points. This
 	// intentionally checks on both 0 and N so that if the iterator
-	// has been interrupted before the first point is emitted it will
+	// has been interrupted before the first Point is emitted it will
 	// not emit any points.
 	if itr.count&0xFF == 0xFF {
 		select {
 		case <-itr.closing:
 			return nil, itr.Close()
 		default:
-			// Reset iterator count to zero and fall through to emit the next point.
+			// Reset iterator count to zero and fall through to emit the next Point.
 			itr.count = 0
 		}
 	}
 
-	// Increment the counter for every point read.
+	// Increment the counter for every Point read.
 	itr.count++
 	return itr.input.Next()
 }
@@ -11497,7 +11497,7 @@ func (itr *booleanReduceFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -11511,7 +11511,7 @@ type booleanReduceFloatPoint struct {
 	Emitter    FloatPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *booleanReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Calculate next window.
@@ -11530,7 +11530,7 @@ func (itr *booleanReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -11540,7 +11540,7 @@ func (itr *booleanReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*booleanReduceFloatPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -11553,7 +11553,7 @@ func (itr *booleanReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -11562,7 +11562,7 @@ func (itr *booleanReduceFloatIterator) reduce() ([]FloatPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -11621,7 +11621,7 @@ func (itr *booleanReduceFloatIterator) reduce() ([]FloatPoint, error) {
 	return a, nil
 }
 
-// booleanStreamFloatIterator streams inputs into the iterator and emits points gradually.
+// booleanStreamFloatIterator streams Inputs into the iterator and emits points gradually.
 type booleanStreamFloatIterator struct {
 	input  *bufBooleanIterator
 	create func() (BooleanPointAggregator, FloatPointEmitter)
@@ -11659,14 +11659,14 @@ func (itr *booleanStreamFloatIterator) Next() (*FloatPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *booleanStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -11674,7 +11674,7 @@ func (itr *booleanStreamFloatIterator) reduce() ([]FloatPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -11777,7 +11777,7 @@ func (itr *booleanReduceIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -11791,7 +11791,7 @@ type booleanReduceIntegerPoint struct {
 	Emitter    IntegerPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *booleanReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Calculate next window.
@@ -11810,7 +11810,7 @@ func (itr *booleanReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -11820,7 +11820,7 @@ func (itr *booleanReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*booleanReduceIntegerPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -11833,7 +11833,7 @@ func (itr *booleanReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -11842,7 +11842,7 @@ func (itr *booleanReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -11901,7 +11901,7 @@ func (itr *booleanReduceIntegerIterator) reduce() ([]IntegerPoint, error) {
 	return a, nil
 }
 
-// booleanStreamIntegerIterator streams inputs into the iterator and emits points gradually.
+// booleanStreamIntegerIterator streams Inputs into the iterator and emits points gradually.
 type booleanStreamIntegerIterator struct {
 	input  *bufBooleanIterator
 	create func() (BooleanPointAggregator, IntegerPointEmitter)
@@ -11939,14 +11939,14 @@ func (itr *booleanStreamIntegerIterator) Next() (*IntegerPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *booleanStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -11954,7 +11954,7 @@ func (itr *booleanStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -12057,7 +12057,7 @@ func (itr *booleanReduceUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -12071,7 +12071,7 @@ type booleanReduceUnsignedPoint struct {
 	Emitter    UnsignedPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *booleanReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Calculate next window.
@@ -12090,7 +12090,7 @@ func (itr *booleanReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -12100,7 +12100,7 @@ func (itr *booleanReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*booleanReduceUnsignedPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -12113,7 +12113,7 @@ func (itr *booleanReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -12122,7 +12122,7 @@ func (itr *booleanReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -12181,7 +12181,7 @@ func (itr *booleanReduceUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	return a, nil
 }
 
-// booleanStreamUnsignedIterator streams inputs into the iterator and emits points gradually.
+// booleanStreamUnsignedIterator streams Inputs into the iterator and emits points gradually.
 type booleanStreamUnsignedIterator struct {
 	input  *bufBooleanIterator
 	create func() (BooleanPointAggregator, UnsignedPointEmitter)
@@ -12219,14 +12219,14 @@ func (itr *booleanStreamUnsignedIterator) Next() (*UnsignedPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *booleanStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -12234,7 +12234,7 @@ func (itr *booleanStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -12337,7 +12337,7 @@ func (itr *booleanReduceStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -12351,7 +12351,7 @@ type booleanReduceStringPoint struct {
 	Emitter    StringPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *booleanReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Calculate next window.
@@ -12370,7 +12370,7 @@ func (itr *booleanReduceStringIterator) reduce() ([]StringPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -12380,7 +12380,7 @@ func (itr *booleanReduceStringIterator) reduce() ([]StringPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*booleanReduceStringPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -12393,7 +12393,7 @@ func (itr *booleanReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -12402,7 +12402,7 @@ func (itr *booleanReduceStringIterator) reduce() ([]StringPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -12461,7 +12461,7 @@ func (itr *booleanReduceStringIterator) reduce() ([]StringPoint, error) {
 	return a, nil
 }
 
-// booleanStreamStringIterator streams inputs into the iterator and emits points gradually.
+// booleanStreamStringIterator streams Inputs into the iterator and emits points gradually.
 type booleanStreamStringIterator struct {
 	input  *bufBooleanIterator
 	create func() (BooleanPointAggregator, StringPointEmitter)
@@ -12499,14 +12499,14 @@ func (itr *booleanStreamStringIterator) Next() (*StringPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *booleanStreamStringIterator) reduce() ([]StringPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -12514,7 +12514,7 @@ func (itr *booleanStreamStringIterator) reduce() ([]StringPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -12617,7 +12617,7 @@ func (itr *booleanReduceBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
@@ -12631,7 +12631,7 @@ type booleanReduceBooleanPoint struct {
 	Emitter    BooleanPointEmitter
 }
 
-// reduce executes fn once for every point in the next window.
+// reduce executes fn once for every Point in the next window.
 // The previous value for the dimension is passed to fn.
 func (itr *booleanReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Calculate next window.
@@ -12650,7 +12650,7 @@ func (itr *booleanReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			continue
 		}
 
-		// Unread the point so it can be processed.
+		// Unread the Point so it can be processed.
 		itr.input.unread(p)
 		startTime, endTime = itr.opt.Window(p.Time)
 		window.name, window.tags = p.Name, p.Tags.Subset(itr.opt.Dimensions).ID()
@@ -12660,7 +12660,7 @@ func (itr *booleanReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// Create points by tags.
 	m := make(map[string]*booleanReduceBooleanPoint)
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.NextInWindow(startTime, endTime)
 		if err != nil {
 			return nil, err
@@ -12673,7 +12673,7 @@ func (itr *booleanReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Ensure this point is within the same final window.
+		// Ensure this Point is within the same final window.
 		if curr.Name != window.name {
 			itr.input.unread(curr)
 			break
@@ -12682,7 +12682,7 @@ func (itr *booleanReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 			break
 		}
 
-		// Retrieve the tags on this point for this level of the query.
+		// Retrieve the tags on this Point for this level of the query.
 		// This may be different than the bucket dimensions.
 		tags := curr.Tags.Subset(itr.dims)
 		id := tags.ID()
@@ -12741,7 +12741,7 @@ func (itr *booleanReduceBooleanIterator) reduce() ([]BooleanPoint, error) {
 	return a, nil
 }
 
-// booleanStreamBooleanIterator streams inputs into the iterator and emits points gradually.
+// booleanStreamBooleanIterator streams Inputs into the iterator and emits points gradually.
 type booleanStreamBooleanIterator struct {
 	input  *bufBooleanIterator
 	create func() (BooleanPointAggregator, BooleanPointEmitter)
@@ -12779,14 +12779,14 @@ func (itr *booleanStreamBooleanIterator) Next() (*BooleanPoint, error) {
 		}
 	}
 
-	// Pop next point off the stack.
+	// Pop next Point off the stack.
 	p := &itr.points[len(itr.points)-1]
 	itr.points = itr.points[:len(itr.points)-1]
 	return p, nil
 }
 
-// reduce creates and manages aggregators for every point from the input.
-// After aggregating a point, it always tries to emit a value using the emitter.
+// reduce creates and manages aggregators for every Point from the input.
+// After aggregating a Point, it always tries to emit a value using the emitter.
 func (itr *booleanStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	// We have already read all of the input points.
 	if itr.m == nil {
@@ -12794,7 +12794,7 @@ func (itr *booleanStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 	}
 
 	for {
-		// Read next point.
+		// Read next Point.
 		curr, err := itr.input.Next()
 		if err != nil {
 			return nil, err
@@ -13045,10 +13045,10 @@ func (itr *booleanDedupeIterator) Stats() IteratorStats { return itr.input.Stats
 // Close closes the iterator and all child iterators.
 func (itr *booleanDedupeIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next unique point from the input iterator.
+// Next returns the next unique Point from the input iterator.
 func (itr *booleanDedupeIterator) Next() (*BooleanPoint, error) {
 	for {
-		// Read next point.
+		// Read next Point.
 		p, err := itr.input.Next()
 		if p == nil || err != nil {
 			return nil, err
@@ -13060,12 +13060,12 @@ func (itr *booleanDedupeIterator) Next() (*BooleanPoint, error) {
 			return nil, err
 		}
 
-		// If the point has already been output then move to the next point.
+		// If the Point has already been output then move to the next Point.
 		if _, ok := itr.m[string(buf)]; ok {
 			continue
 		}
 
-		// Otherwise mark it as emitted and return point.
+		// Otherwise mark it as emitted and return Point.
 		itr.m[string(buf)] = struct{}{}
 		return p, nil
 	}
@@ -13099,11 +13099,11 @@ func (itr *booleanReaderIterator) Close() error {
 	return nil
 }
 
-// Next returns the next point from the iterator.
+// Next returns the next Point from the iterator.
 func (itr *booleanReaderIterator) Next() (*BooleanPoint, error) {
-	// OPTIMIZE(benbjohnson): Reuse point on iterator.
+	// OPTIMIZE(benbjohnson): Reuse Point on iterator.
 
-	// Unmarshal next point.
+	// Unmarshal next Point.
 	p := &BooleanPoint{}
 	if err := itr.dec.DecodeBooleanPoint(p); err == io.EOF {
 		return nil, nil
@@ -13113,7 +13113,7 @@ func (itr *booleanReaderIterator) Next() (*BooleanPoint, error) {
 	return p, nil
 }
 
-// encodeFloatIterator encodes all points from itr to the underlying writer.
+// encodeFloatIterator encodes all points from Itr to the underlying writer.
 func (enc *IteratorEncoder) encodeFloatIterator(itr FloatIterator) error {
 	ticker := time.NewTicker(enc.StatsInterval)
 	defer ticker.Stop()
@@ -13135,7 +13135,7 @@ func (enc *IteratorEncoder) encodeFloatIterator(itr FloatIterator) error {
 		default:
 		}
 
-		// Retrieve the next point from the iterator.
+		// Retrieve the next Point from the iterator.
 		p, err := itr.Next()
 		if err != nil {
 			return err
@@ -13143,7 +13143,7 @@ func (enc *IteratorEncoder) encodeFloatIterator(itr FloatIterator) error {
 			break
 		}
 
-		// Write the point to the point encoder.
+		// Write the Point to the Point encoder.
 		if err := penc.EncodeFloatPoint(p); err != nil {
 			return err
 		}
@@ -13156,7 +13156,7 @@ func (enc *IteratorEncoder) encodeFloatIterator(itr FloatIterator) error {
 	return nil
 }
 
-// encodeIntegerIterator encodes all points from itr to the underlying writer.
+// encodeIntegerIterator encodes all points from Itr to the underlying writer.
 func (enc *IteratorEncoder) encodeIntegerIterator(itr IntegerIterator) error {
 	ticker := time.NewTicker(enc.StatsInterval)
 	defer ticker.Stop()
@@ -13178,7 +13178,7 @@ func (enc *IteratorEncoder) encodeIntegerIterator(itr IntegerIterator) error {
 		default:
 		}
 
-		// Retrieve the next point from the iterator.
+		// Retrieve the next Point from the iterator.
 		p, err := itr.Next()
 		if err != nil {
 			return err
@@ -13186,7 +13186,7 @@ func (enc *IteratorEncoder) encodeIntegerIterator(itr IntegerIterator) error {
 			break
 		}
 
-		// Write the point to the point encoder.
+		// Write the Point to the Point encoder.
 		if err := penc.EncodeIntegerPoint(p); err != nil {
 			return err
 		}
@@ -13199,7 +13199,7 @@ func (enc *IteratorEncoder) encodeIntegerIterator(itr IntegerIterator) error {
 	return nil
 }
 
-// encodeUnsignedIterator encodes all points from itr to the underlying writer.
+// encodeUnsignedIterator encodes all points from Itr to the underlying writer.
 func (enc *IteratorEncoder) encodeUnsignedIterator(itr UnsignedIterator) error {
 	ticker := time.NewTicker(enc.StatsInterval)
 	defer ticker.Stop()
@@ -13221,7 +13221,7 @@ func (enc *IteratorEncoder) encodeUnsignedIterator(itr UnsignedIterator) error {
 		default:
 		}
 
-		// Retrieve the next point from the iterator.
+		// Retrieve the next Point from the iterator.
 		p, err := itr.Next()
 		if err != nil {
 			return err
@@ -13229,7 +13229,7 @@ func (enc *IteratorEncoder) encodeUnsignedIterator(itr UnsignedIterator) error {
 			break
 		}
 
-		// Write the point to the point encoder.
+		// Write the Point to the Point encoder.
 		if err := penc.EncodeUnsignedPoint(p); err != nil {
 			return err
 		}
@@ -13242,7 +13242,7 @@ func (enc *IteratorEncoder) encodeUnsignedIterator(itr UnsignedIterator) error {
 	return nil
 }
 
-// encodeStringIterator encodes all points from itr to the underlying writer.
+// encodeStringIterator encodes all points from Itr to the underlying writer.
 func (enc *IteratorEncoder) encodeStringIterator(itr StringIterator) error {
 	ticker := time.NewTicker(enc.StatsInterval)
 	defer ticker.Stop()
@@ -13264,7 +13264,7 @@ func (enc *IteratorEncoder) encodeStringIterator(itr StringIterator) error {
 		default:
 		}
 
-		// Retrieve the next point from the iterator.
+		// Retrieve the next Point from the iterator.
 		p, err := itr.Next()
 		if err != nil {
 			return err
@@ -13272,7 +13272,7 @@ func (enc *IteratorEncoder) encodeStringIterator(itr StringIterator) error {
 			break
 		}
 
-		// Write the point to the point encoder.
+		// Write the Point to the Point encoder.
 		if err := penc.EncodeStringPoint(p); err != nil {
 			return err
 		}
@@ -13285,7 +13285,7 @@ func (enc *IteratorEncoder) encodeStringIterator(itr StringIterator) error {
 	return nil
 }
 
-// encodeBooleanIterator encodes all points from itr to the underlying writer.
+// encodeBooleanIterator encodes all points from Itr to the underlying writer.
 func (enc *IteratorEncoder) encodeBooleanIterator(itr BooleanIterator) error {
 	ticker := time.NewTicker(enc.StatsInterval)
 	defer ticker.Stop()
@@ -13307,7 +13307,7 @@ func (enc *IteratorEncoder) encodeBooleanIterator(itr BooleanIterator) error {
 		default:
 		}
 
-		// Retrieve the next point from the iterator.
+		// Retrieve the next Point from the iterator.
 		p, err := itr.Next()
 		if err != nil {
 			return err
@@ -13315,7 +13315,7 @@ func (enc *IteratorEncoder) encodeBooleanIterator(itr BooleanIterator) error {
 			break
 		}
 
-		// Write the point to the point encoder.
+		// Write the Point to the Point encoder.
 		if err := penc.EncodeBooleanPoint(p); err != nil {
 			return err
 		}
