@@ -1241,7 +1241,7 @@ func (itr *floatStreamFloatIterator) reduce() ([]FloatPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -1521,7 +1521,7 @@ func (itr *floatStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -1801,7 +1801,7 @@ func (itr *floatStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -2081,7 +2081,7 @@ func (itr *floatStreamStringIterator) reduce() ([]StringPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -2361,7 +2361,7 @@ func (itr *floatStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -3865,7 +3865,7 @@ func (itr *integerStreamFloatIterator) reduce() ([]FloatPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -4145,7 +4145,7 @@ func (itr *integerStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -4425,7 +4425,7 @@ func (itr *integerStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -4705,7 +4705,7 @@ func (itr *integerStreamStringIterator) reduce() ([]StringPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -4985,7 +4985,7 @@ func (itr *integerStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -6489,7 +6489,7 @@ func (itr *unsignedStreamFloatIterator) reduce() ([]FloatPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -6769,7 +6769,7 @@ func (itr *unsignedStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -7049,7 +7049,7 @@ func (itr *unsignedStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -7329,7 +7329,7 @@ func (itr *unsignedStreamStringIterator) reduce() ([]StringPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -7609,7 +7609,7 @@ func (itr *unsignedStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -9099,7 +9099,7 @@ func (itr *stringStreamFloatIterator) reduce() ([]FloatPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -9379,7 +9379,7 @@ func (itr *stringStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -9659,7 +9659,7 @@ func (itr *stringStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -9939,7 +9939,7 @@ func (itr *stringStreamStringIterator) reduce() ([]StringPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -10219,7 +10219,7 @@ func (itr *stringStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -11709,7 +11709,7 @@ func (itr *booleanStreamFloatIterator) reduce() ([]FloatPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -11989,7 +11989,7 @@ func (itr *booleanStreamIntegerIterator) reduce() ([]IntegerPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -12269,7 +12269,7 @@ func (itr *booleanStreamUnsignedIterator) reduce() ([]UnsignedPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -12549,7 +12549,7 @@ func (itr *booleanStreamStringIterator) reduce() ([]StringPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 
@@ -12829,7 +12829,7 @@ func (itr *booleanStreamBooleanIterator) reduce() ([]BooleanPoint, error) {
 		tags := curr.Tags.Subset(itr.dims)
 
 		id := curr.Name
-		if len(tags.m) > 0 {
+		if len(tags.M) > 0 {
 			id += "\x00" + tags.ID()
 		}
 

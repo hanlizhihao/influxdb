@@ -151,11 +151,11 @@ func TestPoint_Fields(t *testing.T) {
 	}
 }
 
-// Ensure that tags can return a unique id.
+// Ensure that tags can return a unique Id.
 func TestTags_ID(t *testing.T) {
 	tags := query.NewTags(map[string]string{"foo": "bar", "baz": "bat"})
 	if id := tags.ID(); id != "baz\x00foo\x00bat\x00bar" {
-		t.Fatalf("unexpected id: %q", id)
+		t.Fatalf("unexpected Id: %q", id)
 	}
 }
 
