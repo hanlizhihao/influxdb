@@ -46,6 +46,28 @@ import (
 
 func init() {
 	tsdb.RegisterEngine("tsm1", NewEngine)
+	gob.Register(floatFinalizerIterator{})
+	gob.Register(floatLimitIterator{})
+	gob.Register(floatIterator{})
+	gob.Register(floatInstrumentedIterator{})
+
+	gob.Register(integerFinalizerIterator{})
+	gob.Register(integerLimitIterator{})
+	gob.Register(integerIterator{})
+	gob.Register(integerInstrumentedIterator{})
+
+	gob.Register(unsignedFinalizerIterator{})
+	gob.Register(unsignedLimitIterator{})
+	gob.Register(unsignedIterator{})
+	gob.Register(unsignedInstrumentedIterator{})
+	gob.Register(booleanFinalizerIterator{})
+	gob.Register(booleanInstrumentedIterator{})
+	gob.Register(booleanIterator{})
+	gob.Register(booleanLimitIterator{})
+	gob.Register(stringFinalizerIterator{})
+	gob.Register(stringLimitIterator{})
+	gob.Register(stringIterator{})
+	gob.Register(stringInstrumentedIterator{})
 }
 
 var (
@@ -196,35 +218,8 @@ type Engine struct {
 	seriesTypeMap *radix.Tree
 }
 
-func RegisteGobType() {
-	gob.Register(floatFinalizerIterator{})
-	gob.Register(floatLimitIterator{})
-	gob.Register(floatIterator{})
-	gob.Register(floatInstrumentedIterator{})
-
-	gob.Register(integerFinalizerIterator{})
-	gob.Register(integerLimitIterator{})
-	gob.Register(integerIterator{})
-	gob.Register(integerInstrumentedIterator{})
-
-	gob.Register(unsignedFinalizerIterator{})
-	gob.Register(unsignedLimitIterator{})
-	gob.Register(unsignedIterator{})
-	gob.Register(unsignedInstrumentedIterator{})
-	gob.Register(booleanFinalizerIterator{})
-	gob.Register(booleanInstrumentedIterator{})
-	gob.Register(booleanIterator{})
-	gob.Register(booleanLimitIterator{})
-	gob.Register(stringFinalizerIterator{})
-	gob.Register(stringLimitIterator{})
-	gob.Register(stringIterator{})
-	gob.Register(stringInstrumentedIterator{})
-
-}
-
 // NewEngine returns a new instance of Engine.
 func NewEngine(id uint64, idx tsdb.Index, path string, walPath string, sfile *tsdb.SeriesFile, opt tsdb.EngineOptions) tsdb.Engine {
-	RegisteGobType()
 	var wal *WAL
 	if opt.WALEnabled {
 		wal = NewWAL(walPath)
