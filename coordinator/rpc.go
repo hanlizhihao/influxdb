@@ -143,45 +143,45 @@ func DecodeSource(measurement *Measurement) *influxql.Measurement {
 }
 
 type RpcResponse struct {
-	Floats   FloatPoints
-	Strings  StringPoints
-	Booleans BooleanPoints
-	Integers IntegerPoints
-	Unsigned UnsignedPoints
+	Floats   *floatRpcIterator
+	Strings  *strRpcIterator
+	Booleans *booleanRpcIterator
+	Integers *intRpcIterator
+	Unsigned *UnsignedRpcIterator
 }
-type UnsignedPoints struct {
+type UnsignedRpcIterator struct {
 	UnsignedPoints []Point
 	IteratorStats  query.IteratorStats
 	Enable         bool
 }
 
-func (p UnsignedPoints) Next() (*query.UnsignedPoint, error) {
-	if len(p.UnsignedPoints) > 1 {
-		point := p.UnsignedPoints[0]
-		p.UnsignedPoints = p.UnsignedPoints[1:]
+func (itr *UnsignedRpcIterator) Next() (*query.UnsignedPoint, error) {
+	if len(itr.UnsignedPoints) > 1 {
+		point := itr.UnsignedPoints[0]
+		itr.UnsignedPoints = itr.UnsignedPoints[1:]
 		return point.DecodeUnsigned(), nil
 	}
-	if len(p.UnsignedPoints) == 1 {
-		point := p.UnsignedPoints[0]
-		p.UnsignedPoints = make([]Point, 0)
+	if len(itr.UnsignedPoints) == 1 {
+		point := itr.UnsignedPoints[0]
+		itr.UnsignedPoints = make([]Point, 0)
 		return point.DecodeUnsigned(), nil
 	}
 	return nil, nil
 }
-func (p UnsignedPoints) Close() error {
+func (itr *UnsignedRpcIterator) Close() error {
 	return nil
 }
-func (p UnsignedPoints) Stats() query.IteratorStats {
-	return p.IteratorStats
+func (itr *UnsignedRpcIterator) Stats() query.IteratorStats {
+	return itr.IteratorStats
 }
 
-type IntegerPoints struct {
+type intRpcIterator struct {
 	IntegerPoints []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
 
-func (p IntegerPoints) Next() (*query.IntegerPoint, error) {
+func (p *intRpcIterator) Next() (*query.IntegerPoint, error) {
 	if len(p.IntegerPoints) > 1 {
 		point := p.IntegerPoints[0]
 		p.IntegerPoints = p.IntegerPoints[1:]
@@ -194,20 +194,20 @@ func (p IntegerPoints) Next() (*query.IntegerPoint, error) {
 	}
 	return nil, nil
 }
-func (p IntegerPoints) Close() error {
+func (p *intRpcIterator) Close() error {
 	return nil
 }
-func (p IntegerPoints) Stats() query.IteratorStats {
+func (p *intRpcIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
-type BooleanPoints struct {
+type booleanRpcIterator struct {
 	BooleanPoints []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
 
-func (p BooleanPoints) Next() (*query.BooleanPoint, error) {
+func (p *booleanRpcIterator) Next() (*query.BooleanPoint, error) {
 	if len(p.BooleanPoints) > 1 {
 		point := p.BooleanPoints[0]
 		p.BooleanPoints = p.BooleanPoints[1:]
@@ -220,20 +220,20 @@ func (p BooleanPoints) Next() (*query.BooleanPoint, error) {
 	}
 	return nil, nil
 }
-func (p BooleanPoints) Close() error {
+func (p *booleanRpcIterator) Close() error {
 	return nil
 }
-func (p BooleanPoints) Stats() query.IteratorStats {
+func (p *booleanRpcIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
-type StringPoints struct {
+type strRpcIterator struct {
 	StringPoints  []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
 
-func (p StringPoints) Next() (*query.StringPoint, error) {
+func (p *strRpcIterator) Next() (*query.StringPoint, error) {
 	if len(p.StringPoints) > 1 {
 		point := p.StringPoints[0]
 		p.StringPoints = p.StringPoints[1:]
@@ -246,20 +246,20 @@ func (p StringPoints) Next() (*query.StringPoint, error) {
 	}
 	return nil, nil
 }
-func (p StringPoints) Close() error {
+func (p *strRpcIterator) Close() error {
 	return nil
 }
-func (p StringPoints) Stats() query.IteratorStats {
+func (p *strRpcIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
-type FloatPoints struct {
+type floatRpcIterator struct {
 	FloatPoints   []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
 
-func (p FloatPoints) Next() (*query.FloatPoint, error) {
+func (p *floatRpcIterator) Next() (*query.FloatPoint, error) {
 	if len(p.FloatPoints) > 1 {
 		point := p.FloatPoints[0]
 		p.FloatPoints = p.FloatPoints[1:]
@@ -272,10 +272,10 @@ func (p FloatPoints) Next() (*query.FloatPoint, error) {
 	}
 	return nil, nil
 }
-func (p FloatPoints) Close() error {
+func (p *floatRpcIterator) Close() error {
 	return nil
 }
-func (p FloatPoints) Stats() query.IteratorStats {
+func (p *floatRpcIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
