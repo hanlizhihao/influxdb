@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"github.com/influxdata/influxdb/query"
@@ -9,6 +10,7 @@ import (
 	"go.uber.org/zap"
 	"net"
 	"net/rpc"
+	"sort"
 	"time"
 )
 
@@ -148,7 +150,7 @@ type RpcResponse struct {
 	Unsigned UnsignedPoints
 }
 type UnsignedPoints struct {
-	UnsignedPoints []query.UnsignedPoint
+	UnsignedPoints []Point
 	IteratorStats  query.IteratorStats
 	Enable         bool
 }
@@ -157,12 +159,12 @@ func (p *UnsignedPoints) Next() (*query.UnsignedPoint, error) {
 	if len(p.UnsignedPoints) > 1 {
 		point := p.UnsignedPoints[0]
 		p.UnsignedPoints = p.UnsignedPoints[1:]
-		return &point, nil
+		return point.DecodeUnsigned(), nil
 	}
 	if len(p.UnsignedPoints) == 1 {
 		point := p.UnsignedPoints[0]
-		p.UnsignedPoints = make([]query.UnsignedPoint, 0)
-		return &point, nil
+		p.UnsignedPoints = make([]Point, 0)
+		return point.DecodeUnsigned(), nil
 	}
 	return nil, nil
 }
@@ -174,7 +176,7 @@ func (p UnsignedPoints) Stats() query.IteratorStats {
 }
 
 type IntegerPoints struct {
-	IntegerPoints []query.IntegerPoint
+	IntegerPoints []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
@@ -183,12 +185,12 @@ func (p *IntegerPoints) Next() (*query.IntegerPoint, error) {
 	if len(p.IntegerPoints) > 1 {
 		point := p.IntegerPoints[0]
 		p.IntegerPoints = p.IntegerPoints[1:]
-		return &point, nil
+		return point.DecodeInteger(), nil
 	}
 	if len(p.IntegerPoints) == 1 {
 		point := p.IntegerPoints[0]
-		p.IntegerPoints = make([]query.IntegerPoint, 0)
-		return &point, nil
+		p.IntegerPoints = make([]Point, 0)
+		return point.DecodeInteger(), nil
 	}
 	return nil, nil
 }
@@ -200,7 +202,7 @@ func (p IntegerPoints) Stats() query.IteratorStats {
 }
 
 type BooleanPoints struct {
-	BooleanPoints []query.BooleanPoint
+	BooleanPoints []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
@@ -209,12 +211,12 @@ func (p *BooleanPoints) Next() (*query.BooleanPoint, error) {
 	if len(p.BooleanPoints) > 1 {
 		point := p.BooleanPoints[0]
 		p.BooleanPoints = p.BooleanPoints[1:]
-		return &point, nil
+		return point.DecodeBool(), nil
 	}
 	if len(p.BooleanPoints) == 1 {
 		point := p.BooleanPoints[0]
-		p.BooleanPoints = make([]query.BooleanPoint, 0)
-		return &point, nil
+		p.BooleanPoints = make([]Point, 0)
+		return point.DecodeBool(), nil
 	}
 	return nil, nil
 }
@@ -226,7 +228,7 @@ func (p BooleanPoints) Stats() query.IteratorStats {
 }
 
 type StringPoints struct {
-	StringPoints  []query.StringPoint
+	StringPoints  []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
@@ -235,12 +237,12 @@ func (p *StringPoints) Next() (*query.StringPoint, error) {
 	if len(p.StringPoints) > 1 {
 		point := p.StringPoints[0]
 		p.StringPoints = p.StringPoints[1:]
-		return &point, nil
+		return point.DecodeString(), nil
 	}
 	if len(p.StringPoints) == 1 {
 		point := p.StringPoints[0]
-		p.StringPoints = make([]query.StringPoint, 0)
-		return &point, nil
+		p.StringPoints = make([]Point, 0)
+		return point.DecodeString(), nil
 	}
 	return nil, nil
 }
@@ -251,8 +253,288 @@ func (p StringPoints) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
+type Point struct {
+	Name string
+	Tags string
+
+	Time          int64
+	FloatValue    float64
+	IntegerValue  int64
+	StringValue   string
+	BooleanValue  bool
+	UnsignedValue uint64
+	Aux           []Aux
+
+	// Total number of points that were combined into this point from an aggregate.
+	// If this is zero, the point is not the result of an aggregate function.
+	Aggregated uint32
+	Nil        bool
+}
+
+func newTagsID(id string) query.Tags {
+	m := decodeTags([]byte(id))
+	if len(m) == 0 {
+		return query.Tags{}
+	}
+	return query.NewTags(m)
+}
+func (p *Point) GetTags() string {
+	if p != nil && &p.Tags != nil {
+		return p.Tags
+	}
+	return ""
+}
+
+// encodeTags converts a map of strings to an identifier.
+func encodeTags(m map[string]string) []byte {
+	// Empty maps marshal to empty bytes.
+	if len(m) == 0 {
+		return nil
+	}
+
+	// Extract keys and determine final size.
+	sz := (len(m) * 2) - 1 // separators
+	keys := make([]string, 0, len(m))
+	for k, v := range m {
+		keys = append(keys, k)
+		sz += len(k) + len(v)
+	}
+	sort.Strings(keys)
+
+	// Generate marshaled bytes.
+	b := make([]byte, sz)
+	buf := b
+	for _, k := range keys {
+		copy(buf, k)
+		buf[len(k)] = '\x00'
+		buf = buf[len(k)+1:]
+	}
+	for i, k := range keys {
+		v := m[k]
+		copy(buf, v)
+		if i < len(keys)-1 {
+			buf[len(v)] = '\x00'
+			buf = buf[len(v)+1:]
+		}
+	}
+	return b
+}
+
+// decodeTags parses an identifier into a map of tags.
+func decodeTags(id []byte) map[string]string {
+	a := bytes.Split(id, []byte{'\x00'})
+
+	// There must be an even number of segments.
+	if len(a) > 0 && len(a)%2 == 1 {
+		a = a[:len(a)-1]
+	}
+
+	// Return nil if there are no segments.
+	if len(a) == 0 {
+		return nil
+	}
+	mid := len(a) / 2
+
+	// Decode key/value tags.
+	m := make(map[string]string)
+	for i := 0; i < mid; i++ {
+		m[string(a[i])] = string(a[i+mid])
+	}
+	return m
+}
+func (p *Point) DecodeFloat() *query.FloatPoint {
+	return &query.FloatPoint{
+		Name:       p.Name,
+		Aggregated: p.Aggregated,
+		Aux:        decodeAux(p.Aux),
+		Value:      p.FloatValue,
+		Nil:        p.Nil,
+		Tags:       newTagsID(p.Tags),
+		Time:       p.Time,
+	}
+}
+func (p *Point) EncodeFloat(float *query.FloatPoint) {
+	p.Name = float.Name
+	p.Aggregated = float.Aggregated
+	p.Aux = encodeAux(float.Aux)
+	p.FloatValue = float.Value
+	p.Nil = float.Nil
+	p.Tags = float.Tags.ID()
+	p.Time = float.Time
+}
+func (p *Point) DecodeString() *query.StringPoint {
+	return &query.StringPoint{
+		Name:       p.Name,
+		Aggregated: p.Aggregated,
+		Aux:        decodeAux(p.Aux),
+		Value:      p.StringValue,
+		Nil:        p.Nil,
+		Tags:       newTagsID(p.Tags),
+		Time:       p.Time,
+	}
+}
+func (p *Point) EncodeString(float *query.StringPoint) {
+	p.Name = float.Name
+	p.Aggregated = float.Aggregated
+	p.Aux = encodeAux(float.Aux)
+	p.StringValue = float.Value
+	p.Nil = float.Nil
+	p.Tags = float.Tags.ID()
+	p.Time = float.Time
+}
+func (p *Point) DecodeBool() *query.BooleanPoint {
+	return &query.BooleanPoint{
+		Name:       p.Name,
+		Aggregated: p.Aggregated,
+		Aux:        decodeAux(p.Aux),
+		Value:      p.BooleanValue,
+		Nil:        p.Nil,
+		Tags:       newTagsID(p.Tags),
+		Time:       p.Time,
+	}
+}
+func (p *Point) EncodeBool(float *query.BooleanPoint) {
+	p.Name = float.Name
+	p.Aggregated = float.Aggregated
+	p.Aux = encodeAux(float.Aux)
+	p.BooleanValue = float.Value
+	p.Nil = float.Nil
+	p.Tags = float.Tags.ID()
+	p.Time = float.Time
+}
+func (p *Point) DecodeInteger() *query.IntegerPoint {
+	return &query.IntegerPoint{
+		Name:       p.Name,
+		Aggregated: p.Aggregated,
+		Aux:        decodeAux(p.Aux),
+		Value:      p.IntegerValue,
+		Nil:        p.Nil,
+		Tags:       newTagsID(p.Tags),
+		Time:       p.Time,
+	}
+}
+func (p *Point) EncodeInteger(float *query.IntegerPoint) {
+	p.Name = float.Name
+	p.Aggregated = float.Aggregated
+	p.Aux = encodeAux(float.Aux)
+	p.IntegerValue = float.Value
+	p.Nil = float.Nil
+	p.Tags = float.Tags.ID()
+	p.Time = float.Time
+}
+func (p *Point) DecodeUnsigned() *query.UnsignedPoint {
+	return &query.UnsignedPoint{
+		Name:       p.Name,
+		Aggregated: p.Aggregated,
+		Aux:        decodeAux(p.Aux),
+		Value:      p.UnsignedValue,
+		Nil:        p.Nil,
+		Tags:       newTagsID(p.Tags),
+		Time:       p.Time,
+	}
+}
+func (p *Point) EncodeUnsigned(float *query.UnsignedPoint) {
+	p.Name = float.Name
+	p.Aggregated = float.Aggregated
+	p.Aux = encodeAux(float.Aux)
+	p.UnsignedValue = float.Value
+	p.Nil = float.Nil
+	p.Tags = float.Tags.ID()
+	p.Time = float.Time
+}
+
+type Aux struct {
+	DataType      int32
+	FloatValue    float64
+	IntegerValue  int64
+	StringValue   string
+	BooleanValue  bool
+	UnsignedValue uint64
+}
+
+func encodeAux(aux []interface{}) []Aux {
+	pb := make([]Aux, len(aux))
+	for i := range aux {
+		switch v := aux[i].(type) {
+		case float64:
+			pb[i] = Aux{DataType: int32(influxql.Float), FloatValue: v}
+		case *float64:
+			pb[i] = Aux{DataType: int32(influxql.Float)}
+		case int64:
+			pb[i] = Aux{DataType: int32(influxql.Integer), IntegerValue: v}
+		case *int64:
+			pb[i] = Aux{DataType: int32(influxql.Integer)}
+		case uint64:
+			pb[i] = Aux{DataType: int32(influxql.Unsigned), UnsignedValue: v}
+		case *uint64:
+			pb[i] = Aux{DataType: int32(influxql.Unsigned)}
+		case string:
+			pb[i] = Aux{DataType: int32(influxql.String), StringValue: v}
+		case *string:
+			pb[i] = Aux{DataType: int32(influxql.String)}
+		case bool:
+			pb[i] = Aux{DataType: int32(influxql.Boolean), BooleanValue: v}
+		case *bool:
+			pb[i] = Aux{DataType: int32(influxql.Boolean)}
+		default:
+			pb[i] = Aux{DataType: int32(influxql.Unknown)}
+		}
+	}
+	return pb
+}
+func (m *Aux) GetDataType() int32 {
+	if m != nil && &m.DataType != nil {
+		return m.DataType
+	}
+	return 0
+}
+func decodeAux(pb []Aux) []interface{} {
+	if len(pb) == 0 {
+		return nil
+	}
+
+	aux := make([]interface{}, len(pb))
+	for i := range pb {
+		switch influxql.DataType(pb[i].GetDataType()) {
+		case influxql.Float:
+			if &pb[i].FloatValue != nil {
+				aux[i] = pb[i].FloatValue
+			} else {
+				aux[i] = (*float64)(nil)
+			}
+		case influxql.Integer:
+			if &pb[i].IntegerValue != nil {
+				aux[i] = pb[i].IntegerValue
+			} else {
+				aux[i] = (*int64)(nil)
+			}
+		case influxql.Unsigned:
+			if &pb[i].UnsignedValue != nil {
+				aux[i] = pb[i].UnsignedValue
+			} else {
+				aux[i] = (*uint64)(nil)
+			}
+		case influxql.String:
+			if &pb[i].StringValue != nil {
+				aux[i] = pb[i].StringValue
+			} else {
+				aux[i] = (*string)(nil)
+			}
+		case influxql.Boolean:
+			if &pb[i].BooleanValue != nil {
+				aux[i] = pb[i].BooleanValue
+			} else {
+				aux[i] = (*bool)(nil)
+			}
+		default:
+			aux[i] = nil
+		}
+	}
+	return aux
+}
+
 type FloatPoints struct {
-	FloatPoints   []query.FloatPoint
+	FloatPoints   []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
@@ -261,12 +543,12 @@ func (p *FloatPoints) Next() (*query.FloatPoint, error) {
 	if len(p.FloatPoints) > 1 {
 		point := p.FloatPoints[0]
 		p.FloatPoints = p.FloatPoints[1:]
-		return &point, nil
+		return point.DecodeFloat(), nil
 	}
 	if len(p.FloatPoints) == 1 {
 		point := p.FloatPoints[0]
-		p.FloatPoints = make([]query.FloatPoint, 0)
-		return &point, nil
+		p.FloatPoints = make([]Point, 0)
+		return point.DecodeFloat(), nil
 	}
 	return nil, nil
 }
@@ -288,7 +570,9 @@ func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
 			} else if p == nil {
 				break
 			}
-			resp.Floats.FloatPoints = append(resp.Floats.FloatPoints, *p)
+			point := Point{}
+			point.EncodeFloat(p)
+			resp.Floats.FloatPoints = append(resp.Floats.FloatPoints, point)
 			resp.Floats.Enable = true
 		}
 		resp.Floats.IteratorStats = f.Stats()
@@ -303,7 +587,9 @@ func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
 			} else if p == nil {
 				break
 			}
-			resp.Booleans.BooleanPoints = append(resp.Booleans.BooleanPoints, *p)
+			point := Point{}
+			point.EncodeBool(p)
+			resp.Booleans.BooleanPoints = append(resp.Booleans.BooleanPoints, point)
 			resp.Booleans.Enable = true
 		}
 		resp.Booleans.IteratorStats = b.Stats()
@@ -318,7 +604,9 @@ func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
 			} else if p == nil {
 				break
 			}
-			resp.Integers.IntegerPoints = append(resp.Integers.IntegerPoints, *p)
+			point := Point{}
+			point.EncodeInteger(p)
+			resp.Integers.IntegerPoints = append(resp.Integers.IntegerPoints, point)
 			resp.Integers.Enable = true
 		}
 		resp.Integers.IteratorStats = i.Stats()
@@ -333,7 +621,9 @@ func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
 			} else if p == nil {
 				break
 			}
-			resp.Strings.StringPoints = append(resp.Strings.StringPoints, *p)
+			point := Point{}
+			point.EncodeString(p)
+			resp.Strings.StringPoints = append(resp.Strings.StringPoints, point)
 			resp.Strings.Enable = true
 		}
 		resp.Strings.IteratorStats = s.Stats()
@@ -348,7 +638,9 @@ func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
 			} else if p == nil {
 				break
 			}
-			resp.Unsigned.UnsignedPoints = append(resp.Unsigned.UnsignedPoints, *p)
+			point := Point{}
+			point.EncodeUnsigned(p)
+			resp.Unsigned.UnsignedPoints = append(resp.Unsigned.UnsignedPoints, point)
 			resp.Unsigned.Enable = true
 		}
 		resp.Unsigned.IteratorStats = u.Stats()
@@ -452,6 +744,7 @@ func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RpcResponse) error
 			return err
 		}
 		*iterator = *resp
+		it.Close()
 		return nil
 	}
 	return errors.New("QueryExecutor Query failed")
