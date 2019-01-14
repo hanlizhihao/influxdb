@@ -421,6 +421,7 @@ func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) er
 			return err
 		}
 		*iterator = *resp
+		return nil
 	}
 	return errors.New("QueryExecutor Query failed")
 }
@@ -451,6 +452,7 @@ func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RpcResponse) error
 			return err
 		}
 		*iterator = *resp
+		return nil
 	}
 	return errors.New("QueryExecutor Query failed")
 }
