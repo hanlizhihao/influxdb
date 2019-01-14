@@ -262,7 +262,6 @@ func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influx
 func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
 	resultCh := make(chan *query.Iterator)
 	ctxTimeOut := context.Background()
-	rpcParam := GetRpcParam(*m, opt)
 	var wait sync.WaitGroup
 	for _, node := range a.s.ch.MasterNodes {
 		if node.Id != a.s.masterNode.Id {
@@ -274,9 +273,18 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 			go func(resultCh chan *query.Iterator) {
 				defer wait.Done()
 				var resp RpcResponse
-				err = client.Call("QueryExecutor.DistributeQuery", *rpcParam, &resp)
+				err = client.Call("QueryExecutor.DistributeQuery", RpcRequest{
+					Source: *m,
+					Opt:    &opt,
+				}, &resp)
 				if err == nil {
-					resultCh <- &resp.It
+					it, err := DecodeIterator(opt, &resp)
+					if err != nil {
+						a.s.Logger.Error("Decode Rpc Response err", zap.Error(err))
+					}
+					if it != nil {
+						resultCh <- &it
+					}
 				} else {
 					a.s.Logger.Error("LocalShardMapper RPC Query Error ", zap.Error(err))
 				}
@@ -374,25 +382,33 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 		if i == len(qb.s.rpcQuery.nodes)-1 {
 			rewriteOpt.EndTime = max.UnixNano()
 		}
-
-		rpcParam := GetRpcParam(*m, rewriteOpt)
+		r := &RpcRequest{
+			Source: *m,
+			Opt:    &opt,
+		}
 		client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
 		if err != nil {
 			qb.s.Logger.Error("Get Rpc client failed", zap.Error(err))
 			continue
 		}
 		wait.Add(1)
-		go func(client *rpc.Client, i chan *query.Iterator, rpcParam *RpcParam) {
+		go func(client *rpc.Client, i chan *query.Iterator, r *RpcRequest) {
 			defer wait.Done()
-			var response RpcResponse
-			if err := client.Call("QueryExecutor.BoosterQuery", *rpcParam, &response); err == nil {
-				if &response != nil {
-					i <- &response.It
+			var resp RpcResponse
+			if err := client.Call("QueryExecutor.BoosterQuery", *r, &resp); err == nil {
+				if &resp != nil {
+					it, err := DecodeIterator(opt, &resp)
+					if err != nil {
+						qb.s.Logger.Error("Decode Rpc Response error", zap.Error(err))
+					}
+					if it != nil {
+						i <- &it
+					}
 				}
 			} else {
 				qb.s.Logger.Error("Booster Query failed", zap.Error(err))
 			}
-		}(client, result, rpcParam)
+		}(client, result, r)
 	}
 	wait.Wait()
 	return nil

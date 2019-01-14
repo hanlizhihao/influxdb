@@ -106,25 +106,244 @@ func (rs *RpcService) Open() error {
 	return nil
 }
 
-type RpcParam struct {
-	Source    []byte
-	TimeRange []byte
-	Opt       *query.IteratorOptions
+type RpcRequest struct {
+	Source influxql.Measurement
+	Opt    *query.IteratorOptions
 }
 type RpcResponse struct {
-	It query.Iterator
+	Floats   FloatPoints
+	Strings  StringPoints
+	Booleans BooleanPoints
+	Integers IntegerPoints
+	Unsigned UnsignedPoints
+}
+type UnsignedPoints struct {
+	UnsignedPoints []query.UnsignedPoint
+	IteratorStats  query.IteratorStats
+	Enable         bool
 }
 
-func GetRpcParam(s influxql.Measurement, o query.IteratorOptions) *RpcParam {
-	return &RpcParam{
-		Source: ToJsonByte(s),
-		Opt:    &o,
+func (p *UnsignedPoints) Next() (*query.UnsignedPoint, error) {
+	if len(p.UnsignedPoints) > 1 {
+		point := p.UnsignedPoints[0]
+		p.UnsignedPoints = p.UnsignedPoints[1:]
+		return &point, nil
 	}
+	if len(p.UnsignedPoints) == 1 {
+		point := p.UnsignedPoints[0]
+		p.UnsignedPoints = make([]query.UnsignedPoint, 0)
+		return &point, nil
+	}
+	return nil, nil
 }
-func ParseRpcParam(p RpcParam) (influxql.Measurement, *query.IteratorOptions) {
-	var s influxql.Measurement
-	ParseJson(p.Source, &s)
-	return s, p.Opt
+func (p UnsignedPoints) Close() error {
+	return nil
+}
+func (p UnsignedPoints) Stats() query.IteratorStats {
+	return p.IteratorStats
+}
+
+type IntegerPoints struct {
+	IntegerPoints []query.IntegerPoint
+	IteratorStats query.IteratorStats
+	Enable        bool
+}
+
+func (p *IntegerPoints) Next() (*query.IntegerPoint, error) {
+	if len(p.IntegerPoints) > 1 {
+		point := p.IntegerPoints[0]
+		p.IntegerPoints = p.IntegerPoints[1:]
+		return &point, nil
+	}
+	if len(p.IntegerPoints) == 1 {
+		point := p.IntegerPoints[0]
+		p.IntegerPoints = make([]query.IntegerPoint, 0)
+		return &point, nil
+	}
+	return nil, nil
+}
+func (p IntegerPoints) Close() error {
+	return nil
+}
+func (p IntegerPoints) Stats() query.IteratorStats {
+	return p.IteratorStats
+}
+
+type BooleanPoints struct {
+	BooleanPoints []query.BooleanPoint
+	IteratorStats query.IteratorStats
+	Enable        bool
+}
+
+func (p *BooleanPoints) Next() (*query.BooleanPoint, error) {
+	if len(p.BooleanPoints) > 1 {
+		point := p.BooleanPoints[0]
+		p.BooleanPoints = p.BooleanPoints[1:]
+		return &point, nil
+	}
+	if len(p.BooleanPoints) == 1 {
+		point := p.BooleanPoints[0]
+		p.BooleanPoints = make([]query.BooleanPoint, 0)
+		return &point, nil
+	}
+	return nil, nil
+}
+func (p BooleanPoints) Close() error {
+	return nil
+}
+func (p BooleanPoints) Stats() query.IteratorStats {
+	return p.IteratorStats
+}
+
+type StringPoints struct {
+	StringPoints  []query.StringPoint
+	IteratorStats query.IteratorStats
+	Enable        bool
+}
+
+func (p *StringPoints) Next() (*query.StringPoint, error) {
+	if len(p.StringPoints) > 1 {
+		point := p.StringPoints[0]
+		p.StringPoints = p.StringPoints[1:]
+		return &point, nil
+	}
+	if len(p.StringPoints) == 1 {
+		point := p.StringPoints[0]
+		p.StringPoints = make([]query.StringPoint, 0)
+		return &point, nil
+	}
+	return nil, nil
+}
+func (p StringPoints) Close() error {
+	return nil
+}
+func (p StringPoints) Stats() query.IteratorStats {
+	return p.IteratorStats
+}
+
+type FloatPoints struct {
+	FloatPoints   []query.FloatPoint
+	IteratorStats query.IteratorStats
+	Enable        bool
+}
+
+func (p *FloatPoints) Next() (*query.FloatPoint, error) {
+	if len(p.FloatPoints) > 1 {
+		point := p.FloatPoints[0]
+		p.FloatPoints = p.FloatPoints[1:]
+		return &point, nil
+	}
+	if len(p.FloatPoints) == 1 {
+		point := p.FloatPoints[0]
+		p.FloatPoints = make([]query.FloatPoint, 0)
+		return &point, nil
+	}
+	return nil, nil
+}
+func (p FloatPoints) Close() error {
+	return nil
+}
+func (p FloatPoints) Stats() query.IteratorStats {
+	return p.IteratorStats
+}
+
+func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
+	resp := &RpcResponse{}
+	if f, ok := it.(query.FloatIterator); ok {
+		for {
+			// Retrieve the next point from the iterator.
+			p, err := f.Next()
+			if err != nil {
+				return nil, err
+			} else if p == nil {
+				break
+			}
+			resp.Floats.FloatPoints = append(resp.Floats.FloatPoints, *p)
+			resp.Floats.Enable = true
+		}
+		resp.Floats.IteratorStats = f.Stats()
+		return resp, nil
+	}
+	if b, ok := it.(query.BooleanIterator); ok {
+		for {
+			// Retrieve the next point from the iterator.
+			p, err := b.Next()
+			if err != nil {
+				return nil, err
+			} else if p == nil {
+				break
+			}
+			resp.Booleans.BooleanPoints = append(resp.Booleans.BooleanPoints, *p)
+			resp.Booleans.Enable = true
+		}
+		resp.Booleans.IteratorStats = b.Stats()
+		return resp, nil
+	}
+	if i, ok := it.(query.IntegerIterator); ok {
+		for {
+			// Retrieve the next point from the iterator.
+			p, err := i.Next()
+			if err != nil {
+				return nil, err
+			} else if p == nil {
+				break
+			}
+			resp.Integers.IntegerPoints = append(resp.Integers.IntegerPoints, *p)
+			resp.Integers.Enable = true
+		}
+		resp.Integers.IteratorStats = i.Stats()
+		return resp, nil
+	}
+	if s, ok := it.(query.StringIterator); ok {
+		for {
+			// Retrieve the next point from the iterator.
+			p, err := s.Next()
+			if err != nil {
+				return nil, err
+			} else if p == nil {
+				break
+			}
+			resp.Strings.StringPoints = append(resp.Strings.StringPoints, *p)
+			resp.Strings.Enable = true
+		}
+		resp.Strings.IteratorStats = s.Stats()
+		return resp, nil
+	}
+	if u, ok := it.(query.UnsignedIterator); ok {
+		for {
+			// Retrieve the next point from the iterator.
+			p, err := u.Next()
+			if err != nil {
+				return nil, err
+			} else if p == nil {
+				break
+			}
+			resp.Unsigned.UnsignedPoints = append(resp.Unsigned.UnsignedPoints, *p)
+			resp.Unsigned.Enable = true
+		}
+		resp.Unsigned.IteratorStats = u.Stats()
+		return resp, nil
+	}
+	return nil, errors.New("Unknown Iterator Type ")
+}
+func DecodeIterator(opt query.IteratorOptions, r *RpcResponse) (query.Iterator, error) {
+	itrs := make([]query.Iterator, 0)
+	if r.Unsigned.Enable {
+		itrs = append(itrs, r.Unsigned)
+	}
+	if r.Booleans.Enable {
+		itrs = append(itrs, r.Booleans)
+	}
+	if r.Integers.Enable {
+		itrs = append(itrs, r.Integers)
+	}
+	if r.Floats.Enable {
+		itrs = append(itrs, r.Floats)
+	}
+	if r.Strings.Enable {
+		itrs = append(itrs, r.Strings)
+	}
+	return query.Iterators(itrs).Merge(opt)
 }
 
 type QueryExecutor struct {
@@ -145,15 +364,14 @@ func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 	}
 }
 
-func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *RpcResponse) error {
-	source, opt := ParseRpcParam(p)
+func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) error {
 	rq.Logger.Debug("DistributeQuery start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 0)
-	sources = append(sources, &source)
+	sources = append(sources, &r.Source)
 	timeRange := influxql.TimeRange{
-		Min: time.Unix(0, opt.StartTime),
-		Max: time.Unix(0, opt.EndTime),
+		Min: time.Unix(0, r.Opt.StartTime),
+		Max: time.Unix(0, r.Opt.EndTime),
 	}
 	sg, err := sm.MapShards(sources, timeRange, query.SelectOptions{})
 	if err != nil {
@@ -163,23 +381,26 @@ func (rq *QueryExecutor) DistributeQuery(p RpcParam, iterator *RpcResponse) erro
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.BoosterCreateIterator(tc, &source, *opt)
-		if err == nil {
-			iterator.It = it
-			return nil
+		it, err := localShardMapping.BoosterCreateIterator(tc, &r.Source, *r.Opt)
+		if err != nil {
+			return err
 		}
+		resp, err := EncodeIterator(it)
+		if err != nil {
+			return err
+		}
+		*iterator = *resp
 	}
 	return errors.New("QueryExecutor Query failed")
 }
-func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *RpcResponse) error {
-	source, opt := ParseRpcParam(param)
+func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RpcResponse) error {
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
 	sources := make([]influxql.Source, 0)
-	sources = append(sources, &source)
+	sources = append(sources, &r.Source)
 	timeRange := influxql.TimeRange{
-		Min: time.Unix(0, opt.StartTime),
-		Max: time.Unix(0, opt.EndTime),
+		Min: time.Unix(0, r.Opt.StartTime),
+		Max: time.Unix(0, r.Opt.EndTime),
 	}
 	sg, err := sm.MapShards(sources, timeRange, query.SelectOptions{})
 	if err != nil {
@@ -189,11 +410,15 @@ func (rq *QueryExecutor) BoosterQuery(param RpcParam, iterator *RpcResponse) err
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.LocalCreateIterator(tc, &source, *opt)
-		if err == nil {
-			iterator.It = it
-			return nil
+		it, err := localShardMapping.LocalCreateIterator(tc, &r.Source, *r.Opt)
+		if err != nil {
+			return err
 		}
+		resp, err := EncodeIterator(it)
+		if err != nil {
+			return err
+		}
+		*iterator = *resp
 	}
 	return errors.New("QueryExecutor Query failed")
 }

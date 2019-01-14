@@ -13,6 +13,8 @@ key填充值，如果是TagKey，在上面的方法中会获得，因此会直�
 buildFloatCursor
 literalValueCursor是一组基础的Cursor，分别有下面DataType定义的不同类型的Cursor
 Emitter发射器将处理Cursor中的结果，如果返回数据过大，还会进行截断，Emitter将通过ExecutionContext
+Iterator本质是什么？一行数据，注意RPC返回值的处理方式是FloatPoint以及其他Point
+
 将数据发送给handler中的处理函数influxql.SelectStatement的Fields属性包含的是数据的tag部分以及value部分，Sources部分描述查询的目标数据库（以及涉及数据库指标（数据库名称、RP、指标名称、是否是Target）），
 Condition描述一系列Select筛选条件，每个筛选条件是一个BinaryExpr(Op:等于、大于、小于、LHS：条件的左表达式、RHS条件的右表达式)
 Emitter的Emit方法中cursor.Scan方法将得到值，Cursor为数据的来源，注意：Cursor的scan方法通过调用至query\iterator.gen.go中的FloatIterator(或者其他的Iterator)的Next()方法调用至tsm1\floatIterator 结构体
