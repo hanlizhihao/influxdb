@@ -106,10 +106,40 @@ func (rs *RpcService) Open() error {
 	return nil
 }
 
+type Measurement struct {
+	Database        string
+	RetentionPolicy string
+	Name            string
+	IsTarget        bool
+
+	// This field indicates that the measurement should read be read from the
+	// specified system iterator.
+	SystemIterator string
+}
 type RpcRequest struct {
-	Source influxql.Measurement
+	Source *Measurement
 	Opt    *query.IteratorOptions
 }
+
+func EncodeSource(measurement *influxql.Measurement) *Measurement {
+	return &Measurement{
+		Database:        measurement.Database,
+		RetentionPolicy: measurement.RetentionPolicy,
+		Name:            measurement.Name,
+		IsTarget:        measurement.IsTarget,
+		SystemIterator:  measurement.SystemIterator,
+	}
+}
+func DecodeSource(measurement *Measurement) *influxql.Measurement {
+	return &influxql.Measurement{
+		Database:        measurement.Database,
+		RetentionPolicy: measurement.RetentionPolicy,
+		Name:            measurement.Name,
+		IsTarget:        measurement.IsTarget,
+		SystemIterator:  measurement.SystemIterator,
+	}
+}
+
 type RpcResponse struct {
 	Floats   FloatPoints
 	Strings  StringPoints
@@ -367,8 +397,9 @@ func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) error {
 	rq.Logger.Debug("DistributeQuery start")
 	sm := *rq.shardMapper
+	source := DecodeSource(r.Source)
 	sources := make([]influxql.Source, 0)
-	sources = append(sources, &r.Source)
+	sources = append(sources, source)
 	timeRange := influxql.TimeRange{
 		Min: time.Unix(0, r.Opt.StartTime),
 		Max: time.Unix(0, r.Opt.EndTime),
@@ -381,7 +412,7 @@ func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) er
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.BoosterCreateIterator(tc, &r.Source, *r.Opt)
+		it, err := localShardMapping.BoosterCreateIterator(tc, source, *r.Opt)
 		if err != nil {
 			return err
 		}
@@ -396,8 +427,9 @@ func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) er
 func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RpcResponse) error {
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
+	source := DecodeSource(r.Source)
 	sources := make([]influxql.Source, 0)
-	sources = append(sources, &r.Source)
+	sources = append(sources, source)
 	timeRange := influxql.TimeRange{
 		Min: time.Unix(0, r.Opt.StartTime),
 		Max: time.Unix(0, r.Opt.EndTime),
@@ -410,7 +442,7 @@ func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RpcResponse) error
 		c := context.Background()
 		tc, cancel := context.WithTimeout(c, time.Second*2)
 		defer cancel()
-		it, err := localShardMapping.LocalCreateIterator(tc, &r.Source, *r.Opt)
+		it, err := localShardMapping.LocalCreateIterator(tc, source, *r.Opt)
 		if err != nil {
 			return err
 		}
