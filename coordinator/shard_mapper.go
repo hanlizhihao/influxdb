@@ -224,6 +224,17 @@ func (a *LocalShardMapping) LocalCreateIterator(ctx context.Context, m *influxql
 	return sg.CreateIterator(ctx, m, opt)
 }
 
+func (a *LocalShardMapping) GetMeasurementsBySource(m *influxql.Measurement) []string {
+	source := Source{
+		Database:        m.Database,
+		RetentionPolicy: m.RetentionPolicy,
+	}
+	sg := a.ShardMap[source]
+	if sg == nil {
+		return nil
+	}
+	return sg.MeasurementsByRegex(m.Regex.Val)
+}
 func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
 	var wait sync.WaitGroup
 	itrs := make([]query.Iterator, 0)
@@ -258,8 +269,7 @@ func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influx
 	}
 	return query.Iterators(itrs).Merge(opt)
 }
-
-func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
+func (a *LocalShardMapping) ExecuteCreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
 	resultCh := make(chan *query.Iterator)
 	ctxTimeOut := context.Background()
 	var wait sync.WaitGroup
@@ -274,7 +284,7 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 				defer wait.Done()
 				var resp RpcResponse
 				err = client.Call("QueryExecutor.DistributeQuery", RpcRequest{
-					Source: *m,
+					Source: EncodeSource(m),
 					Opt:    &opt,
 				}, &resp)
 				if err == nil {
@@ -307,6 +317,36 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 	}(resultCh)
 	for i := range resultCh {
 		itrs = append(itrs, *i)
+	}
+	return query.Iterators(itrs).Merge(opt)
+}
+
+func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
+	itrs := make([]query.Iterator, 0)
+	measurements := a.GetMeasurementsBySource(m)
+	if measurements != nil && len(measurements) > 0 {
+		for _, name := range measurements {
+			it, err := a.ExecuteCreateIterator(ctx, &influxql.Measurement{
+				Database:        m.Database,
+				Name:            name,
+				IsTarget:        m.IsTarget,
+				SystemIterator:  m.SystemIterator,
+				RetentionPolicy: m.RetentionPolicy,
+			}, opt)
+			if err != nil {
+				a.s.Logger.Error(" ExecuteCreateIterator failed", zap.Error(err))
+				continue
+			}
+			itrs = append(itrs, it)
+		}
+	} else {
+		it, err := a.ExecuteCreateIterator(ctx, m, opt)
+		if err != nil {
+			a.s.Logger.Error("There is only one measurement and create iterator failed", zap.Error(err))
+		}
+		if it != nil {
+			itrs = append(itrs, it)
+		}
 	}
 	return query.Iterators(itrs).Merge(opt)
 }
@@ -383,7 +423,7 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 			rewriteOpt.EndTime = max.UnixNano()
 		}
 		r := &RpcRequest{
-			Source: *m,
+			Source: EncodeSource(m),
 			Opt:    &opt,
 		}
 		client, err := rpc.Dial("tcp", node.Ip+DefaultRpcBindAddress)
