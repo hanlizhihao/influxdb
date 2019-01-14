@@ -323,6 +323,16 @@ func (a *LocalShardMapping) ExecuteCreateIterator(ctx context.Context, m *influx
 
 func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
 	itrs := make([]query.Iterator, 0)
+	if m.Regex == nil {
+		it, err := a.ExecuteCreateIterator(ctx, m, opt)
+		if err != nil {
+			a.s.Logger.Error("There is only one measurement and create iterator failed", zap.Error(err))
+		}
+		if it != nil {
+			itrs = append(itrs, it)
+		}
+		return query.Iterators(itrs).Merge(opt)
+	}
 	measurements := a.GetMeasurementsBySource(m)
 	if measurements != nil && len(measurements) > 0 {
 		for _, name := range measurements {
@@ -339,16 +349,10 @@ func (a *LocalShardMapping) CreateIterator(ctx context.Context, m *influxql.Meas
 			}
 			itrs = append(itrs, it)
 		}
-	} else {
-		it, err := a.ExecuteCreateIterator(ctx, m, opt)
-		if err != nil {
-			a.s.Logger.Error("There is only one measurement and create iterator failed", zap.Error(err))
-		}
-		if it != nil {
-			itrs = append(itrs, it)
-		}
+		return query.Iterators(itrs).Merge(opt)
 	}
-	return query.Iterators(itrs).Merge(opt)
+	a.s.Logger.Error("Match no measurement by Regex")
+	return nil, nil
 }
 
 func (a *LocalShardMapping) IteratorCost(m *influxql.Measurement, opt query.IteratorOptions) (query.IteratorCost, error) {
