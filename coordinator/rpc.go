@@ -155,7 +155,7 @@ type UnsignedPoints struct {
 	Enable         bool
 }
 
-func (p *UnsignedPoints) Next() (*query.UnsignedPoint, error) {
+func (p UnsignedPoints) Next() (*query.UnsignedPoint, error) {
 	if len(p.UnsignedPoints) > 1 {
 		point := p.UnsignedPoints[0]
 		p.UnsignedPoints = p.UnsignedPoints[1:]
@@ -181,7 +181,7 @@ type IntegerPoints struct {
 	Enable        bool
 }
 
-func (p *IntegerPoints) Next() (*query.IntegerPoint, error) {
+func (p IntegerPoints) Next() (*query.IntegerPoint, error) {
 	if len(p.IntegerPoints) > 1 {
 		point := p.IntegerPoints[0]
 		p.IntegerPoints = p.IntegerPoints[1:]
@@ -207,7 +207,7 @@ type BooleanPoints struct {
 	Enable        bool
 }
 
-func (p *BooleanPoints) Next() (*query.BooleanPoint, error) {
+func (p BooleanPoints) Next() (*query.BooleanPoint, error) {
 	if len(p.BooleanPoints) > 1 {
 		point := p.BooleanPoints[0]
 		p.BooleanPoints = p.BooleanPoints[1:]
@@ -233,7 +233,7 @@ type StringPoints struct {
 	Enable        bool
 }
 
-func (p *StringPoints) Next() (*query.StringPoint, error) {
+func (p StringPoints) Next() (*query.StringPoint, error) {
 	if len(p.StringPoints) > 1 {
 		point := p.StringPoints[0]
 		p.StringPoints = p.StringPoints[1:]
@@ -250,6 +250,32 @@ func (p StringPoints) Close() error {
 	return nil
 }
 func (p StringPoints) Stats() query.IteratorStats {
+	return p.IteratorStats
+}
+
+type FloatPoints struct {
+	FloatPoints   []Point
+	IteratorStats query.IteratorStats
+	Enable        bool
+}
+
+func (p FloatPoints) Next() (*query.FloatPoint, error) {
+	if len(p.FloatPoints) > 1 {
+		point := p.FloatPoints[0]
+		p.FloatPoints = p.FloatPoints[1:]
+		return point.DecodeFloat(), nil
+	}
+	if len(p.FloatPoints) == 1 {
+		point := p.FloatPoints[0]
+		p.FloatPoints = make([]Point, 0)
+		return point.DecodeFloat(), nil
+	}
+	return nil, nil
+}
+func (p FloatPoints) Close() error {
+	return nil
+}
+func (p FloatPoints) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
@@ -531,32 +557,6 @@ func decodeAux(pb []Aux) []interface{} {
 		}
 	}
 	return aux
-}
-
-type FloatPoints struct {
-	FloatPoints   []Point
-	IteratorStats query.IteratorStats
-	Enable        bool
-}
-
-func (p *FloatPoints) Next() (*query.FloatPoint, error) {
-	if len(p.FloatPoints) > 1 {
-		point := p.FloatPoints[0]
-		p.FloatPoints = p.FloatPoints[1:]
-		return point.DecodeFloat(), nil
-	}
-	if len(p.FloatPoints) == 1 {
-		point := p.FloatPoints[0]
-		p.FloatPoints = make([]Point, 0)
-		return point.DecodeFloat(), nil
-	}
-	return nil, nil
-}
-func (p FloatPoints) Close() error {
-	return nil
-}
-func (p FloatPoints) Stats() query.IteratorStats {
-	return p.IteratorStats
 }
 
 func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
