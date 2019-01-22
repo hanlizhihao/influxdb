@@ -182,46 +182,46 @@ func (itr *floatInstrumentedIterator) Close() error {
 }
 
 type floatIterator struct {
-	cur   floatCursor
-	aux   []cursorAt
-	conds struct {
+	Cur   floatCursor
+	Aux   []cursorAt
+	Conds struct {
 		names []string
 		curs  []cursorAt
 	}
-	opt query.IteratorOptions
+	Opt query.IteratorOptions
 
-	m     map[string]interface{} // map used for condition evaluation
-	point query.FloatPoint       // reusable buffer
+	M     map[string]interface{} // map used for condition evaluation
+	Point query.FloatPoint       // reusable buffer
 
-	statsLock sync.Mutex
-	stats     query.IteratorStats
-	statsBuf  query.IteratorStats
+	statsLock  sync.Mutex
+	StatsFiled query.IteratorStats
+	StatsBuf   query.IteratorStats
 }
 
 func newFloatIterator(name string, tags query.Tags, opt query.IteratorOptions, cur floatCursor, aux []cursorAt, conds []cursorAt, condNames []string) *floatIterator {
 	itr := &floatIterator{
-		cur: cur,
-		aux: aux,
-		opt: opt,
-		point: query.FloatPoint{
+		Cur: cur,
+		Aux: aux,
+		Opt: opt,
+		Point: query.FloatPoint{
 			Name: name,
 			Tags: tags,
 		},
-		statsBuf: query.IteratorStats{
+		StatsBuf: query.IteratorStats{
 			SeriesN: 1,
 		},
 	}
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 
 	if len(aux) > 0 {
-		itr.point.Aux = make([]interface{}, len(aux))
+		itr.Point.Aux = make([]interface{}, len(aux))
 	}
 
 	if opt.Condition != nil {
-		itr.m = make(map[string]interface{}, len(aux)+len(conds))
+		itr.M = make(map[string]interface{}, len(aux)+len(conds))
 	}
-	itr.conds.names = condNames
-	itr.conds.curs = conds
+	itr.Conds.names = condNames
+	itr.Conds.curs = conds
 
 	return itr
 }
@@ -231,91 +231,91 @@ func (itr *floatIterator) Next() (*query.FloatPoint, error) {
 	for {
 		seek := tsdb.EOF
 
-		if itr.cur != nil {
+		if itr.Cur != nil {
 			// Read from the main cursor if we have one.
-			itr.point.Time, itr.point.Value = itr.cur.nextFloat()
-			seek = itr.point.Time
+			itr.Point.Time, itr.Point.Value = itr.Cur.nextFloat()
+			seek = itr.Point.Time
 		} else {
 			// Otherwise find lowest aux timestamp.
-			for i := range itr.aux {
-				if k, _ := itr.aux[i].peek(); k != tsdb.EOF {
-					if seek == tsdb.EOF || (itr.opt.Ascending && k < seek) || (!itr.opt.Ascending && k > seek) {
+			for i := range itr.Aux {
+				if k, _ := itr.Aux[i].peek(); k != tsdb.EOF {
+					if seek == tsdb.EOF || (itr.Opt.Ascending && k < seek) || (!itr.Opt.Ascending && k > seek) {
 						seek = k
 					}
 				}
 			}
-			itr.point.Time = seek
+			itr.Point.Time = seek
 		}
 
 		// Exit if we have no more points or we are outside our time range.
-		if itr.point.Time == tsdb.EOF {
+		if itr.Point.Time == tsdb.EOF {
 			itr.copyStats()
 			return nil, nil
-		} else if itr.opt.Ascending && itr.point.Time > itr.opt.EndTime {
+		} else if itr.Opt.Ascending && itr.Point.Time > itr.Opt.EndTime {
 			itr.copyStats()
 			return nil, nil
-		} else if !itr.opt.Ascending && itr.point.Time < itr.opt.StartTime {
+		} else if !itr.Opt.Ascending && itr.Point.Time < itr.Opt.StartTime {
 			itr.copyStats()
 			return nil, nil
 		}
 
 		// Read from each auxiliary cursor.
-		for i := range itr.opt.Aux {
-			itr.point.Aux[i] = itr.aux[i].nextAt(seek)
+		for i := range itr.Opt.Aux {
+			itr.Point.Aux[i] = itr.Aux[i].nextAt(seek)
 		}
 
 		// Read from condition field cursors.
-		for i := range itr.conds.curs {
-			itr.m[itr.conds.names[i]] = itr.conds.curs[i].nextAt(seek)
+		for i := range itr.Conds.curs {
+			itr.M[itr.Conds.names[i]] = itr.Conds.curs[i].nextAt(seek)
 		}
 
 		// Evaluate condition, if one exists. Retry if it fails.
 		valuer := influxql.ValuerEval{
 			Valuer: influxql.MultiValuer(
 				query.MathValuer{},
-				influxql.MapValuer(itr.m),
+				influxql.MapValuer(itr.M),
 			),
 		}
-		if itr.opt.Condition != nil && !valuer.EvalBool(itr.opt.Condition) {
+		if itr.Opt.Condition != nil && !valuer.EvalBool(itr.Opt.Condition) {
 			continue
 		}
 
 		// Track points returned.
-		itr.statsBuf.PointN++
+		itr.StatsBuf.PointN++
 
 		// Copy buffer to stats periodically.
-		if itr.statsBuf.PointN%statsBufferCopyIntervalN == 0 {
+		if itr.StatsBuf.PointN%statsBufferCopyIntervalN == 0 {
 			itr.copyStats()
 		}
 
-		return &itr.point, nil
+		return &itr.Point, nil
 	}
 }
 
 // copyStats copies from the itr stats buffer to the stats under lock.
 func (itr *floatIterator) copyStats() {
 	itr.statsLock.Lock()
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 	itr.statsLock.Unlock()
 }
 
 // Stats returns stats on the points processed.
 func (itr *floatIterator) Stats() query.IteratorStats {
 	itr.statsLock.Lock()
-	stats := itr.stats
+	stats := itr.StatsFiled
 	itr.statsLock.Unlock()
 	return stats
 }
 
 // Close closes the iterator.
 func (itr *floatIterator) Close() error {
-	cursorsAt(itr.aux).close()
-	itr.aux = nil
-	cursorsAt(itr.conds.curs).close()
-	itr.conds.curs = nil
-	if itr.cur != nil {
-		err := itr.cur.close()
-		itr.cur = nil
+	cursorsAt(itr.Aux).close()
+	itr.Aux = nil
+	cursorsAt(itr.Conds.curs).close()
+	itr.Conds.curs = nil
+	if itr.Cur != nil {
+		err := itr.Cur.close()
+		itr.Cur = nil
 		return err
 	}
 	return nil
@@ -323,35 +323,35 @@ func (itr *floatIterator) Close() error {
 
 // floatLimitIterator
 type floatLimitIterator struct {
-	input query.FloatIterator
-	opt   query.IteratorOptions
-	n     int
+	Input query.FloatIterator
+	Opt   query.IteratorOptions
+	N     int
 }
 
 func newFloatLimitIterator(input query.FloatIterator, opt query.IteratorOptions) *floatLimitIterator {
 	return &floatLimitIterator{
-		input: input,
-		opt:   opt,
+		Input: input,
+		Opt:   opt,
 	}
 }
 
-func (itr *floatLimitIterator) Stats() query.IteratorStats { return itr.input.Stats() }
-func (itr *floatLimitIterator) Close() error               { return itr.input.Close() }
+func (itr *floatLimitIterator) Stats() query.IteratorStats { return itr.Input.Stats() }
+func (itr *floatLimitIterator) Close() error               { return itr.Input.Close() }
 
 func (itr *floatLimitIterator) Next() (*query.FloatPoint, error) {
 	// Check if we are beyond the limit.
-	if (itr.n - itr.opt.Offset) > itr.opt.Limit {
+	if (itr.N - itr.Opt.Offset) > itr.Opt.Limit {
 		return nil, nil
 	}
 
 	// Read the next point.
-	p, err := itr.input.Next()
+	p, err := itr.Input.Next()
 	if p == nil || err != nil {
 		return nil, err
 	}
 
 	// Increment counter.
-	itr.n++
+	itr.N++
 
 	// Offsets are handled by a higher level iterator so return all points.
 	return p, nil
@@ -660,46 +660,46 @@ func (itr *integerInstrumentedIterator) Close() error {
 }
 
 type integerIterator struct {
-	cur   integerCursor
-	aux   []cursorAt
-	conds struct {
+	Cur   integerCursor
+	Aux   []cursorAt
+	Conds struct {
 		names []string
 		curs  []cursorAt
 	}
-	opt query.IteratorOptions
+	Opt query.IteratorOptions
 
-	m     map[string]interface{} // map used for condition evaluation
-	point query.IntegerPoint     // reusable buffer
+	M     map[string]interface{} // map used for condition evaluation
+	Point query.IntegerPoint     // reusable buffer
 
-	statsLock sync.Mutex
-	stats     query.IteratorStats
-	statsBuf  query.IteratorStats
+	statsLock  sync.Mutex
+	StatsFiled query.IteratorStats
+	StatsBuf   query.IteratorStats
 }
 
 func newIntegerIterator(name string, tags query.Tags, opt query.IteratorOptions, cur integerCursor, aux []cursorAt, conds []cursorAt, condNames []string) *integerIterator {
 	itr := &integerIterator{
-		cur: cur,
-		aux: aux,
-		opt: opt,
-		point: query.IntegerPoint{
+		Cur: cur,
+		Aux: aux,
+		Opt: opt,
+		Point: query.IntegerPoint{
 			Name: name,
 			Tags: tags,
 		},
-		statsBuf: query.IteratorStats{
+		StatsBuf: query.IteratorStats{
 			SeriesN: 1,
 		},
 	}
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 
 	if len(aux) > 0 {
-		itr.point.Aux = make([]interface{}, len(aux))
+		itr.Point.Aux = make([]interface{}, len(aux))
 	}
 
 	if opt.Condition != nil {
-		itr.m = make(map[string]interface{}, len(aux)+len(conds))
+		itr.M = make(map[string]interface{}, len(aux)+len(conds))
 	}
-	itr.conds.names = condNames
-	itr.conds.curs = conds
+	itr.Conds.names = condNames
+	itr.Conds.curs = conds
 
 	return itr
 }
@@ -709,91 +709,91 @@ func (itr *integerIterator) Next() (*query.IntegerPoint, error) {
 	for {
 		seek := tsdb.EOF
 
-		if itr.cur != nil {
+		if itr.Cur != nil {
 			// Read from the main cursor if we have one.
-			itr.point.Time, itr.point.Value = itr.cur.nextInteger()
-			seek = itr.point.Time
+			itr.Point.Time, itr.Point.Value = itr.Cur.nextInteger()
+			seek = itr.Point.Time
 		} else {
 			// Otherwise find lowest aux timestamp.
-			for i := range itr.aux {
-				if k, _ := itr.aux[i].peek(); k != tsdb.EOF {
-					if seek == tsdb.EOF || (itr.opt.Ascending && k < seek) || (!itr.opt.Ascending && k > seek) {
+			for i := range itr.Aux {
+				if k, _ := itr.Aux[i].peek(); k != tsdb.EOF {
+					if seek == tsdb.EOF || (itr.Opt.Ascending && k < seek) || (!itr.Opt.Ascending && k > seek) {
 						seek = k
 					}
 				}
 			}
-			itr.point.Time = seek
+			itr.Point.Time = seek
 		}
 
 		// Exit if we have no more points or we are outside our time range.
-		if itr.point.Time == tsdb.EOF {
+		if itr.Point.Time == tsdb.EOF {
 			itr.copyStats()
 			return nil, nil
-		} else if itr.opt.Ascending && itr.point.Time > itr.opt.EndTime {
+		} else if itr.Opt.Ascending && itr.Point.Time > itr.Opt.EndTime {
 			itr.copyStats()
 			return nil, nil
-		} else if !itr.opt.Ascending && itr.point.Time < itr.opt.StartTime {
+		} else if !itr.Opt.Ascending && itr.Point.Time < itr.Opt.StartTime {
 			itr.copyStats()
 			return nil, nil
 		}
 
 		// Read from each auxiliary cursor.
-		for i := range itr.opt.Aux {
-			itr.point.Aux[i] = itr.aux[i].nextAt(seek)
+		for i := range itr.Opt.Aux {
+			itr.Point.Aux[i] = itr.Aux[i].nextAt(seek)
 		}
 
 		// Read from condition field cursors.
-		for i := range itr.conds.curs {
-			itr.m[itr.conds.names[i]] = itr.conds.curs[i].nextAt(seek)
+		for i := range itr.Conds.curs {
+			itr.M[itr.Conds.names[i]] = itr.Conds.curs[i].nextAt(seek)
 		}
 
 		// Evaluate condition, if one exists. Retry if it fails.
 		valuer := influxql.ValuerEval{
 			Valuer: influxql.MultiValuer(
 				query.MathValuer{},
-				influxql.MapValuer(itr.m),
+				influxql.MapValuer(itr.M),
 			),
 		}
-		if itr.opt.Condition != nil && !valuer.EvalBool(itr.opt.Condition) {
+		if itr.Opt.Condition != nil && !valuer.EvalBool(itr.Opt.Condition) {
 			continue
 		}
 
 		// Track points returned.
-		itr.statsBuf.PointN++
+		itr.StatsBuf.PointN++
 
 		// Copy buffer to stats periodically.
-		if itr.statsBuf.PointN%statsBufferCopyIntervalN == 0 {
+		if itr.StatsBuf.PointN%statsBufferCopyIntervalN == 0 {
 			itr.copyStats()
 		}
 
-		return &itr.point, nil
+		return &itr.Point, nil
 	}
 }
 
 // copyStats copies from the itr stats buffer to the stats under lock.
 func (itr *integerIterator) copyStats() {
 	itr.statsLock.Lock()
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 	itr.statsLock.Unlock()
 }
 
 // Stats returns stats on the points processed.
 func (itr *integerIterator) Stats() query.IteratorStats {
 	itr.statsLock.Lock()
-	stats := itr.stats
+	stats := itr.StatsFiled
 	itr.statsLock.Unlock()
 	return stats
 }
 
 // Close closes the iterator.
 func (itr *integerIterator) Close() error {
-	cursorsAt(itr.aux).close()
-	itr.aux = nil
-	cursorsAt(itr.conds.curs).close()
-	itr.conds.curs = nil
-	if itr.cur != nil {
-		err := itr.cur.close()
-		itr.cur = nil
+	cursorsAt(itr.Aux).close()
+	itr.Aux = nil
+	cursorsAt(itr.Conds.curs).close()
+	itr.Conds.curs = nil
+	if itr.Cur != nil {
+		err := itr.Cur.close()
+		itr.Cur = nil
 		return err
 	}
 	return nil
@@ -801,35 +801,35 @@ func (itr *integerIterator) Close() error {
 
 // integerLimitIterator
 type integerLimitIterator struct {
-	input query.IntegerIterator
-	opt   query.IteratorOptions
-	n     int
+	Input query.IntegerIterator
+	Opt   query.IteratorOptions
+	N     int
 }
 
 func newIntegerLimitIterator(input query.IntegerIterator, opt query.IteratorOptions) *integerLimitIterator {
 	return &integerLimitIterator{
-		input: input,
-		opt:   opt,
+		Input: input,
+		Opt:   opt,
 	}
 }
 
-func (itr *integerLimitIterator) Stats() query.IteratorStats { return itr.input.Stats() }
-func (itr *integerLimitIterator) Close() error               { return itr.input.Close() }
+func (itr *integerLimitIterator) Stats() query.IteratorStats { return itr.Input.Stats() }
+func (itr *integerLimitIterator) Close() error               { return itr.Input.Close() }
 
 func (itr *integerLimitIterator) Next() (*query.IntegerPoint, error) {
 	// Check if we are beyond the limit.
-	if (itr.n - itr.opt.Offset) > itr.opt.Limit {
+	if (itr.N - itr.Opt.Offset) > itr.Opt.Limit {
 		return nil, nil
 	}
 
 	// Read the next point.
-	p, err := itr.input.Next()
+	p, err := itr.Input.Next()
 	if p == nil || err != nil {
 		return nil, err
 	}
 
 	// Increment counter.
-	itr.n++
+	itr.N++
 
 	// Offsets are handled by a higher level iterator so return all points.
 	return p, nil
@@ -1138,46 +1138,46 @@ func (itr *unsignedInstrumentedIterator) Close() error {
 }
 
 type unsignedIterator struct {
-	cur   unsignedCursor
-	aux   []cursorAt
-	conds struct {
+	Cur   unsignedCursor
+	Aux   []cursorAt
+	Conds struct {
 		names []string
 		curs  []cursorAt
 	}
-	opt query.IteratorOptions
+	Opt query.IteratorOptions
 
-	m     map[string]interface{} // map used for condition evaluation
-	point query.UnsignedPoint    // reusable buffer
+	M     map[string]interface{} // map used for condition evaluation
+	Point query.UnsignedPoint    // reusable buffer
 
-	statsLock sync.Mutex
-	stats     query.IteratorStats
-	statsBuf  query.IteratorStats
+	statsLock  sync.Mutex
+	StatsFiled query.IteratorStats
+	StatsBuf   query.IteratorStats
 }
 
 func newUnsignedIterator(name string, tags query.Tags, opt query.IteratorOptions, cur unsignedCursor, aux []cursorAt, conds []cursorAt, condNames []string) *unsignedIterator {
 	itr := &unsignedIterator{
-		cur: cur,
-		aux: aux,
-		opt: opt,
-		point: query.UnsignedPoint{
+		Cur: cur,
+		Aux: aux,
+		Opt: opt,
+		Point: query.UnsignedPoint{
 			Name: name,
 			Tags: tags,
 		},
-		statsBuf: query.IteratorStats{
+		StatsBuf: query.IteratorStats{
 			SeriesN: 1,
 		},
 	}
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 
 	if len(aux) > 0 {
-		itr.point.Aux = make([]interface{}, len(aux))
+		itr.Point.Aux = make([]interface{}, len(aux))
 	}
 
 	if opt.Condition != nil {
-		itr.m = make(map[string]interface{}, len(aux)+len(conds))
+		itr.M = make(map[string]interface{}, len(aux)+len(conds))
 	}
-	itr.conds.names = condNames
-	itr.conds.curs = conds
+	itr.Conds.names = condNames
+	itr.Conds.curs = conds
 
 	return itr
 }
@@ -1187,91 +1187,91 @@ func (itr *unsignedIterator) Next() (*query.UnsignedPoint, error) {
 	for {
 		seek := tsdb.EOF
 
-		if itr.cur != nil {
+		if itr.Cur != nil {
 			// Read from the main cursor if we have one.
-			itr.point.Time, itr.point.Value = itr.cur.nextUnsigned()
-			seek = itr.point.Time
+			itr.Point.Time, itr.Point.Value = itr.Cur.nextUnsigned()
+			seek = itr.Point.Time
 		} else {
 			// Otherwise find lowest aux timestamp.
-			for i := range itr.aux {
-				if k, _ := itr.aux[i].peek(); k != tsdb.EOF {
-					if seek == tsdb.EOF || (itr.opt.Ascending && k < seek) || (!itr.opt.Ascending && k > seek) {
+			for i := range itr.Aux {
+				if k, _ := itr.Aux[i].peek(); k != tsdb.EOF {
+					if seek == tsdb.EOF || (itr.Opt.Ascending && k < seek) || (!itr.Opt.Ascending && k > seek) {
 						seek = k
 					}
 				}
 			}
-			itr.point.Time = seek
+			itr.Point.Time = seek
 		}
 
 		// Exit if we have no more points or we are outside our time range.
-		if itr.point.Time == tsdb.EOF {
+		if itr.Point.Time == tsdb.EOF {
 			itr.copyStats()
 			return nil, nil
-		} else if itr.opt.Ascending && itr.point.Time > itr.opt.EndTime {
+		} else if itr.Opt.Ascending && itr.Point.Time > itr.Opt.EndTime {
 			itr.copyStats()
 			return nil, nil
-		} else if !itr.opt.Ascending && itr.point.Time < itr.opt.StartTime {
+		} else if !itr.Opt.Ascending && itr.Point.Time < itr.Opt.StartTime {
 			itr.copyStats()
 			return nil, nil
 		}
 
 		// Read from each auxiliary cursor.
-		for i := range itr.opt.Aux {
-			itr.point.Aux[i] = itr.aux[i].nextAt(seek)
+		for i := range itr.Opt.Aux {
+			itr.Point.Aux[i] = itr.Aux[i].nextAt(seek)
 		}
 
 		// Read from condition field cursors.
-		for i := range itr.conds.curs {
-			itr.m[itr.conds.names[i]] = itr.conds.curs[i].nextAt(seek)
+		for i := range itr.Conds.curs {
+			itr.M[itr.Conds.names[i]] = itr.Conds.curs[i].nextAt(seek)
 		}
 
 		// Evaluate condition, if one exists. Retry if it fails.
 		valuer := influxql.ValuerEval{
 			Valuer: influxql.MultiValuer(
 				query.MathValuer{},
-				influxql.MapValuer(itr.m),
+				influxql.MapValuer(itr.M),
 			),
 		}
-		if itr.opt.Condition != nil && !valuer.EvalBool(itr.opt.Condition) {
+		if itr.Opt.Condition != nil && !valuer.EvalBool(itr.Opt.Condition) {
 			continue
 		}
 
 		// Track points returned.
-		itr.statsBuf.PointN++
+		itr.StatsBuf.PointN++
 
 		// Copy buffer to stats periodically.
-		if itr.statsBuf.PointN%statsBufferCopyIntervalN == 0 {
+		if itr.StatsBuf.PointN%statsBufferCopyIntervalN == 0 {
 			itr.copyStats()
 		}
 
-		return &itr.point, nil
+		return &itr.Point, nil
 	}
 }
 
 // copyStats copies from the itr stats buffer to the stats under lock.
 func (itr *unsignedIterator) copyStats() {
 	itr.statsLock.Lock()
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 	itr.statsLock.Unlock()
 }
 
 // Stats returns stats on the points processed.
 func (itr *unsignedIterator) Stats() query.IteratorStats {
 	itr.statsLock.Lock()
-	stats := itr.stats
+	stats := itr.StatsFiled
 	itr.statsLock.Unlock()
 	return stats
 }
 
 // Close closes the iterator.
 func (itr *unsignedIterator) Close() error {
-	cursorsAt(itr.aux).close()
-	itr.aux = nil
-	cursorsAt(itr.conds.curs).close()
-	itr.conds.curs = nil
-	if itr.cur != nil {
-		err := itr.cur.close()
-		itr.cur = nil
+	cursorsAt(itr.Aux).close()
+	itr.Aux = nil
+	cursorsAt(itr.Conds.curs).close()
+	itr.Conds.curs = nil
+	if itr.Cur != nil {
+		err := itr.Cur.close()
+		itr.Cur = nil
 		return err
 	}
 	return nil
@@ -1279,35 +1279,35 @@ func (itr *unsignedIterator) Close() error {
 
 // unsignedLimitIterator
 type unsignedLimitIterator struct {
-	input query.UnsignedIterator
-	opt   query.IteratorOptions
-	n     int
+	Input query.UnsignedIterator
+	Opt   query.IteratorOptions
+	N     int
 }
 
 func newUnsignedLimitIterator(input query.UnsignedIterator, opt query.IteratorOptions) *unsignedLimitIterator {
 	return &unsignedLimitIterator{
-		input: input,
-		opt:   opt,
+		Input: input,
+		Opt:   opt,
 	}
 }
 
-func (itr *unsignedLimitIterator) Stats() query.IteratorStats { return itr.input.Stats() }
-func (itr *unsignedLimitIterator) Close() error               { return itr.input.Close() }
+func (itr *unsignedLimitIterator) Stats() query.IteratorStats { return itr.Input.Stats() }
+func (itr *unsignedLimitIterator) Close() error               { return itr.Input.Close() }
 
 func (itr *unsignedLimitIterator) Next() (*query.UnsignedPoint, error) {
 	// Check if we are beyond the limit.
-	if (itr.n - itr.opt.Offset) > itr.opt.Limit {
+	if (itr.N - itr.Opt.Offset) > itr.Opt.Limit {
 		return nil, nil
 	}
 
 	// Read the next point.
-	p, err := itr.input.Next()
+	p, err := itr.Input.Next()
 	if p == nil || err != nil {
 		return nil, err
 	}
 
 	// Increment counter.
-	itr.n++
+	itr.N++
 
 	// Offsets are handled by a higher level iterator so return all points.
 	return p, nil
@@ -1616,46 +1616,46 @@ func (itr *stringInstrumentedIterator) Close() error {
 }
 
 type stringIterator struct {
-	cur   stringCursor
-	aux   []cursorAt
-	conds struct {
+	Cur   stringCursor
+	Aux   []cursorAt
+	Conds struct {
 		names []string
 		curs  []cursorAt
 	}
-	opt query.IteratorOptions
+	Opt query.IteratorOptions
 
-	m     map[string]interface{} // map used for condition evaluation
-	point query.StringPoint      // reusable buffer
+	M     map[string]interface{} // map used for condition evaluation
+	Point query.StringPoint      // reusable buffer
 
-	statsLock sync.Mutex
-	stats     query.IteratorStats
-	statsBuf  query.IteratorStats
+	statsLock  sync.Mutex
+	StatsFiled query.IteratorStats
+	StatsBuf   query.IteratorStats
 }
 
 func newStringIterator(name string, tags query.Tags, opt query.IteratorOptions, cur stringCursor, aux []cursorAt, conds []cursorAt, condNames []string) *stringIterator {
 	itr := &stringIterator{
-		cur: cur,
-		aux: aux,
-		opt: opt,
-		point: query.StringPoint{
+		Cur: cur,
+		Aux: aux,
+		Opt: opt,
+		Point: query.StringPoint{
 			Name: name,
 			Tags: tags,
 		},
-		statsBuf: query.IteratorStats{
+		StatsBuf: query.IteratorStats{
 			SeriesN: 1,
 		},
 	}
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 
 	if len(aux) > 0 {
-		itr.point.Aux = make([]interface{}, len(aux))
+		itr.Point.Aux = make([]interface{}, len(aux))
 	}
 
 	if opt.Condition != nil {
-		itr.m = make(map[string]interface{}, len(aux)+len(conds))
+		itr.M = make(map[string]interface{}, len(aux)+len(conds))
 	}
-	itr.conds.names = condNames
-	itr.conds.curs = conds
+	itr.Conds.names = condNames
+	itr.Conds.curs = conds
 
 	return itr
 }
@@ -1665,91 +1665,91 @@ func (itr *stringIterator) Next() (*query.StringPoint, error) {
 	for {
 		seek := tsdb.EOF
 
-		if itr.cur != nil {
+		if itr.Cur != nil {
 			// Read from the main cursor if we have one.
-			itr.point.Time, itr.point.Value = itr.cur.nextString()
-			seek = itr.point.Time
+			itr.Point.Time, itr.Point.Value = itr.Cur.nextString()
+			seek = itr.Point.Time
 		} else {
 			// Otherwise find lowest aux timestamp.
-			for i := range itr.aux {
-				if k, _ := itr.aux[i].peek(); k != tsdb.EOF {
-					if seek == tsdb.EOF || (itr.opt.Ascending && k < seek) || (!itr.opt.Ascending && k > seek) {
+			for i := range itr.Aux {
+				if k, _ := itr.Aux[i].peek(); k != tsdb.EOF {
+					if seek == tsdb.EOF || (itr.Opt.Ascending && k < seek) || (!itr.Opt.Ascending && k > seek) {
 						seek = k
 					}
 				}
 			}
-			itr.point.Time = seek
+			itr.Point.Time = seek
 		}
 
 		// Exit if we have no more points or we are outside our time range.
-		if itr.point.Time == tsdb.EOF {
+		if itr.Point.Time == tsdb.EOF {
 			itr.copyStats()
 			return nil, nil
-		} else if itr.opt.Ascending && itr.point.Time > itr.opt.EndTime {
+		} else if itr.Opt.Ascending && itr.Point.Time > itr.Opt.EndTime {
 			itr.copyStats()
 			return nil, nil
-		} else if !itr.opt.Ascending && itr.point.Time < itr.opt.StartTime {
+		} else if !itr.Opt.Ascending && itr.Point.Time < itr.Opt.StartTime {
 			itr.copyStats()
 			return nil, nil
 		}
 
 		// Read from each auxiliary cursor.
-		for i := range itr.opt.Aux {
-			itr.point.Aux[i] = itr.aux[i].nextAt(seek)
+		for i := range itr.Opt.Aux {
+			itr.Point.Aux[i] = itr.Aux[i].nextAt(seek)
 		}
 
 		// Read from condition field cursors.
-		for i := range itr.conds.curs {
-			itr.m[itr.conds.names[i]] = itr.conds.curs[i].nextAt(seek)
+		for i := range itr.Conds.curs {
+			itr.M[itr.Conds.names[i]] = itr.Conds.curs[i].nextAt(seek)
 		}
 
 		// Evaluate condition, if one exists. Retry if it fails.
 		valuer := influxql.ValuerEval{
 			Valuer: influxql.MultiValuer(
 				query.MathValuer{},
-				influxql.MapValuer(itr.m),
+				influxql.MapValuer(itr.M),
 			),
 		}
-		if itr.opt.Condition != nil && !valuer.EvalBool(itr.opt.Condition) {
+		if itr.Opt.Condition != nil && !valuer.EvalBool(itr.Opt.Condition) {
 			continue
 		}
 
 		// Track points returned.
-		itr.statsBuf.PointN++
+		itr.StatsBuf.PointN++
 
 		// Copy buffer to stats periodically.
-		if itr.statsBuf.PointN%statsBufferCopyIntervalN == 0 {
+		if itr.StatsBuf.PointN%statsBufferCopyIntervalN == 0 {
 			itr.copyStats()
 		}
 
-		return &itr.point, nil
+		return &itr.Point, nil
 	}
 }
 
 // copyStats copies from the itr stats buffer to the stats under lock.
 func (itr *stringIterator) copyStats() {
 	itr.statsLock.Lock()
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 	itr.statsLock.Unlock()
 }
 
 // Stats returns stats on the points processed.
 func (itr *stringIterator) Stats() query.IteratorStats {
 	itr.statsLock.Lock()
-	stats := itr.stats
+	stats := itr.StatsFiled
 	itr.statsLock.Unlock()
 	return stats
 }
 
 // Close closes the iterator.
 func (itr *stringIterator) Close() error {
-	cursorsAt(itr.aux).close()
-	itr.aux = nil
-	cursorsAt(itr.conds.curs).close()
-	itr.conds.curs = nil
-	if itr.cur != nil {
-		err := itr.cur.close()
-		itr.cur = nil
+	cursorsAt(itr.Aux).close()
+	itr.Aux = nil
+	cursorsAt(itr.Conds.curs).close()
+	itr.Conds.curs = nil
+	if itr.Cur != nil {
+		err := itr.Cur.close()
+		itr.Cur = nil
 		return err
 	}
 	return nil
@@ -1757,35 +1757,35 @@ func (itr *stringIterator) Close() error {
 
 // stringLimitIterator
 type stringLimitIterator struct {
-	input query.StringIterator
-	opt   query.IteratorOptions
-	n     int
+	Input query.StringIterator
+	Opt   query.IteratorOptions
+	N     int
 }
 
 func newStringLimitIterator(input query.StringIterator, opt query.IteratorOptions) *stringLimitIterator {
 	return &stringLimitIterator{
-		input: input,
-		opt:   opt,
+		Input: input,
+		Opt:   opt,
 	}
 }
 
-func (itr *stringLimitIterator) Stats() query.IteratorStats { return itr.input.Stats() }
-func (itr *stringLimitIterator) Close() error               { return itr.input.Close() }
+func (itr *stringLimitIterator) Stats() query.IteratorStats { return itr.Input.Stats() }
+func (itr *stringLimitIterator) Close() error               { return itr.Input.Close() }
 
 func (itr *stringLimitIterator) Next() (*query.StringPoint, error) {
 	// Check if we are beyond the limit.
-	if (itr.n - itr.opt.Offset) > itr.opt.Limit {
+	if (itr.N - itr.Opt.Offset) > itr.Opt.Limit {
 		return nil, nil
 	}
 
 	// Read the next point.
-	p, err := itr.input.Next()
+	p, err := itr.Input.Next()
 	if p == nil || err != nil {
 		return nil, err
 	}
 
 	// Increment counter.
-	itr.n++
+	itr.N++
 
 	// Offsets are handled by a higher level iterator so return all points.
 	return p, nil
@@ -2094,46 +2094,46 @@ func (itr *booleanInstrumentedIterator) Close() error {
 }
 
 type booleanIterator struct {
-	cur   booleanCursor
-	aux   []cursorAt
-	conds struct {
+	Cur   booleanCursor
+	Aux   []cursorAt
+	Conds struct {
 		names []string
 		curs  []cursorAt
 	}
-	opt query.IteratorOptions
+	Opt query.IteratorOptions
 
-	m     map[string]interface{} // map used for condition evaluation
-	point query.BooleanPoint     // reusable buffer
+	M     map[string]interface{} // map used for condition evaluation
+	Point query.BooleanPoint     // reusable buffer
 
-	statsLock sync.Mutex
-	stats     query.IteratorStats
-	statsBuf  query.IteratorStats
+	statsLock  sync.Mutex
+	StatsFiled query.IteratorStats
+	StatsBuf   query.IteratorStats
 }
 
 func newBooleanIterator(name string, tags query.Tags, opt query.IteratorOptions, cur booleanCursor, aux []cursorAt, conds []cursorAt, condNames []string) *booleanIterator {
 	itr := &booleanIterator{
-		cur: cur,
-		aux: aux,
-		opt: opt,
-		point: query.BooleanPoint{
+		Cur: cur,
+		Aux: aux,
+		Opt: opt,
+		Point: query.BooleanPoint{
 			Name: name,
 			Tags: tags,
 		},
-		statsBuf: query.IteratorStats{
+		StatsBuf: query.IteratorStats{
 			SeriesN: 1,
 		},
 	}
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 
 	if len(aux) > 0 {
-		itr.point.Aux = make([]interface{}, len(aux))
+		itr.Point.Aux = make([]interface{}, len(aux))
 	}
 
 	if opt.Condition != nil {
-		itr.m = make(map[string]interface{}, len(aux)+len(conds))
+		itr.M = make(map[string]interface{}, len(aux)+len(conds))
 	}
-	itr.conds.names = condNames
-	itr.conds.curs = conds
+	itr.Conds.names = condNames
+	itr.Conds.curs = conds
 
 	return itr
 }
@@ -2143,91 +2143,91 @@ func (itr *booleanIterator) Next() (*query.BooleanPoint, error) {
 	for {
 		seek := tsdb.EOF
 
-		if itr.cur != nil {
+		if itr.Cur != nil {
 			// Read from the main cursor if we have one.
-			itr.point.Time, itr.point.Value = itr.cur.nextBoolean()
-			seek = itr.point.Time
+			itr.Point.Time, itr.Point.Value = itr.Cur.nextBoolean()
+			seek = itr.Point.Time
 		} else {
 			// Otherwise find lowest aux timestamp.
-			for i := range itr.aux {
-				if k, _ := itr.aux[i].peek(); k != tsdb.EOF {
-					if seek == tsdb.EOF || (itr.opt.Ascending && k < seek) || (!itr.opt.Ascending && k > seek) {
+			for i := range itr.Aux {
+				if k, _ := itr.Aux[i].peek(); k != tsdb.EOF {
+					if seek == tsdb.EOF || (itr.Opt.Ascending && k < seek) || (!itr.Opt.Ascending && k > seek) {
 						seek = k
 					}
 				}
 			}
-			itr.point.Time = seek
+			itr.Point.Time = seek
 		}
 
 		// Exit if we have no more points or we are outside our time range.
-		if itr.point.Time == tsdb.EOF {
+		if itr.Point.Time == tsdb.EOF {
 			itr.copyStats()
 			return nil, nil
-		} else if itr.opt.Ascending && itr.point.Time > itr.opt.EndTime {
+		} else if itr.Opt.Ascending && itr.Point.Time > itr.Opt.EndTime {
 			itr.copyStats()
 			return nil, nil
-		} else if !itr.opt.Ascending && itr.point.Time < itr.opt.StartTime {
+		} else if !itr.Opt.Ascending && itr.Point.Time < itr.Opt.StartTime {
 			itr.copyStats()
 			return nil, nil
 		}
 
 		// Read from each auxiliary cursor.
-		for i := range itr.opt.Aux {
-			itr.point.Aux[i] = itr.aux[i].nextAt(seek)
+		for i := range itr.Opt.Aux {
+			itr.Point.Aux[i] = itr.Aux[i].nextAt(seek)
 		}
 
 		// Read from condition field cursors.
-		for i := range itr.conds.curs {
-			itr.m[itr.conds.names[i]] = itr.conds.curs[i].nextAt(seek)
+		for i := range itr.Conds.curs {
+			itr.M[itr.Conds.names[i]] = itr.Conds.curs[i].nextAt(seek)
 		}
 
 		// Evaluate condition, if one exists. Retry if it fails.
 		valuer := influxql.ValuerEval{
 			Valuer: influxql.MultiValuer(
 				query.MathValuer{},
-				influxql.MapValuer(itr.m),
+				influxql.MapValuer(itr.M),
 			),
 		}
-		if itr.opt.Condition != nil && !valuer.EvalBool(itr.opt.Condition) {
+		if itr.Opt.Condition != nil && !valuer.EvalBool(itr.Opt.Condition) {
 			continue
 		}
 
 		// Track points returned.
-		itr.statsBuf.PointN++
+		itr.StatsBuf.PointN++
 
 		// Copy buffer to stats periodically.
-		if itr.statsBuf.PointN%statsBufferCopyIntervalN == 0 {
+		if itr.StatsBuf.PointN%statsBufferCopyIntervalN == 0 {
 			itr.copyStats()
 		}
 
-		return &itr.point, nil
+		return &itr.Point, nil
 	}
 }
 
 // copyStats copies from the itr stats buffer to the stats under lock.
 func (itr *booleanIterator) copyStats() {
 	itr.statsLock.Lock()
-	itr.stats = itr.statsBuf
+	itr.StatsFiled = itr.StatsBuf
 	itr.statsLock.Unlock()
 }
 
 // Stats returns stats on the points processed.
 func (itr *booleanIterator) Stats() query.IteratorStats {
 	itr.statsLock.Lock()
-	stats := itr.stats
+	stats := itr.StatsFiled
 	itr.statsLock.Unlock()
 	return stats
 }
 
 // Close closes the iterator.
 func (itr *booleanIterator) Close() error {
-	cursorsAt(itr.aux).close()
-	itr.aux = nil
-	cursorsAt(itr.conds.curs).close()
-	itr.conds.curs = nil
-	if itr.cur != nil {
-		err := itr.cur.close()
-		itr.cur = nil
+	cursorsAt(itr.Aux).close()
+	itr.Aux = nil
+	cursorsAt(itr.Conds.curs).close()
+	itr.Conds.curs = nil
+	if itr.Cur != nil {
+		err := itr.Cur.close()
+		itr.Cur = nil
 		return err
 	}
 	return nil
@@ -2235,35 +2235,35 @@ func (itr *booleanIterator) Close() error {
 
 // booleanLimitIterator
 type booleanLimitIterator struct {
-	input query.BooleanIterator
-	opt   query.IteratorOptions
-	n     int
+	Input query.BooleanIterator
+	Opt   query.IteratorOptions
+	N     int
 }
 
 func newBooleanLimitIterator(input query.BooleanIterator, opt query.IteratorOptions) *booleanLimitIterator {
 	return &booleanLimitIterator{
-		input: input,
-		opt:   opt,
+		Input: input,
+		Opt:   opt,
 	}
 }
 
-func (itr *booleanLimitIterator) Stats() query.IteratorStats { return itr.input.Stats() }
-func (itr *booleanLimitIterator) Close() error               { return itr.input.Close() }
+func (itr *booleanLimitIterator) Stats() query.IteratorStats { return itr.Input.Stats() }
+func (itr *booleanLimitIterator) Close() error               { return itr.Input.Close() }
 
 func (itr *booleanLimitIterator) Next() (*query.BooleanPoint, error) {
 	// Check if we are beyond the limit.
-	if (itr.n - itr.opt.Offset) > itr.opt.Limit {
+	if (itr.N - itr.Opt.Offset) > itr.Opt.Limit {
 		return nil, nil
 	}
 
 	// Read the next point.
-	p, err := itr.input.Next()
+	p, err := itr.Input.Next()
 	if p == nil || err != nil {
 		return nil, err
 	}
 
 	// Increment counter.
-	itr.n++
+	itr.N++
 
 	// Offsets are handled by a higher level iterator so return all points.
 	return p, nil

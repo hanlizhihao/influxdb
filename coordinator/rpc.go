@@ -147,15 +147,15 @@ type RpcResponse struct {
 	Strings  *strRpcIterator
 	Booleans *booleanRpcIterator
 	Integers *intRpcIterator
-	Unsigned *UnsignedRpcIterator
+	Unsigned *unsignedRpcIterator
 }
-type UnsignedRpcIterator struct {
+type unsignedRpcIterator struct {
 	UnsignedPoints []Point
 	IteratorStats  query.IteratorStats
 	Enable         bool
 }
 
-func (itr *UnsignedRpcIterator) Next() (*query.UnsignedPoint, error) {
+func (itr *unsignedRpcIterator) Next() (*query.UnsignedPoint, error) {
 	if len(itr.UnsignedPoints) > 1 {
 		point := itr.UnsignedPoints[0]
 		itr.UnsignedPoints = itr.UnsignedPoints[1:]
@@ -168,10 +168,10 @@ func (itr *UnsignedRpcIterator) Next() (*query.UnsignedPoint, error) {
 	}
 	return nil, nil
 }
-func (itr *UnsignedRpcIterator) Close() error {
+func (itr *unsignedRpcIterator) Close() error {
 	return nil
 }
-func (itr *UnsignedRpcIterator) Stats() query.IteratorStats {
+func (itr *unsignedRpcIterator) Stats() query.IteratorStats {
 	return itr.IteratorStats
 }
 
@@ -560,7 +560,23 @@ func decodeAux(pb []Aux) []interface{} {
 }
 
 func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
-	resp := &RpcResponse{}
+	resp := &RpcResponse{
+		Floats: &floatRpcIterator{
+			FloatPoints: make([]Point, 0),
+		},
+		Strings: &strRpcIterator{
+			StringPoints: make([]Point, 0),
+		},
+		Integers: &intRpcIterator{
+			IntegerPoints: make([]Point, 0),
+		},
+		Booleans: &booleanRpcIterator{
+			BooleanPoints: make([]Point, 0),
+		},
+		Unsigned: &unsignedRpcIterator{
+			UnsignedPoints: make([]Point, 0),
+		},
+	}
 	if f, ok := it.(query.FloatIterator); ok {
 		for {
 			// Retrieve the next point from the iterator.

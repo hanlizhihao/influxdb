@@ -164,12 +164,12 @@ func (t *TaskManager) queryError(qid uint64, err error) {
 }
 
 // AttachQuery attaches a running query to be managed by the TaskManager.
-// Returns the query id of the newly attached query or an error if it was
-// unable to assign a query id or attach the query to the TaskManager.
+// Returns the query Id of the newly attached query or an error if it was
+// unable to assign a query Id or attach the query to the TaskManager.
 // This function also returns a channel that will be closed when this
 // query finishes running.
 //
-// After a query finishes running, the system is free to reuse a query id.
+// After a query finishes running, the system is free to reuse a query Id.
 func (t *TaskManager) AttachQuery(q *influxql.Query, opt ExecutionOptions, interrupt <-chan struct{}) (*ExecutionContext, func(), error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -229,7 +229,7 @@ func (t *TaskManager) KillQuery(qid uint64) error {
 	t.mu.Unlock()
 
 	if query == nil {
-		return fmt.Errorf("no such query id: %d", qid)
+		return fmt.Errorf("no such query Id: %d", qid)
 	}
 	return query.kill()
 }
@@ -242,7 +242,7 @@ func (t *TaskManager) DetachQuery(qid uint64) error {
 
 	query := t.queries[qid]
 	if query == nil {
-		return fmt.Errorf("no such query id: %d", qid)
+		return fmt.Errorf("no such query Id: %d", qid)
 	}
 
 	query.close()
@@ -252,7 +252,7 @@ func (t *TaskManager) DetachQuery(qid uint64) error {
 
 // QueryInfo represents the information for a query.
 type QueryInfo struct {
-	ID       uint64        `json:"id"`
+	ID       uint64        `json:"Id"`
 	Query    string        `json:"query"`
 	Database string        `json:"database"`
 	Duration time.Duration `json:"duration"`

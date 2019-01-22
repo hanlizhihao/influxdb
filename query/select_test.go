@@ -2868,7 +2868,7 @@ func TestSelect(t *testing.T) {
 			} else if tt.err != "" {
 				t.Fatal("expected error")
 			} else if a, err := ReadCursor(cur); err != nil {
-				t.Fatalf("unexpected point: %s", err)
+				t.Fatalf("unexpected Point: %s", err)
 			} else if diff := cmp.Diff(tt.rows, a); diff != "" {
 				t.Fatalf("unexpected points:\n%s", diff)
 			}
@@ -3691,7 +3691,7 @@ func TestSelect_BinaryExpr(t *testing.T) {
 		{
 			Name:      "Float_DivisionLHS_Unsigned",
 			Statement: `SELECT 9223372036854775808 / f FROM cpu`,
-			Rows: []query.Row{ // dividing large floats results in inaccurate outputs so these may not be correct, but that is considered normal for floating point
+			Rows: []query.Row{ // dividing large floats results in inaccurate outputs so these may not be correct, but that is considered normal for floating Point
 				{Time: 0 * Second, Series: query.Series{Name: "cpu"}, Values: []interface{}{float64(461168601842738816)}},
 				{Time: 5 * Second, Series: query.Series{Name: "cpu"}, Values: []interface{}{float64(922337203685477632)}},
 				{Time: 9 * Second, Series: query.Series{Name: "cpu"}, Values: []interface{}{float64(485440633518672384)}},

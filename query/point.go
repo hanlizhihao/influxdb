@@ -57,7 +57,7 @@ func (a Points) Clone() []Point {
 		case *BooleanPoint:
 			other[i] = p.Clone()
 		default:
-			panic(fmt.Sprintf("unable to clone point: %T", p))
+			panic(fmt.Sprintf("unable to clone Point: %T", p))
 		}
 	}
 	return other
@@ -66,8 +66,8 @@ func (a Points) Clone() []Point {
 // Tags represent a map of keys and values.
 // It memoizes its key so it can be used efficiently during query execution.
 type Tags struct {
-	id string
-	m  map[string]string
+	Id string
+	M  map[string]string
 }
 
 // NewTags returns a new instance of Tags.
@@ -76,8 +76,8 @@ func NewTags(m map[string]string) Tags {
 		return Tags{}
 	}
 	return Tags{
-		id: string(encodeTags(m)),
-		m:  m,
+		Id: string(encodeTags(m)),
+		M:  m,
 	}
 }
 
@@ -87,7 +87,7 @@ func newTagsID(id string) Tags {
 	if len(m) == 0 {
 		return Tags{}
 	}
-	return Tags{id: id, m: m}
+	return Tags{Id: id, M: m}
 }
 
 // Equal compares if the Tags are equal to each other.
@@ -96,10 +96,10 @@ func (t Tags) Equal(other Tags) bool {
 }
 
 // ID returns the string identifier for the tags.
-func (t Tags) ID() string { return t.id }
+func (t Tags) ID() string { return t.Id }
 
 // KeyValues returns the underlying map for the tags.
-func (t Tags) KeyValues() map[string]string { return t.m }
+func (t Tags) KeyValues() map[string]string { return t.M }
 
 // Keys returns a sorted list of all keys on the tag.
 func (t *Tags) Keys() []string {
@@ -108,7 +108,7 @@ func (t *Tags) Keys() []string {
 	}
 
 	var a []string
-	for k := range t.m {
+	for k := range t.M {
 		a = append(a, k)
 	}
 	sort.Strings(a)
@@ -121,8 +121,8 @@ func (t *Tags) Values() []string {
 		return nil
 	}
 
-	a := make([]string, 0, len(t.m))
-	for _, v := range t.m {
+	a := make([]string, 0, len(t.M))
+	for _, v := range t.M {
 		a = append(a, v)
 	}
 	sort.Strings(a)
@@ -134,7 +134,7 @@ func (t *Tags) Value(k string) string {
 	if t == nil {
 		return ""
 	}
-	return t.m[k]
+	return t.M[k]
 }
 
 // Subset returns a new tags object with a subset of the keys.
@@ -144,14 +144,14 @@ func (t *Tags) Subset(keys []string) Tags {
 	}
 
 	// If keys match existing keys, simply return this tagset.
-	if keysMatch(t.m, keys) {
+	if keysMatch(t.M, keys) {
 		return *t
 	}
 
 	// Otherwise create new tag set.
 	m := make(map[string]string, len(keys))
 	for _, k := range keys {
-		m[k] = t.m[k]
+		m[k] = t.M[k]
 	}
 	return NewTags(m)
 }
@@ -163,10 +163,10 @@ func (t *Tags) Equals(other *Tags) bool {
 	} else if t == nil || other == nil {
 		return false
 	}
-	return t.id == other.id
+	return t.Id == other.Id
 }
 
-// keysMatch returns true if m has exactly the same keys as listed in keys.
+// keysMatch returns true if M has exactly the same keys as listed in keys.
 func keysMatch(m map[string]string, keys []string) bool {
 	if len(keys) != len(m) {
 		return false
@@ -347,19 +347,19 @@ func (dec *PointDecoder) DecodePoint(p *Point) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue

@@ -107,7 +107,7 @@ func (a Iterators) coerce() interface{} {
 }
 
 // Merge combines all iterators into a single iterator.
-// A sorted merge iterator or a merge iterator can be used based on opt.
+// A sorted merge iterator or a merge iterator can be used based on Opt.
 func (a Iterators) Merge(opt IteratorOptions) (Iterator, error) {
 	// Check if this is a call expression.
 	call, ok := opt.Expr.(*influxql.Call)
@@ -187,12 +187,12 @@ func NewParallelMergeIterator(inputs []Iterator, opt IteratorOptions, parallelis
 		return inputs[0]
 	}
 
-	// Limit parallelism to the number of inputs.
+	// Limit parallelism to the number of Inputs.
 	if len(inputs) < parallelism {
 		parallelism = len(inputs)
 	}
 
-	// Determine the number of inputs per output iterator.
+	// Determine the number of Inputs per output iterator.
 	n := len(inputs) / parallelism
 
 	// Group iterators together.
@@ -306,7 +306,7 @@ func NewFilterIterator(input Iterator, cond influxql.Expr, opt IteratorOptions) 
 }
 
 // NewTagSubsetIterator will strip each of the points to a subset of the tag key values
-// for each point it processes.
+// for each Point it processes.
 func NewTagSubsetIterator(input Iterator, opt IteratorOptions) Iterator {
 	if input == nil {
 		return nil
@@ -370,7 +370,7 @@ func NewFillIterator(input Iterator, expr influxql.Expr, opt IteratorOptions) It
 	}
 }
 
-// NewIntervalIterator returns an iterator that sets the time on each point to the interval.
+// NewIntervalIterator returns an iterator that sets the time on each Point to the interval.
 func NewIntervalIterator(input Iterator, opt IteratorOptions) Iterator {
 	switch input := input.(type) {
 	case FloatIterator:
@@ -428,10 +428,10 @@ func NewCloseInterruptIterator(input Iterator, closing <-chan struct{}) Iterator
 
 // IteratorScanner is used to scan the results of an iterator into a map.
 type IteratorScanner interface {
-	// Peek retrieves information about the next point. It returns a timestamp, the name, and the tags.
+	// Peek retrieves information about the next Point. It returns a timestamp, the name, and the tags.
 	Peek() (int64, string, Tags)
 
-	// ScanAt will take a time, name, and tags and scan the point that matches those into the map.
+	// ScanAt will take a time, name, and tags and scan the Point that matches those into the map.
 	ScanAt(ts int64, name string, tags Tags, values map[string]interface{})
 
 	// Stats returns the IteratorStats from the Iterator.
@@ -466,7 +466,7 @@ func NewIteratorScanner(input Iterator, keys []influxql.VarRef, defaultValue int
 	}
 }
 
-// DrainIterator reads and discards all points from itr.
+// DrainIterator reads and discards all points from Itr.
 func DrainIterator(itr Iterator) {
 	defer itr.Close()
 	switch itr := itr.(type) {
@@ -523,7 +523,7 @@ func DrainIterators(itrs []Iterator) {
 			}
 		}
 
-		// Exit once all iterators return a nil point.
+		// Exit once all iterators return a nil Point.
 		if !hasData {
 			break
 		}
@@ -563,7 +563,7 @@ type IteratorOptions struct {
 	// This can be VarRef or a Call.
 	Expr influxql.Expr
 
-	// Auxilary tags or values to also retrieve for the point.
+	// Auxilary tags or values to also retrieve for the Point.
 	Aux []influxql.VarRef
 
 	// Data sources from which to receive data. This is only used for encoding
@@ -738,7 +738,7 @@ func newIteratorOptionsSubstatement(ctx context.Context, stmt *influxql.SelectSt
 	// If the inner query uses a null fill option and is not a raw query,
 	// switch it to none so we don't hit an unnecessary penalty from the
 	// fill iterator. Null values will end up getting stripped by an outer
-	// query anyway so there's no point in having them here. We still need
+	// query anyway so there's no Point in having them here. We still need
 	// all other types of fill iterators because they can affect the result
 	// of the outer query. We also do not do this for raw queries because
 	// there is no fill iterator for them and fill(none) doesn't work with
@@ -921,12 +921,12 @@ func (opt *IteratorOptions) Zone(ns int64) (string, int64) {
 	return name, secToNs * int64(offset)
 }
 
-// MarshalBinary encodes opt into a binary format.
+// MarshalBinary encodes Opt into a binary format.
 func (opt *IteratorOptions) MarshalBinary() ([]byte, error) {
 	return proto.Marshal(encodeIteratorOptions(opt))
 }
 
-// UnmarshalBinary decodes from a binary format in to opt.
+// UnmarshalBinary decodes from a binary format in to Opt.
 func (opt *IteratorOptions) UnmarshalBinary(buf []byte) error {
 	var pb internal.IteratorOptions
 	if err := proto.Unmarshal(buf, &pb); err != nil {
@@ -1273,7 +1273,7 @@ func (c IteratorCost) Combine(other IteratorCost) IteratorCost {
 	}
 }
 
-// floatFastDedupeIterator outputs unique points where the point has a single aux field.
+// floatFastDedupeIterator outputs unique points where the Point has a single aux field.
 type floatFastDedupeIterator struct {
 	input FloatIterator
 	m     map[fastDedupeKey]struct{} // lookup of points already sent
@@ -1293,10 +1293,10 @@ func (itr *floatFastDedupeIterator) Stats() IteratorStats { return itr.input.Sta
 // Close closes the iterator and all child iterators.
 func (itr *floatFastDedupeIterator) Close() error { return itr.input.Close() }
 
-// Next returns the next unique point from the input iterator.
+// Next returns the next unique Point from the input iterator.
 func (itr *floatFastDedupeIterator) Next() (*FloatPoint, error) {
 	for {
-		// Read next point.
+		// Read next Point.
 		// Skip if there are not any aux fields.
 		p, err := itr.input.Next()
 		if p == nil || err != nil {
@@ -1305,7 +1305,7 @@ func (itr *floatFastDedupeIterator) Next() (*FloatPoint, error) {
 			continue
 		}
 
-		// If the point has already been output then move to the next point.
+		// If the Point has already been output then move to the next Point.
 		key := fastDedupeKey{name: p.Name}
 		key.values[0] = p.Aux[0]
 		if len(p.Aux) > 1 {
@@ -1315,7 +1315,7 @@ func (itr *floatFastDedupeIterator) Next() (*FloatPoint, error) {
 			continue
 		}
 
-		// Otherwise mark it as emitted and return point.
+		// Otherwise mark it as emitted and return Point.
 		itr.m[key] = struct{}{}
 		return p, nil
 	}
@@ -1356,7 +1356,7 @@ func NewIteratorEncoder(w io.Writer) *IteratorEncoder {
 	}
 }
 
-// EncodeIterator encodes and writes all of itr's points to the underlying writer.
+// EncodeIterator encodes and writes all of Itr's points to the underlying writer.
 func (enc *IteratorEncoder) EncodeIterator(itr Iterator) error {
 	switch itr := itr.(type) {
 	case FloatIterator:
@@ -1399,7 +1399,7 @@ func (enc *IteratorEncoder) EncodeTrace(trace *tracing.Trace) error {
 	return nil
 }
 
-// encode a stats object in the point stream.
+// encode a stats object in the Point stream.
 func (enc *IteratorEncoder) encodeStats(stats IteratorStats) error {
 	buf, err := proto.Marshal(&internal.Point{
 		Name: proto.String(""),

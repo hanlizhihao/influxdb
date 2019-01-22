@@ -35,7 +35,7 @@ func TestQueryExecutor_AttachQuery(t *testing.T) {
 	e.StatementExecutor = &StatementExecutor{
 		ExecuteStatementFn: func(stmt influxql.Statement, ctx *query.ExecutionContext) error {
 			if ctx.QueryID != 1 {
-				t.Errorf("incorrect query id: exp=1 got=%d", ctx.QueryID)
+				t.Errorf("incorrect query Id: exp=1 got=%d", ctx.QueryID)
 			}
 			return nil
 		},

@@ -23,7 +23,7 @@ func TestPoint_Clone_Float(t *testing.T) {
 		t.Errorf("clone has the same address as the original: %v == %v", p, c)
 	}
 	if !deep.Equal(p, c) {
-		t.Errorf("mismatched point: %s", spew.Sdump(c))
+		t.Errorf("mismatched Point: %s", spew.Sdump(c))
 	}
 	if &p.Aux[0] == &c.Aux[0] {
 		t.Errorf("aux values share the same address: %v == %v", p.Aux, c.Aux)
@@ -45,7 +45,7 @@ func TestPoint_Clone_Integer(t *testing.T) {
 		t.Errorf("clone has the same address as the original: %v == %v", p, c)
 	}
 	if !deep.Equal(p, c) {
-		t.Errorf("mismatched point: %s", spew.Sdump(c))
+		t.Errorf("mismatched Point: %s", spew.Sdump(c))
 	}
 	if &p.Aux[0] == &c.Aux[0] {
 		t.Errorf("aux values share the same address: %v == %v", p.Aux, c.Aux)
@@ -67,7 +67,7 @@ func TestPoint_Clone_String(t *testing.T) {
 		t.Errorf("clone has the same address as the original: %v == %v", p, c)
 	}
 	if !deep.Equal(p, c) {
-		t.Errorf("mismatched point: %s", spew.Sdump(c))
+		t.Errorf("mismatched Point: %s", spew.Sdump(c))
 	}
 	if &p.Aux[0] == &c.Aux[0] {
 		t.Errorf("aux values share the same address: %v == %v", p.Aux, c.Aux)
@@ -89,7 +89,7 @@ func TestPoint_Clone_Boolean(t *testing.T) {
 		t.Errorf("clone has the same address as the original: %v == %v", p, c)
 	}
 	if !deep.Equal(p, c) {
-		t.Errorf("mismatched point: %s", spew.Sdump(c))
+		t.Errorf("mismatched Point: %s", spew.Sdump(c))
 	}
 	if &p.Aux[0] == &c.Aux[0] {
 		t.Errorf("aux values share the same address: %v == %v", p.Aux, c.Aux)
@@ -120,7 +120,7 @@ func TestPoint_Clone_Nil(t *testing.T) {
 	}
 }
 
-// TestPoint_Fields ensures that no additional fields are added to the point structs.
+// TestPoint_Fields ensures that no additional fields are added to the Point structs.
 // This struct is very sensitive and can effect performance unless handled carefully.
 // To avoid the struct becoming a dumping ground for every function that needs to store
 // miscellaneous information, this test is meant to ensure that new fields don't slip
@@ -151,11 +151,11 @@ func TestPoint_Fields(t *testing.T) {
 	}
 }
 
-// Ensure that tags can return a unique id.
+// Ensure that tags can return a unique Id.
 func TestTags_ID(t *testing.T) {
 	tags := query.NewTags(map[string]string{"foo": "bar", "baz": "bat"})
 	if id := tags.ID(); id != "baz\x00foo\x00bat\x00bar" {
-		t.Fatalf("unexpected id: %q", id)
+		t.Fatalf("unexpected Id: %q", id)
 	}
 }
 

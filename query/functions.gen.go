@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// FloatPointAggregator aggregates points to produce a single point.
+// FloatPointAggregator aggregates points to produce a single Point.
 type FloatPointAggregator interface {
 	AggregateFloat(p *FloatPoint)
 }
@@ -36,7 +36,7 @@ func AggregateFloatPoints(a FloatPointAggregator, points []FloatPoint) {
 	}
 }
 
-// FloatPointEmitter produces a single point from an aggregate.
+// FloatPointEmitter produces a single Point from an aggregate.
 type FloatPointEmitter interface {
 	Emit() []FloatPoint
 }
@@ -45,7 +45,7 @@ type FloatPointEmitter interface {
 type FloatReduceFunc func(prev *FloatPoint, curr *FloatPoint) (t int64, v float64, aux []interface{})
 
 // FloatFuncReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type FloatFuncReducer struct {
 	prev *FloatPoint
 	fn   FloatReduceFunc
@@ -57,7 +57,7 @@ func NewFloatFuncReducer(fn FloatReduceFunc, prev *FloatPoint) *FloatFuncReducer
 }
 
 // AggregateFloat takes a FloatPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *FloatFuncReducer) AggregateFloat(p *FloatPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -73,7 +73,7 @@ func (r *FloatFuncReducer) AggregateFloat(p *FloatPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateFloat.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateFloat.
 func (r *FloatFuncReducer) Emit() []FloatPoint {
 	return []FloatPoint{*r.prev}
 }
@@ -100,7 +100,7 @@ func (r *FloatSliceFuncReducer) AggregateFloat(p *FloatPoint) {
 }
 
 // AggregateFloatBulk performs a bulk copy of FloatPoints into the internal slice.
-// This is a more efficient version of calling AggregateFloat on each point.
+// This is a more efficient version of calling AggregateFloat on each Point.
 func (r *FloatSliceFuncReducer) AggregateFloatBulk(points []FloatPoint) {
 	r.points = append(r.points, points...)
 }
@@ -115,7 +115,7 @@ func (r *FloatSliceFuncReducer) Emit() []FloatPoint {
 type FloatReduceIntegerFunc func(prev *IntegerPoint, curr *FloatPoint) (t int64, v int64, aux []interface{})
 
 // FloatFuncIntegerReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type FloatFuncIntegerReducer struct {
 	prev *IntegerPoint
 	fn   FloatReduceIntegerFunc
@@ -127,7 +127,7 @@ func NewFloatFuncIntegerReducer(fn FloatReduceIntegerFunc, prev *IntegerPoint) *
 }
 
 // AggregateFloat takes a FloatPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *FloatFuncIntegerReducer) AggregateFloat(p *FloatPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -143,7 +143,7 @@ func (r *FloatFuncIntegerReducer) AggregateFloat(p *FloatPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateFloat.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateFloat.
 func (r *FloatFuncIntegerReducer) Emit() []IntegerPoint {
 	return []IntegerPoint{*r.prev}
 }
@@ -170,7 +170,7 @@ func (r *FloatSliceFuncIntegerReducer) AggregateFloat(p *FloatPoint) {
 }
 
 // AggregateFloatBulk performs a bulk copy of FloatPoints into the internal slice.
-// This is a more efficient version of calling AggregateFloat on each point.
+// This is a more efficient version of calling AggregateFloat on each Point.
 func (r *FloatSliceFuncIntegerReducer) AggregateFloatBulk(points []FloatPoint) {
 	r.points = append(r.points, points...)
 }
@@ -185,7 +185,7 @@ func (r *FloatSliceFuncIntegerReducer) Emit() []IntegerPoint {
 type FloatReduceUnsignedFunc func(prev *UnsignedPoint, curr *FloatPoint) (t int64, v uint64, aux []interface{})
 
 // FloatFuncUnsignedReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type FloatFuncUnsignedReducer struct {
 	prev *UnsignedPoint
 	fn   FloatReduceUnsignedFunc
@@ -197,7 +197,7 @@ func NewFloatFuncUnsignedReducer(fn FloatReduceUnsignedFunc, prev *UnsignedPoint
 }
 
 // AggregateFloat takes a FloatPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *FloatFuncUnsignedReducer) AggregateFloat(p *FloatPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -213,7 +213,7 @@ func (r *FloatFuncUnsignedReducer) AggregateFloat(p *FloatPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateFloat.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateFloat.
 func (r *FloatFuncUnsignedReducer) Emit() []UnsignedPoint {
 	return []UnsignedPoint{*r.prev}
 }
@@ -240,7 +240,7 @@ func (r *FloatSliceFuncUnsignedReducer) AggregateFloat(p *FloatPoint) {
 }
 
 // AggregateFloatBulk performs a bulk copy of FloatPoints into the internal slice.
-// This is a more efficient version of calling AggregateFloat on each point.
+// This is a more efficient version of calling AggregateFloat on each Point.
 func (r *FloatSliceFuncUnsignedReducer) AggregateFloatBulk(points []FloatPoint) {
 	r.points = append(r.points, points...)
 }
@@ -255,7 +255,7 @@ func (r *FloatSliceFuncUnsignedReducer) Emit() []UnsignedPoint {
 type FloatReduceStringFunc func(prev *StringPoint, curr *FloatPoint) (t int64, v string, aux []interface{})
 
 // FloatFuncStringReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type FloatFuncStringReducer struct {
 	prev *StringPoint
 	fn   FloatReduceStringFunc
@@ -267,7 +267,7 @@ func NewFloatFuncStringReducer(fn FloatReduceStringFunc, prev *StringPoint) *Flo
 }
 
 // AggregateFloat takes a FloatPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *FloatFuncStringReducer) AggregateFloat(p *FloatPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -283,7 +283,7 @@ func (r *FloatFuncStringReducer) AggregateFloat(p *FloatPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateFloat.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateFloat.
 func (r *FloatFuncStringReducer) Emit() []StringPoint {
 	return []StringPoint{*r.prev}
 }
@@ -310,7 +310,7 @@ func (r *FloatSliceFuncStringReducer) AggregateFloat(p *FloatPoint) {
 }
 
 // AggregateFloatBulk performs a bulk copy of FloatPoints into the internal slice.
-// This is a more efficient version of calling AggregateFloat on each point.
+// This is a more efficient version of calling AggregateFloat on each Point.
 func (r *FloatSliceFuncStringReducer) AggregateFloatBulk(points []FloatPoint) {
 	r.points = append(r.points, points...)
 }
@@ -325,7 +325,7 @@ func (r *FloatSliceFuncStringReducer) Emit() []StringPoint {
 type FloatReduceBooleanFunc func(prev *BooleanPoint, curr *FloatPoint) (t int64, v bool, aux []interface{})
 
 // FloatFuncBooleanReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type FloatFuncBooleanReducer struct {
 	prev *BooleanPoint
 	fn   FloatReduceBooleanFunc
@@ -337,7 +337,7 @@ func NewFloatFuncBooleanReducer(fn FloatReduceBooleanFunc, prev *BooleanPoint) *
 }
 
 // AggregateFloat takes a FloatPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *FloatFuncBooleanReducer) AggregateFloat(p *FloatPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -353,7 +353,7 @@ func (r *FloatFuncBooleanReducer) AggregateFloat(p *FloatPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateFloat.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateFloat.
 func (r *FloatFuncBooleanReducer) Emit() []BooleanPoint {
 	return []BooleanPoint{*r.prev}
 }
@@ -380,7 +380,7 @@ func (r *FloatSliceFuncBooleanReducer) AggregateFloat(p *FloatPoint) {
 }
 
 // AggregateFloatBulk performs a bulk copy of FloatPoints into the internal slice.
-// This is a more efficient version of calling AggregateFloat on each point.
+// This is a more efficient version of calling AggregateFloat on each Point.
 func (r *FloatSliceFuncBooleanReducer) AggregateFloatBulk(points []FloatPoint) {
 	r.points = append(r.points, points...)
 }
@@ -401,7 +401,7 @@ func NewFloatDistinctReducer() *FloatDistinctReducer {
 	return &FloatDistinctReducer{m: make(map[float64]FloatPoint)}
 }
 
-// AggregateFloat aggregates a point into the reducer.
+// AggregateFloat aggregates a Point into the reducer.
 func (r *FloatDistinctReducer) AggregateFloat(p *FloatPoint) {
 	if _, ok := r.m[p.Value]; !ok {
 		r.m[p.Value] = *p
@@ -434,13 +434,13 @@ func NewFloatElapsedReducer(interval Interval) *FloatElapsedReducer {
 	}
 }
 
-// AggregateFloat aggregates a point into the reducer and updates the current window.
+// AggregateFloat aggregates a Point into the reducer and updates the current window.
 func (r *FloatElapsedReducer) AggregateFloat(p *FloatPoint) {
 	r.prev = r.curr
 	r.curr = *p
 }
 
-// Emit emits the elapsed of the reducer at the current point.
+// Emit emits the elapsed of the reducer at the current Point.
 func (r *FloatElapsedReducer) Emit() []IntegerPoint {
 	if !r.prev.Nil {
 		elapsed := (r.curr.Time - r.prev.Time) / r.unitConversion
@@ -467,7 +467,7 @@ func NewFloatSampleReducer(size int) *FloatSampleReducer {
 	}
 }
 
-// AggregateFloat aggregates a point into the reducer.
+// AggregateFloat aggregates a Point into the reducer.
 func (r *FloatSampleReducer) AggregateFloat(p *FloatPoint) {
 	r.count++
 	// Fill the reservoir with the first n points
@@ -478,7 +478,7 @@ func (r *FloatSampleReducer) AggregateFloat(p *FloatPoint) {
 
 	// Generate a random integer between 1 and the count and
 	// if that number is less than the length of the slice
-	// replace the point at that index rnd with p.
+	// replace the Point at that index rnd with p.
 	rnd := r.rng.Intn(r.count)
 	if rnd < len(r.points) {
 		p.CopyTo(&r.points[rnd])
@@ -496,7 +496,7 @@ func (r *FloatSampleReducer) Emit() []FloatPoint {
 	return pts
 }
 
-// IntegerPointAggregator aggregates points to produce a single point.
+// IntegerPointAggregator aggregates points to produce a single Point.
 type IntegerPointAggregator interface {
 	AggregateInteger(p *IntegerPoint)
 }
@@ -520,7 +520,7 @@ func AggregateIntegerPoints(a IntegerPointAggregator, points []IntegerPoint) {
 	}
 }
 
-// IntegerPointEmitter produces a single point from an aggregate.
+// IntegerPointEmitter produces a single Point from an aggregate.
 type IntegerPointEmitter interface {
 	Emit() []IntegerPoint
 }
@@ -529,7 +529,7 @@ type IntegerPointEmitter interface {
 type IntegerReduceFloatFunc func(prev *FloatPoint, curr *IntegerPoint) (t int64, v float64, aux []interface{})
 
 // IntegerFuncFloatReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type IntegerFuncFloatReducer struct {
 	prev *FloatPoint
 	fn   IntegerReduceFloatFunc
@@ -541,7 +541,7 @@ func NewIntegerFuncFloatReducer(fn IntegerReduceFloatFunc, prev *FloatPoint) *In
 }
 
 // AggregateInteger takes a IntegerPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *IntegerFuncFloatReducer) AggregateInteger(p *IntegerPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -557,7 +557,7 @@ func (r *IntegerFuncFloatReducer) AggregateInteger(p *IntegerPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateInteger.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateInteger.
 func (r *IntegerFuncFloatReducer) Emit() []FloatPoint {
 	return []FloatPoint{*r.prev}
 }
@@ -584,7 +584,7 @@ func (r *IntegerSliceFuncFloatReducer) AggregateInteger(p *IntegerPoint) {
 }
 
 // AggregateIntegerBulk performs a bulk copy of IntegerPoints into the internal slice.
-// This is a more efficient version of calling AggregateInteger on each point.
+// This is a more efficient version of calling AggregateInteger on each Point.
 func (r *IntegerSliceFuncFloatReducer) AggregateIntegerBulk(points []IntegerPoint) {
 	r.points = append(r.points, points...)
 }
@@ -599,7 +599,7 @@ func (r *IntegerSliceFuncFloatReducer) Emit() []FloatPoint {
 type IntegerReduceFunc func(prev *IntegerPoint, curr *IntegerPoint) (t int64, v int64, aux []interface{})
 
 // IntegerFuncReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type IntegerFuncReducer struct {
 	prev *IntegerPoint
 	fn   IntegerReduceFunc
@@ -611,7 +611,7 @@ func NewIntegerFuncReducer(fn IntegerReduceFunc, prev *IntegerPoint) *IntegerFun
 }
 
 // AggregateInteger takes a IntegerPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *IntegerFuncReducer) AggregateInteger(p *IntegerPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -627,7 +627,7 @@ func (r *IntegerFuncReducer) AggregateInteger(p *IntegerPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateInteger.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateInteger.
 func (r *IntegerFuncReducer) Emit() []IntegerPoint {
 	return []IntegerPoint{*r.prev}
 }
@@ -654,7 +654,7 @@ func (r *IntegerSliceFuncReducer) AggregateInteger(p *IntegerPoint) {
 }
 
 // AggregateIntegerBulk performs a bulk copy of IntegerPoints into the internal slice.
-// This is a more efficient version of calling AggregateInteger on each point.
+// This is a more efficient version of calling AggregateInteger on each Point.
 func (r *IntegerSliceFuncReducer) AggregateIntegerBulk(points []IntegerPoint) {
 	r.points = append(r.points, points...)
 }
@@ -669,7 +669,7 @@ func (r *IntegerSliceFuncReducer) Emit() []IntegerPoint {
 type IntegerReduceUnsignedFunc func(prev *UnsignedPoint, curr *IntegerPoint) (t int64, v uint64, aux []interface{})
 
 // IntegerFuncUnsignedReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type IntegerFuncUnsignedReducer struct {
 	prev *UnsignedPoint
 	fn   IntegerReduceUnsignedFunc
@@ -681,7 +681,7 @@ func NewIntegerFuncUnsignedReducer(fn IntegerReduceUnsignedFunc, prev *UnsignedP
 }
 
 // AggregateInteger takes a IntegerPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *IntegerFuncUnsignedReducer) AggregateInteger(p *IntegerPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -697,7 +697,7 @@ func (r *IntegerFuncUnsignedReducer) AggregateInteger(p *IntegerPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateInteger.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateInteger.
 func (r *IntegerFuncUnsignedReducer) Emit() []UnsignedPoint {
 	return []UnsignedPoint{*r.prev}
 }
@@ -724,7 +724,7 @@ func (r *IntegerSliceFuncUnsignedReducer) AggregateInteger(p *IntegerPoint) {
 }
 
 // AggregateIntegerBulk performs a bulk copy of IntegerPoints into the internal slice.
-// This is a more efficient version of calling AggregateInteger on each point.
+// This is a more efficient version of calling AggregateInteger on each Point.
 func (r *IntegerSliceFuncUnsignedReducer) AggregateIntegerBulk(points []IntegerPoint) {
 	r.points = append(r.points, points...)
 }
@@ -739,7 +739,7 @@ func (r *IntegerSliceFuncUnsignedReducer) Emit() []UnsignedPoint {
 type IntegerReduceStringFunc func(prev *StringPoint, curr *IntegerPoint) (t int64, v string, aux []interface{})
 
 // IntegerFuncStringReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type IntegerFuncStringReducer struct {
 	prev *StringPoint
 	fn   IntegerReduceStringFunc
@@ -751,7 +751,7 @@ func NewIntegerFuncStringReducer(fn IntegerReduceStringFunc, prev *StringPoint) 
 }
 
 // AggregateInteger takes a IntegerPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *IntegerFuncStringReducer) AggregateInteger(p *IntegerPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -767,7 +767,7 @@ func (r *IntegerFuncStringReducer) AggregateInteger(p *IntegerPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateInteger.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateInteger.
 func (r *IntegerFuncStringReducer) Emit() []StringPoint {
 	return []StringPoint{*r.prev}
 }
@@ -794,7 +794,7 @@ func (r *IntegerSliceFuncStringReducer) AggregateInteger(p *IntegerPoint) {
 }
 
 // AggregateIntegerBulk performs a bulk copy of IntegerPoints into the internal slice.
-// This is a more efficient version of calling AggregateInteger on each point.
+// This is a more efficient version of calling AggregateInteger on each Point.
 func (r *IntegerSliceFuncStringReducer) AggregateIntegerBulk(points []IntegerPoint) {
 	r.points = append(r.points, points...)
 }
@@ -809,7 +809,7 @@ func (r *IntegerSliceFuncStringReducer) Emit() []StringPoint {
 type IntegerReduceBooleanFunc func(prev *BooleanPoint, curr *IntegerPoint) (t int64, v bool, aux []interface{})
 
 // IntegerFuncBooleanReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type IntegerFuncBooleanReducer struct {
 	prev *BooleanPoint
 	fn   IntegerReduceBooleanFunc
@@ -821,7 +821,7 @@ func NewIntegerFuncBooleanReducer(fn IntegerReduceBooleanFunc, prev *BooleanPoin
 }
 
 // AggregateInteger takes a IntegerPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *IntegerFuncBooleanReducer) AggregateInteger(p *IntegerPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -837,7 +837,7 @@ func (r *IntegerFuncBooleanReducer) AggregateInteger(p *IntegerPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateInteger.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateInteger.
 func (r *IntegerFuncBooleanReducer) Emit() []BooleanPoint {
 	return []BooleanPoint{*r.prev}
 }
@@ -864,7 +864,7 @@ func (r *IntegerSliceFuncBooleanReducer) AggregateInteger(p *IntegerPoint) {
 }
 
 // AggregateIntegerBulk performs a bulk copy of IntegerPoints into the internal slice.
-// This is a more efficient version of calling AggregateInteger on each point.
+// This is a more efficient version of calling AggregateInteger on each Point.
 func (r *IntegerSliceFuncBooleanReducer) AggregateIntegerBulk(points []IntegerPoint) {
 	r.points = append(r.points, points...)
 }
@@ -885,7 +885,7 @@ func NewIntegerDistinctReducer() *IntegerDistinctReducer {
 	return &IntegerDistinctReducer{m: make(map[int64]IntegerPoint)}
 }
 
-// AggregateInteger aggregates a point into the reducer.
+// AggregateInteger aggregates a Point into the reducer.
 func (r *IntegerDistinctReducer) AggregateInteger(p *IntegerPoint) {
 	if _, ok := r.m[p.Value]; !ok {
 		r.m[p.Value] = *p
@@ -918,13 +918,13 @@ func NewIntegerElapsedReducer(interval Interval) *IntegerElapsedReducer {
 	}
 }
 
-// AggregateInteger aggregates a point into the reducer and updates the current window.
+// AggregateInteger aggregates a Point into the reducer and updates the current window.
 func (r *IntegerElapsedReducer) AggregateInteger(p *IntegerPoint) {
 	r.prev = r.curr
 	r.curr = *p
 }
 
-// Emit emits the elapsed of the reducer at the current point.
+// Emit emits the elapsed of the reducer at the current Point.
 func (r *IntegerElapsedReducer) Emit() []IntegerPoint {
 	if !r.prev.Nil {
 		elapsed := (r.curr.Time - r.prev.Time) / r.unitConversion
@@ -951,7 +951,7 @@ func NewIntegerSampleReducer(size int) *IntegerSampleReducer {
 	}
 }
 
-// AggregateInteger aggregates a point into the reducer.
+// AggregateInteger aggregates a Point into the reducer.
 func (r *IntegerSampleReducer) AggregateInteger(p *IntegerPoint) {
 	r.count++
 	// Fill the reservoir with the first n points
@@ -962,7 +962,7 @@ func (r *IntegerSampleReducer) AggregateInteger(p *IntegerPoint) {
 
 	// Generate a random integer between 1 and the count and
 	// if that number is less than the length of the slice
-	// replace the point at that index rnd with p.
+	// replace the Point at that index rnd with p.
 	rnd := r.rng.Intn(r.count)
 	if rnd < len(r.points) {
 		p.CopyTo(&r.points[rnd])
@@ -980,7 +980,7 @@ func (r *IntegerSampleReducer) Emit() []IntegerPoint {
 	return pts
 }
 
-// UnsignedPointAggregator aggregates points to produce a single point.
+// UnsignedPointAggregator aggregates points to produce a single Point.
 type UnsignedPointAggregator interface {
 	AggregateUnsigned(p *UnsignedPoint)
 }
@@ -1004,7 +1004,7 @@ func AggregateUnsignedPoints(a UnsignedPointAggregator, points []UnsignedPoint) 
 	}
 }
 
-// UnsignedPointEmitter produces a single point from an aggregate.
+// UnsignedPointEmitter produces a single Point from an aggregate.
 type UnsignedPointEmitter interface {
 	Emit() []UnsignedPoint
 }
@@ -1013,7 +1013,7 @@ type UnsignedPointEmitter interface {
 type UnsignedReduceFloatFunc func(prev *FloatPoint, curr *UnsignedPoint) (t int64, v float64, aux []interface{})
 
 // UnsignedFuncFloatReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type UnsignedFuncFloatReducer struct {
 	prev *FloatPoint
 	fn   UnsignedReduceFloatFunc
@@ -1025,7 +1025,7 @@ func NewUnsignedFuncFloatReducer(fn UnsignedReduceFloatFunc, prev *FloatPoint) *
 }
 
 // AggregateUnsigned takes a UnsignedPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *UnsignedFuncFloatReducer) AggregateUnsigned(p *UnsignedPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1041,7 +1041,7 @@ func (r *UnsignedFuncFloatReducer) AggregateUnsigned(p *UnsignedPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateUnsigned.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateUnsigned.
 func (r *UnsignedFuncFloatReducer) Emit() []FloatPoint {
 	return []FloatPoint{*r.prev}
 }
@@ -1068,7 +1068,7 @@ func (r *UnsignedSliceFuncFloatReducer) AggregateUnsigned(p *UnsignedPoint) {
 }
 
 // AggregateUnsignedBulk performs a bulk copy of UnsignedPoints into the internal slice.
-// This is a more efficient version of calling AggregateUnsigned on each point.
+// This is a more efficient version of calling AggregateUnsigned on each Point.
 func (r *UnsignedSliceFuncFloatReducer) AggregateUnsignedBulk(points []UnsignedPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1083,7 +1083,7 @@ func (r *UnsignedSliceFuncFloatReducer) Emit() []FloatPoint {
 type UnsignedReduceIntegerFunc func(prev *IntegerPoint, curr *UnsignedPoint) (t int64, v int64, aux []interface{})
 
 // UnsignedFuncIntegerReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type UnsignedFuncIntegerReducer struct {
 	prev *IntegerPoint
 	fn   UnsignedReduceIntegerFunc
@@ -1095,7 +1095,7 @@ func NewUnsignedFuncIntegerReducer(fn UnsignedReduceIntegerFunc, prev *IntegerPo
 }
 
 // AggregateUnsigned takes a UnsignedPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *UnsignedFuncIntegerReducer) AggregateUnsigned(p *UnsignedPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1111,7 +1111,7 @@ func (r *UnsignedFuncIntegerReducer) AggregateUnsigned(p *UnsignedPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateUnsigned.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateUnsigned.
 func (r *UnsignedFuncIntegerReducer) Emit() []IntegerPoint {
 	return []IntegerPoint{*r.prev}
 }
@@ -1138,7 +1138,7 @@ func (r *UnsignedSliceFuncIntegerReducer) AggregateUnsigned(p *UnsignedPoint) {
 }
 
 // AggregateUnsignedBulk performs a bulk copy of UnsignedPoints into the internal slice.
-// This is a more efficient version of calling AggregateUnsigned on each point.
+// This is a more efficient version of calling AggregateUnsigned on each Point.
 func (r *UnsignedSliceFuncIntegerReducer) AggregateUnsignedBulk(points []UnsignedPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1153,7 +1153,7 @@ func (r *UnsignedSliceFuncIntegerReducer) Emit() []IntegerPoint {
 type UnsignedReduceFunc func(prev *UnsignedPoint, curr *UnsignedPoint) (t int64, v uint64, aux []interface{})
 
 // UnsignedFuncReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type UnsignedFuncReducer struct {
 	prev *UnsignedPoint
 	fn   UnsignedReduceFunc
@@ -1165,7 +1165,7 @@ func NewUnsignedFuncReducer(fn UnsignedReduceFunc, prev *UnsignedPoint) *Unsigne
 }
 
 // AggregateUnsigned takes a UnsignedPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *UnsignedFuncReducer) AggregateUnsigned(p *UnsignedPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1181,7 +1181,7 @@ func (r *UnsignedFuncReducer) AggregateUnsigned(p *UnsignedPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateUnsigned.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateUnsigned.
 func (r *UnsignedFuncReducer) Emit() []UnsignedPoint {
 	return []UnsignedPoint{*r.prev}
 }
@@ -1208,7 +1208,7 @@ func (r *UnsignedSliceFuncReducer) AggregateUnsigned(p *UnsignedPoint) {
 }
 
 // AggregateUnsignedBulk performs a bulk copy of UnsignedPoints into the internal slice.
-// This is a more efficient version of calling AggregateUnsigned on each point.
+// This is a more efficient version of calling AggregateUnsigned on each Point.
 func (r *UnsignedSliceFuncReducer) AggregateUnsignedBulk(points []UnsignedPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1223,7 +1223,7 @@ func (r *UnsignedSliceFuncReducer) Emit() []UnsignedPoint {
 type UnsignedReduceStringFunc func(prev *StringPoint, curr *UnsignedPoint) (t int64, v string, aux []interface{})
 
 // UnsignedFuncStringReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type UnsignedFuncStringReducer struct {
 	prev *StringPoint
 	fn   UnsignedReduceStringFunc
@@ -1235,7 +1235,7 @@ func NewUnsignedFuncStringReducer(fn UnsignedReduceStringFunc, prev *StringPoint
 }
 
 // AggregateUnsigned takes a UnsignedPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *UnsignedFuncStringReducer) AggregateUnsigned(p *UnsignedPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1251,7 +1251,7 @@ func (r *UnsignedFuncStringReducer) AggregateUnsigned(p *UnsignedPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateUnsigned.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateUnsigned.
 func (r *UnsignedFuncStringReducer) Emit() []StringPoint {
 	return []StringPoint{*r.prev}
 }
@@ -1278,7 +1278,7 @@ func (r *UnsignedSliceFuncStringReducer) AggregateUnsigned(p *UnsignedPoint) {
 }
 
 // AggregateUnsignedBulk performs a bulk copy of UnsignedPoints into the internal slice.
-// This is a more efficient version of calling AggregateUnsigned on each point.
+// This is a more efficient version of calling AggregateUnsigned on each Point.
 func (r *UnsignedSliceFuncStringReducer) AggregateUnsignedBulk(points []UnsignedPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1293,7 +1293,7 @@ func (r *UnsignedSliceFuncStringReducer) Emit() []StringPoint {
 type UnsignedReduceBooleanFunc func(prev *BooleanPoint, curr *UnsignedPoint) (t int64, v bool, aux []interface{})
 
 // UnsignedFuncBooleanReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type UnsignedFuncBooleanReducer struct {
 	prev *BooleanPoint
 	fn   UnsignedReduceBooleanFunc
@@ -1305,7 +1305,7 @@ func NewUnsignedFuncBooleanReducer(fn UnsignedReduceBooleanFunc, prev *BooleanPo
 }
 
 // AggregateUnsigned takes a UnsignedPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *UnsignedFuncBooleanReducer) AggregateUnsigned(p *UnsignedPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1321,7 +1321,7 @@ func (r *UnsignedFuncBooleanReducer) AggregateUnsigned(p *UnsignedPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateUnsigned.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateUnsigned.
 func (r *UnsignedFuncBooleanReducer) Emit() []BooleanPoint {
 	return []BooleanPoint{*r.prev}
 }
@@ -1348,7 +1348,7 @@ func (r *UnsignedSliceFuncBooleanReducer) AggregateUnsigned(p *UnsignedPoint) {
 }
 
 // AggregateUnsignedBulk performs a bulk copy of UnsignedPoints into the internal slice.
-// This is a more efficient version of calling AggregateUnsigned on each point.
+// This is a more efficient version of calling AggregateUnsigned on each Point.
 func (r *UnsignedSliceFuncBooleanReducer) AggregateUnsignedBulk(points []UnsignedPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1369,7 +1369,7 @@ func NewUnsignedDistinctReducer() *UnsignedDistinctReducer {
 	return &UnsignedDistinctReducer{m: make(map[uint64]UnsignedPoint)}
 }
 
-// AggregateUnsigned aggregates a point into the reducer.
+// AggregateUnsigned aggregates a Point into the reducer.
 func (r *UnsignedDistinctReducer) AggregateUnsigned(p *UnsignedPoint) {
 	if _, ok := r.m[p.Value]; !ok {
 		r.m[p.Value] = *p
@@ -1402,13 +1402,13 @@ func NewUnsignedElapsedReducer(interval Interval) *UnsignedElapsedReducer {
 	}
 }
 
-// AggregateUnsigned aggregates a point into the reducer and updates the current window.
+// AggregateUnsigned aggregates a Point into the reducer and updates the current window.
 func (r *UnsignedElapsedReducer) AggregateUnsigned(p *UnsignedPoint) {
 	r.prev = r.curr
 	r.curr = *p
 }
 
-// Emit emits the elapsed of the reducer at the current point.
+// Emit emits the elapsed of the reducer at the current Point.
 func (r *UnsignedElapsedReducer) Emit() []IntegerPoint {
 	if !r.prev.Nil {
 		elapsed := (r.curr.Time - r.prev.Time) / r.unitConversion
@@ -1435,7 +1435,7 @@ func NewUnsignedSampleReducer(size int) *UnsignedSampleReducer {
 	}
 }
 
-// AggregateUnsigned aggregates a point into the reducer.
+// AggregateUnsigned aggregates a Point into the reducer.
 func (r *UnsignedSampleReducer) AggregateUnsigned(p *UnsignedPoint) {
 	r.count++
 	// Fill the reservoir with the first n points
@@ -1446,7 +1446,7 @@ func (r *UnsignedSampleReducer) AggregateUnsigned(p *UnsignedPoint) {
 
 	// Generate a random integer between 1 and the count and
 	// if that number is less than the length of the slice
-	// replace the point at that index rnd with p.
+	// replace the Point at that index rnd with p.
 	rnd := r.rng.Intn(r.count)
 	if rnd < len(r.points) {
 		p.CopyTo(&r.points[rnd])
@@ -1464,7 +1464,7 @@ func (r *UnsignedSampleReducer) Emit() []UnsignedPoint {
 	return pts
 }
 
-// StringPointAggregator aggregates points to produce a single point.
+// StringPointAggregator aggregates points to produce a single Point.
 type StringPointAggregator interface {
 	AggregateString(p *StringPoint)
 }
@@ -1488,7 +1488,7 @@ func AggregateStringPoints(a StringPointAggregator, points []StringPoint) {
 	}
 }
 
-// StringPointEmitter produces a single point from an aggregate.
+// StringPointEmitter produces a single Point from an aggregate.
 type StringPointEmitter interface {
 	Emit() []StringPoint
 }
@@ -1497,7 +1497,7 @@ type StringPointEmitter interface {
 type StringReduceFloatFunc func(prev *FloatPoint, curr *StringPoint) (t int64, v float64, aux []interface{})
 
 // StringFuncFloatReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type StringFuncFloatReducer struct {
 	prev *FloatPoint
 	fn   StringReduceFloatFunc
@@ -1509,7 +1509,7 @@ func NewStringFuncFloatReducer(fn StringReduceFloatFunc, prev *FloatPoint) *Stri
 }
 
 // AggregateString takes a StringPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *StringFuncFloatReducer) AggregateString(p *StringPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1525,7 +1525,7 @@ func (r *StringFuncFloatReducer) AggregateString(p *StringPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateString.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateString.
 func (r *StringFuncFloatReducer) Emit() []FloatPoint {
 	return []FloatPoint{*r.prev}
 }
@@ -1552,7 +1552,7 @@ func (r *StringSliceFuncFloatReducer) AggregateString(p *StringPoint) {
 }
 
 // AggregateStringBulk performs a bulk copy of StringPoints into the internal slice.
-// This is a more efficient version of calling AggregateString on each point.
+// This is a more efficient version of calling AggregateString on each Point.
 func (r *StringSliceFuncFloatReducer) AggregateStringBulk(points []StringPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1567,7 +1567,7 @@ func (r *StringSliceFuncFloatReducer) Emit() []FloatPoint {
 type StringReduceIntegerFunc func(prev *IntegerPoint, curr *StringPoint) (t int64, v int64, aux []interface{})
 
 // StringFuncIntegerReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type StringFuncIntegerReducer struct {
 	prev *IntegerPoint
 	fn   StringReduceIntegerFunc
@@ -1579,7 +1579,7 @@ func NewStringFuncIntegerReducer(fn StringReduceIntegerFunc, prev *IntegerPoint)
 }
 
 // AggregateString takes a StringPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *StringFuncIntegerReducer) AggregateString(p *StringPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1595,7 +1595,7 @@ func (r *StringFuncIntegerReducer) AggregateString(p *StringPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateString.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateString.
 func (r *StringFuncIntegerReducer) Emit() []IntegerPoint {
 	return []IntegerPoint{*r.prev}
 }
@@ -1622,7 +1622,7 @@ func (r *StringSliceFuncIntegerReducer) AggregateString(p *StringPoint) {
 }
 
 // AggregateStringBulk performs a bulk copy of StringPoints into the internal slice.
-// This is a more efficient version of calling AggregateString on each point.
+// This is a more efficient version of calling AggregateString on each Point.
 func (r *StringSliceFuncIntegerReducer) AggregateStringBulk(points []StringPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1637,7 +1637,7 @@ func (r *StringSliceFuncIntegerReducer) Emit() []IntegerPoint {
 type StringReduceUnsignedFunc func(prev *UnsignedPoint, curr *StringPoint) (t int64, v uint64, aux []interface{})
 
 // StringFuncUnsignedReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type StringFuncUnsignedReducer struct {
 	prev *UnsignedPoint
 	fn   StringReduceUnsignedFunc
@@ -1649,7 +1649,7 @@ func NewStringFuncUnsignedReducer(fn StringReduceUnsignedFunc, prev *UnsignedPoi
 }
 
 // AggregateString takes a StringPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *StringFuncUnsignedReducer) AggregateString(p *StringPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1665,7 +1665,7 @@ func (r *StringFuncUnsignedReducer) AggregateString(p *StringPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateString.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateString.
 func (r *StringFuncUnsignedReducer) Emit() []UnsignedPoint {
 	return []UnsignedPoint{*r.prev}
 }
@@ -1692,7 +1692,7 @@ func (r *StringSliceFuncUnsignedReducer) AggregateString(p *StringPoint) {
 }
 
 // AggregateStringBulk performs a bulk copy of StringPoints into the internal slice.
-// This is a more efficient version of calling AggregateString on each point.
+// This is a more efficient version of calling AggregateString on each Point.
 func (r *StringSliceFuncUnsignedReducer) AggregateStringBulk(points []StringPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1707,7 +1707,7 @@ func (r *StringSliceFuncUnsignedReducer) Emit() []UnsignedPoint {
 type StringReduceFunc func(prev *StringPoint, curr *StringPoint) (t int64, v string, aux []interface{})
 
 // StringFuncReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type StringFuncReducer struct {
 	prev *StringPoint
 	fn   StringReduceFunc
@@ -1719,7 +1719,7 @@ func NewStringFuncReducer(fn StringReduceFunc, prev *StringPoint) *StringFuncRed
 }
 
 // AggregateString takes a StringPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *StringFuncReducer) AggregateString(p *StringPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1735,7 +1735,7 @@ func (r *StringFuncReducer) AggregateString(p *StringPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateString.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateString.
 func (r *StringFuncReducer) Emit() []StringPoint {
 	return []StringPoint{*r.prev}
 }
@@ -1762,7 +1762,7 @@ func (r *StringSliceFuncReducer) AggregateString(p *StringPoint) {
 }
 
 // AggregateStringBulk performs a bulk copy of StringPoints into the internal slice.
-// This is a more efficient version of calling AggregateString on each point.
+// This is a more efficient version of calling AggregateString on each Point.
 func (r *StringSliceFuncReducer) AggregateStringBulk(points []StringPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1777,7 +1777,7 @@ func (r *StringSliceFuncReducer) Emit() []StringPoint {
 type StringReduceBooleanFunc func(prev *BooleanPoint, curr *StringPoint) (t int64, v bool, aux []interface{})
 
 // StringFuncBooleanReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type StringFuncBooleanReducer struct {
 	prev *BooleanPoint
 	fn   StringReduceBooleanFunc
@@ -1789,7 +1789,7 @@ func NewStringFuncBooleanReducer(fn StringReduceBooleanFunc, prev *BooleanPoint)
 }
 
 // AggregateString takes a StringPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *StringFuncBooleanReducer) AggregateString(p *StringPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -1805,7 +1805,7 @@ func (r *StringFuncBooleanReducer) AggregateString(p *StringPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateString.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateString.
 func (r *StringFuncBooleanReducer) Emit() []BooleanPoint {
 	return []BooleanPoint{*r.prev}
 }
@@ -1832,7 +1832,7 @@ func (r *StringSliceFuncBooleanReducer) AggregateString(p *StringPoint) {
 }
 
 // AggregateStringBulk performs a bulk copy of StringPoints into the internal slice.
-// This is a more efficient version of calling AggregateString on each point.
+// This is a more efficient version of calling AggregateString on each Point.
 func (r *StringSliceFuncBooleanReducer) AggregateStringBulk(points []StringPoint) {
 	r.points = append(r.points, points...)
 }
@@ -1853,7 +1853,7 @@ func NewStringDistinctReducer() *StringDistinctReducer {
 	return &StringDistinctReducer{m: make(map[string]StringPoint)}
 }
 
-// AggregateString aggregates a point into the reducer.
+// AggregateString aggregates a Point into the reducer.
 func (r *StringDistinctReducer) AggregateString(p *StringPoint) {
 	if _, ok := r.m[p.Value]; !ok {
 		r.m[p.Value] = *p
@@ -1886,13 +1886,13 @@ func NewStringElapsedReducer(interval Interval) *StringElapsedReducer {
 	}
 }
 
-// AggregateString aggregates a point into the reducer and updates the current window.
+// AggregateString aggregates a Point into the reducer and updates the current window.
 func (r *StringElapsedReducer) AggregateString(p *StringPoint) {
 	r.prev = r.curr
 	r.curr = *p
 }
 
-// Emit emits the elapsed of the reducer at the current point.
+// Emit emits the elapsed of the reducer at the current Point.
 func (r *StringElapsedReducer) Emit() []IntegerPoint {
 	if !r.prev.Nil {
 		elapsed := (r.curr.Time - r.prev.Time) / r.unitConversion
@@ -1919,7 +1919,7 @@ func NewStringSampleReducer(size int) *StringSampleReducer {
 	}
 }
 
-// AggregateString aggregates a point into the reducer.
+// AggregateString aggregates a Point into the reducer.
 func (r *StringSampleReducer) AggregateString(p *StringPoint) {
 	r.count++
 	// Fill the reservoir with the first n points
@@ -1930,7 +1930,7 @@ func (r *StringSampleReducer) AggregateString(p *StringPoint) {
 
 	// Generate a random integer between 1 and the count and
 	// if that number is less than the length of the slice
-	// replace the point at that index rnd with p.
+	// replace the Point at that index rnd with p.
 	rnd := r.rng.Intn(r.count)
 	if rnd < len(r.points) {
 		p.CopyTo(&r.points[rnd])
@@ -1948,7 +1948,7 @@ func (r *StringSampleReducer) Emit() []StringPoint {
 	return pts
 }
 
-// BooleanPointAggregator aggregates points to produce a single point.
+// BooleanPointAggregator aggregates points to produce a single Point.
 type BooleanPointAggregator interface {
 	AggregateBoolean(p *BooleanPoint)
 }
@@ -1972,7 +1972,7 @@ func AggregateBooleanPoints(a BooleanPointAggregator, points []BooleanPoint) {
 	}
 }
 
-// BooleanPointEmitter produces a single point from an aggregate.
+// BooleanPointEmitter produces a single Point from an aggregate.
 type BooleanPointEmitter interface {
 	Emit() []BooleanPoint
 }
@@ -1981,7 +1981,7 @@ type BooleanPointEmitter interface {
 type BooleanReduceFloatFunc func(prev *FloatPoint, curr *BooleanPoint) (t int64, v float64, aux []interface{})
 
 // BooleanFuncFloatReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type BooleanFuncFloatReducer struct {
 	prev *FloatPoint
 	fn   BooleanReduceFloatFunc
@@ -1993,7 +1993,7 @@ func NewBooleanFuncFloatReducer(fn BooleanReduceFloatFunc, prev *FloatPoint) *Bo
 }
 
 // AggregateBoolean takes a BooleanPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *BooleanFuncFloatReducer) AggregateBoolean(p *BooleanPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -2009,7 +2009,7 @@ func (r *BooleanFuncFloatReducer) AggregateBoolean(p *BooleanPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateBoolean.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateBoolean.
 func (r *BooleanFuncFloatReducer) Emit() []FloatPoint {
 	return []FloatPoint{*r.prev}
 }
@@ -2036,7 +2036,7 @@ func (r *BooleanSliceFuncFloatReducer) AggregateBoolean(p *BooleanPoint) {
 }
 
 // AggregateBooleanBulk performs a bulk copy of BooleanPoints into the internal slice.
-// This is a more efficient version of calling AggregateBoolean on each point.
+// This is a more efficient version of calling AggregateBoolean on each Point.
 func (r *BooleanSliceFuncFloatReducer) AggregateBooleanBulk(points []BooleanPoint) {
 	r.points = append(r.points, points...)
 }
@@ -2051,7 +2051,7 @@ func (r *BooleanSliceFuncFloatReducer) Emit() []FloatPoint {
 type BooleanReduceIntegerFunc func(prev *IntegerPoint, curr *BooleanPoint) (t int64, v int64, aux []interface{})
 
 // BooleanFuncIntegerReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type BooleanFuncIntegerReducer struct {
 	prev *IntegerPoint
 	fn   BooleanReduceIntegerFunc
@@ -2063,7 +2063,7 @@ func NewBooleanFuncIntegerReducer(fn BooleanReduceIntegerFunc, prev *IntegerPoin
 }
 
 // AggregateBoolean takes a BooleanPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *BooleanFuncIntegerReducer) AggregateBoolean(p *BooleanPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -2079,7 +2079,7 @@ func (r *BooleanFuncIntegerReducer) AggregateBoolean(p *BooleanPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateBoolean.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateBoolean.
 func (r *BooleanFuncIntegerReducer) Emit() []IntegerPoint {
 	return []IntegerPoint{*r.prev}
 }
@@ -2106,7 +2106,7 @@ func (r *BooleanSliceFuncIntegerReducer) AggregateBoolean(p *BooleanPoint) {
 }
 
 // AggregateBooleanBulk performs a bulk copy of BooleanPoints into the internal slice.
-// This is a more efficient version of calling AggregateBoolean on each point.
+// This is a more efficient version of calling AggregateBoolean on each Point.
 func (r *BooleanSliceFuncIntegerReducer) AggregateBooleanBulk(points []BooleanPoint) {
 	r.points = append(r.points, points...)
 }
@@ -2121,7 +2121,7 @@ func (r *BooleanSliceFuncIntegerReducer) Emit() []IntegerPoint {
 type BooleanReduceUnsignedFunc func(prev *UnsignedPoint, curr *BooleanPoint) (t int64, v uint64, aux []interface{})
 
 // BooleanFuncUnsignedReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type BooleanFuncUnsignedReducer struct {
 	prev *UnsignedPoint
 	fn   BooleanReduceUnsignedFunc
@@ -2133,7 +2133,7 @@ func NewBooleanFuncUnsignedReducer(fn BooleanReduceUnsignedFunc, prev *UnsignedP
 }
 
 // AggregateBoolean takes a BooleanPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *BooleanFuncUnsignedReducer) AggregateBoolean(p *BooleanPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -2149,7 +2149,7 @@ func (r *BooleanFuncUnsignedReducer) AggregateBoolean(p *BooleanPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateBoolean.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateBoolean.
 func (r *BooleanFuncUnsignedReducer) Emit() []UnsignedPoint {
 	return []UnsignedPoint{*r.prev}
 }
@@ -2176,7 +2176,7 @@ func (r *BooleanSliceFuncUnsignedReducer) AggregateBoolean(p *BooleanPoint) {
 }
 
 // AggregateBooleanBulk performs a bulk copy of BooleanPoints into the internal slice.
-// This is a more efficient version of calling AggregateBoolean on each point.
+// This is a more efficient version of calling AggregateBoolean on each Point.
 func (r *BooleanSliceFuncUnsignedReducer) AggregateBooleanBulk(points []BooleanPoint) {
 	r.points = append(r.points, points...)
 }
@@ -2191,7 +2191,7 @@ func (r *BooleanSliceFuncUnsignedReducer) Emit() []UnsignedPoint {
 type BooleanReduceStringFunc func(prev *StringPoint, curr *BooleanPoint) (t int64, v string, aux []interface{})
 
 // BooleanFuncStringReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type BooleanFuncStringReducer struct {
 	prev *StringPoint
 	fn   BooleanReduceStringFunc
@@ -2203,7 +2203,7 @@ func NewBooleanFuncStringReducer(fn BooleanReduceStringFunc, prev *StringPoint) 
 }
 
 // AggregateBoolean takes a BooleanPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *BooleanFuncStringReducer) AggregateBoolean(p *BooleanPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -2219,7 +2219,7 @@ func (r *BooleanFuncStringReducer) AggregateBoolean(p *BooleanPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateBoolean.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateBoolean.
 func (r *BooleanFuncStringReducer) Emit() []StringPoint {
 	return []StringPoint{*r.prev}
 }
@@ -2246,7 +2246,7 @@ func (r *BooleanSliceFuncStringReducer) AggregateBoolean(p *BooleanPoint) {
 }
 
 // AggregateBooleanBulk performs a bulk copy of BooleanPoints into the internal slice.
-// This is a more efficient version of calling AggregateBoolean on each point.
+// This is a more efficient version of calling AggregateBoolean on each Point.
 func (r *BooleanSliceFuncStringReducer) AggregateBooleanBulk(points []BooleanPoint) {
 	r.points = append(r.points, points...)
 }
@@ -2261,7 +2261,7 @@ func (r *BooleanSliceFuncStringReducer) Emit() []StringPoint {
 type BooleanReduceFunc func(prev *BooleanPoint, curr *BooleanPoint) (t int64, v bool, aux []interface{})
 
 // BooleanFuncReducer is a reducer that reduces
-// the passed in points to a single point using a reduce function.
+// the passed in points to a single Point using a reduce function.
 type BooleanFuncReducer struct {
 	prev *BooleanPoint
 	fn   BooleanReduceFunc
@@ -2273,7 +2273,7 @@ func NewBooleanFuncReducer(fn BooleanReduceFunc, prev *BooleanPoint) *BooleanFun
 }
 
 // AggregateBoolean takes a BooleanPoint and invokes the reduce function with the
-// current and new point to modify the current point.
+// current and new Point to modify the current Point.
 func (r *BooleanFuncReducer) AggregateBoolean(p *BooleanPoint) {
 	t, v, aux := r.fn(r.prev, p)
 	if r.prev == nil {
@@ -2289,7 +2289,7 @@ func (r *BooleanFuncReducer) AggregateBoolean(p *BooleanPoint) {
 	}
 }
 
-// Emit emits the point that was generated when reducing the points fed in with AggregateBoolean.
+// Emit emits the Point that was generated when reducing the points fed in with AggregateBoolean.
 func (r *BooleanFuncReducer) Emit() []BooleanPoint {
 	return []BooleanPoint{*r.prev}
 }
@@ -2316,7 +2316,7 @@ func (r *BooleanSliceFuncReducer) AggregateBoolean(p *BooleanPoint) {
 }
 
 // AggregateBooleanBulk performs a bulk copy of BooleanPoints into the internal slice.
-// This is a more efficient version of calling AggregateBoolean on each point.
+// This is a more efficient version of calling AggregateBoolean on each Point.
 func (r *BooleanSliceFuncReducer) AggregateBooleanBulk(points []BooleanPoint) {
 	r.points = append(r.points, points...)
 }
@@ -2337,7 +2337,7 @@ func NewBooleanDistinctReducer() *BooleanDistinctReducer {
 	return &BooleanDistinctReducer{m: make(map[bool]BooleanPoint)}
 }
 
-// AggregateBoolean aggregates a point into the reducer.
+// AggregateBoolean aggregates a Point into the reducer.
 func (r *BooleanDistinctReducer) AggregateBoolean(p *BooleanPoint) {
 	if _, ok := r.m[p.Value]; !ok {
 		r.m[p.Value] = *p
@@ -2370,13 +2370,13 @@ func NewBooleanElapsedReducer(interval Interval) *BooleanElapsedReducer {
 	}
 }
 
-// AggregateBoolean aggregates a point into the reducer and updates the current window.
+// AggregateBoolean aggregates a Point into the reducer and updates the current window.
 func (r *BooleanElapsedReducer) AggregateBoolean(p *BooleanPoint) {
 	r.prev = r.curr
 	r.curr = *p
 }
 
-// Emit emits the elapsed of the reducer at the current point.
+// Emit emits the elapsed of the reducer at the current Point.
 func (r *BooleanElapsedReducer) Emit() []IntegerPoint {
 	if !r.prev.Nil {
 		elapsed := (r.curr.Time - r.prev.Time) / r.unitConversion
@@ -2403,7 +2403,7 @@ func NewBooleanSampleReducer(size int) *BooleanSampleReducer {
 	}
 }
 
-// AggregateBoolean aggregates a point into the reducer.
+// AggregateBoolean aggregates a Point into the reducer.
 func (r *BooleanSampleReducer) AggregateBoolean(p *BooleanPoint) {
 	r.count++
 	// Fill the reservoir with the first n points
@@ -2414,7 +2414,7 @@ func (r *BooleanSampleReducer) AggregateBoolean(p *BooleanPoint) {
 
 	// Generate a random integer between 1 and the count and
 	// if that number is less than the length of the slice
-	// replace the point at that index rnd with p.
+	// replace the Point at that index rnd with p.
 	rnd := r.rng.Intn(r.count)
 	if rnd < len(r.points) {
 		p.CopyTo(&r.points[rnd])

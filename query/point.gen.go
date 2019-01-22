@@ -2,7 +2,7 @@
 // https://github.com/benbjohnson/tmpl
 //
 // DO NOT EDIT!
-// Source: point.gen.go.tmpl
+// Source: Point.gen.go.tmpl
 
 package query
 
@@ -15,7 +15,7 @@ import (
 	internal "github.com/influxdata/influxdb/query/internal"
 )
 
-// FloatPoint represents a point with a float64 value.
+// FloatPoint represents a Point with a float64 value.
 // DO NOT ADD ADDITIONAL FIELDS TO THIS STRUCT.
 // See TestPoint_Fields in influxql/point_test.go for more details.
 type FloatPoint struct {
@@ -26,8 +26,8 @@ type FloatPoint struct {
 	Value float64
 	Aux   []interface{}
 
-	// Total number of points that were combined into this point from an aggregate.
-	// If this is zero, the point is not the result of an aggregate function.
+	// Total number of points that were combined into this Point from an aggregate.
+	// If this is zero, the Point is not the result of an aggregate function.
 	Aggregated uint32
 	Nil        bool
 }
@@ -59,7 +59,7 @@ func (v *FloatPoint) Clone() *FloatPoint {
 	return &other
 }
 
-// CopyTo makes a deep copy into the point.
+// CopyTo makes a deep copy into the Point.
 func (v *FloatPoint) CopyTo(other *FloatPoint) {
 	other.Name, other.Tags = v.Name, v.Tags
 	other.Time = v.Time
@@ -175,7 +175,7 @@ func (enc *FloatPointEncoder) EncodeFloatPoint(p *FloatPoint) error {
 		return err
 	}
 
-	// Write the encoded point.
+	// Write the encoded Point.
 	if _, err := enc.w.Write(buf); err != nil {
 		return err
 	}
@@ -206,19 +206,19 @@ func (dec *FloatPointDecoder) DecodeFloatPoint(p *FloatPoint) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue
@@ -233,14 +233,14 @@ func (dec *FloatPointDecoder) DecodeFloatPoint(p *FloatPoint) error {
 			continue
 		}
 
-		// Decode into point object.
+		// Decode into Point object.
 		*p = *decodeFloatPoint(&pb)
 
 		return nil
 	}
 }
 
-// IntegerPoint represents a point with a int64 value.
+// IntegerPoint represents a Point with a int64 value.
 // DO NOT ADD ADDITIONAL FIELDS TO THIS STRUCT.
 // See TestPoint_Fields in influxql/point_test.go for more details.
 type IntegerPoint struct {
@@ -251,8 +251,8 @@ type IntegerPoint struct {
 	Value int64
 	Aux   []interface{}
 
-	// Total number of points that were combined into this point from an aggregate.
-	// If this is zero, the point is not the result of an aggregate function.
+	// Total number of points that were combined into this Point from an aggregate.
+	// If this is zero, the Point is not the result of an aggregate function.
 	Aggregated uint32
 	Nil        bool
 }
@@ -284,7 +284,7 @@ func (v *IntegerPoint) Clone() *IntegerPoint {
 	return &other
 }
 
-// CopyTo makes a deep copy into the point.
+// CopyTo makes a deep copy into the Point.
 func (v *IntegerPoint) CopyTo(other *IntegerPoint) {
 	other.Name, other.Tags = v.Name, v.Tags
 	other.Time = v.Time
@@ -400,7 +400,7 @@ func (enc *IntegerPointEncoder) EncodeIntegerPoint(p *IntegerPoint) error {
 		return err
 	}
 
-	// Write the encoded point.
+	// Write the encoded Point.
 	if _, err := enc.w.Write(buf); err != nil {
 		return err
 	}
@@ -431,19 +431,19 @@ func (dec *IntegerPointDecoder) DecodeIntegerPoint(p *IntegerPoint) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue
@@ -458,14 +458,14 @@ func (dec *IntegerPointDecoder) DecodeIntegerPoint(p *IntegerPoint) error {
 			continue
 		}
 
-		// Decode into point object.
+		// Decode into Point object.
 		*p = *decodeIntegerPoint(&pb)
 
 		return nil
 	}
 }
 
-// UnsignedPoint represents a point with a uint64 value.
+// UnsignedPoint represents a Point with a uint64 value.
 // DO NOT ADD ADDITIONAL FIELDS TO THIS STRUCT.
 // See TestPoint_Fields in influxql/point_test.go for more details.
 type UnsignedPoint struct {
@@ -476,8 +476,8 @@ type UnsignedPoint struct {
 	Value uint64
 	Aux   []interface{}
 
-	// Total number of points that were combined into this point from an aggregate.
-	// If this is zero, the point is not the result of an aggregate function.
+	// Total number of points that were combined into this Point from an aggregate.
+	// If this is zero, the Point is not the result of an aggregate function.
 	Aggregated uint32
 	Nil        bool
 }
@@ -509,7 +509,7 @@ func (v *UnsignedPoint) Clone() *UnsignedPoint {
 	return &other
 }
 
-// CopyTo makes a deep copy into the point.
+// CopyTo makes a deep copy into the Point.
 func (v *UnsignedPoint) CopyTo(other *UnsignedPoint) {
 	other.Name, other.Tags = v.Name, v.Tags
 	other.Time = v.Time
@@ -623,7 +623,7 @@ func (enc *UnsignedPointEncoder) EncodeUnsignedPoint(p *UnsignedPoint) error {
 		return err
 	}
 
-	// Write the encoded point.
+	// Write the encoded Point.
 	if _, err := enc.w.Write(buf); err != nil {
 		return err
 	}
@@ -654,19 +654,19 @@ func (dec *UnsignedPointDecoder) DecodeUnsignedPoint(p *UnsignedPoint) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue
@@ -681,14 +681,14 @@ func (dec *UnsignedPointDecoder) DecodeUnsignedPoint(p *UnsignedPoint) error {
 			continue
 		}
 
-		// Decode into point object.
+		// Decode into Point object.
 		*p = *decodeUnsignedPoint(&pb)
 
 		return nil
 	}
 }
 
-// StringPoint represents a point with a string value.
+// StringPoint represents a Point with a string value.
 // DO NOT ADD ADDITIONAL FIELDS TO THIS STRUCT.
 // See TestPoint_Fields in influxql/point_test.go for more details.
 type StringPoint struct {
@@ -699,8 +699,8 @@ type StringPoint struct {
 	Value string
 	Aux   []interface{}
 
-	// Total number of points that were combined into this point from an aggregate.
-	// If this is zero, the point is not the result of an aggregate function.
+	// Total number of points that were combined into this Point from an aggregate.
+	// If this is zero, the Point is not the result of an aggregate function.
 	Aggregated uint32
 	Nil        bool
 }
@@ -732,7 +732,7 @@ func (v *StringPoint) Clone() *StringPoint {
 	return &other
 }
 
-// CopyTo makes a deep copy into the point.
+// CopyTo makes a deep copy into the Point.
 func (v *StringPoint) CopyTo(other *StringPoint) {
 	other.Name, other.Tags = v.Name, v.Tags
 	other.Time = v.Time
@@ -848,7 +848,7 @@ func (enc *StringPointEncoder) EncodeStringPoint(p *StringPoint) error {
 		return err
 	}
 
-	// Write the encoded point.
+	// Write the encoded Point.
 	if _, err := enc.w.Write(buf); err != nil {
 		return err
 	}
@@ -879,19 +879,19 @@ func (dec *StringPointDecoder) DecodeStringPoint(p *StringPoint) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue
@@ -906,14 +906,14 @@ func (dec *StringPointDecoder) DecodeStringPoint(p *StringPoint) error {
 			continue
 		}
 
-		// Decode into point object.
+		// Decode into Point object.
 		*p = *decodeStringPoint(&pb)
 
 		return nil
 	}
 }
 
-// BooleanPoint represents a point with a bool value.
+// BooleanPoint represents a Point with a bool value.
 // DO NOT ADD ADDITIONAL FIELDS TO THIS STRUCT.
 // See TestPoint_Fields in influxql/point_test.go for more details.
 type BooleanPoint struct {
@@ -924,8 +924,8 @@ type BooleanPoint struct {
 	Value bool
 	Aux   []interface{}
 
-	// Total number of points that were combined into this point from an aggregate.
-	// If this is zero, the point is not the result of an aggregate function.
+	// Total number of points that were combined into this Point from an aggregate.
+	// If this is zero, the Point is not the result of an aggregate function.
 	Aggregated uint32
 	Nil        bool
 }
@@ -957,7 +957,7 @@ func (v *BooleanPoint) Clone() *BooleanPoint {
 	return &other
 }
 
-// CopyTo makes a deep copy into the point.
+// CopyTo makes a deep copy into the Point.
 func (v *BooleanPoint) CopyTo(other *BooleanPoint) {
 	other.Name, other.Tags = v.Name, v.Tags
 	other.Time = v.Time
@@ -1073,7 +1073,7 @@ func (enc *BooleanPointEncoder) EncodeBooleanPoint(p *BooleanPoint) error {
 		return err
 	}
 
-	// Write the encoded point.
+	// Write the encoded Point.
 	if _, err := enc.w.Write(buf); err != nil {
 		return err
 	}
@@ -1104,19 +1104,19 @@ func (dec *BooleanPointDecoder) DecodeBooleanPoint(p *BooleanPoint) error {
 			return err
 		}
 
-		// Read point data.
+		// Read Point data.
 		buf := make([]byte, sz)
 		if _, err := io.ReadFull(dec.r, buf); err != nil {
 			return err
 		}
 
-		// Unmarshal into point.
+		// Unmarshal into Point.
 		var pb internal.Point
 		if err := proto.Unmarshal(buf, &pb); err != nil {
 			return err
 		}
 
-		// If the point contains stats then read stats and retry.
+		// If the Point contains stats then read stats and retry.
 		if pb.Stats != nil {
 			dec.stats = decodeIteratorStats(pb.Stats)
 			continue
@@ -1131,7 +1131,7 @@ func (dec *BooleanPointDecoder) DecodeBooleanPoint(p *BooleanPoint) error {
 			continue
 		}
 
-		// Decode into point object.
+		// Decode into Point object.
 		*p = *decodeBooleanPoint(&pb)
 
 		return nil
