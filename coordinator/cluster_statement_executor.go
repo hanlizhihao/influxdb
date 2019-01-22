@@ -88,7 +88,12 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 		if ctx.ReadOnly {
 			messages = append(messages, query.ReadOnlyWarning(stmt.String()))
 		}
-		err = e.executeDropSeriesStatement(stmt, ctx.Database)
+		statement := &Statement{
+			Sql:     stmt.String(),
+			ExecOpt: ctx.ExecutionOptions,
+		}
+		err = e.EtcdService.putSql(statement)
+		// err = e.executeDropSeriesStatement(stmt, ctx.Database)
 	case *influxql.DropRetentionPolicyStatement:
 		if ctx.ReadOnly {
 			messages = append(messages, query.ReadOnlyWarning(stmt.String()))

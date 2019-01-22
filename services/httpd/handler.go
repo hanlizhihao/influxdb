@@ -374,11 +374,14 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	// Retrieve the node id the query should be executed on.
 	nodeID, _ := strconv.ParseUint(r.FormValue("node_id"), 10, 64)
 
+	// Read the db from the from value
+	db := r.FormValue("db")
+
 	var qr io.Reader
 	// Attempt to read the form value from the "q" form value.
 	if qp := strings.TrimSpace(r.FormValue("q")); qp != "" {
 		// queryBalance http request, forward the request which need the other node's data
-		if ok, _ := h.Balancing.queryBalance(&w, qp, r); ok {
+		if ok, _ := h.Balancing.queryBalance(&w, r, qp, db); ok {
 			return
 		}
 		qr = strings.NewReader(qp)
@@ -403,7 +406,6 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request, user meta.U
 	epoch := strings.TrimSpace(r.FormValue("epoch"))
 
 	p := influxql.NewParser(qr)
-	db := r.FormValue("db")
 
 	// Sanitize the request query params so it doesn't show up in the response logger.
 	// Do this before anything else so a parsing error doesn't leak passwords.

@@ -26,10 +26,11 @@ const (
 )
 
 type Balance interface {
-	SetMeasurementMapIndex(measurement map[string]interface{}, otherMeasurement map[string]uint64, classIpMap map[uint64][]string)
+	SetMeasurementMapIndex(measurement map[string]map[string]interface{}, otherMeasurement map[string]map[string]uint64,
+		classIpMap map[uint64][]string)
 	SetConsistent(consistent *consistent.Consistent)
 	SetMasterNode(node *consistent.Node)
-	queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error)
+	queryBalance(w *http.ResponseWriter, r *http.Request, q string, db string) (bool, error)
 	writeBalance(w *http.ResponseWriter, r *http.Request, points []models.Point, db string, rp string, user meta.User) ([]models.Point, error)
 	GetNewPointChan() chan *NewMeasurementPoint
 	// 数据库连接池
@@ -51,9 +52,9 @@ type HttpBalance struct {
 		Data() meta.Data
 	}
 	// local class's measurements
-	measurement map[string]interface{}
+	measurement map[string]map[string]interface{}
 	// other class's measurement
-	otherMeasurement map[string]uint64
+	otherMeasurement map[string]map[string]uint64
 	// if there is point transfer to class, will need ip
 	classIpMap map[uint64][]string
 	// local cluster's master node
@@ -88,7 +89,8 @@ func (qb *HttpBalance) GetNewPointChan() chan *NewMeasurementPoint {
 	return qb.newPointChan
 }
 
-func (qb *HttpBalance) SetMeasurementMapIndex(measurement map[string]interface{}, otherMeasurement map[string]uint64, classIpMap map[uint64][]string) {
+func (qb *HttpBalance) SetMeasurementMapIndex(measurement map[string]map[string]interface{},
+	otherMeasurement map[string]map[string]uint64, classIpMap map[uint64][]string) {
 	if qb.measurement == nil {
 		qb.measurement = measurement
 	}
@@ -135,8 +137,8 @@ func (qb *HttpBalance) query(c *int32, r *http.Request, resultChan chan *query.R
 	atomic.AddInt32(c, 1)
 }
 
-// return true, the request will be forward, return false, the request will be not forward
-func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Request) (bool, error) {
+// return true, the request will be forward, return false, the request will not forward
+func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, r *http.Request, q string, db string) (bool, error) {
 	if agent := r.UserAgent(); agent == "InfluxDBClient" {
 		return false, nil
 	}
@@ -150,12 +152,12 @@ func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, q string, r *http.Re
 	if qb.measurement[key] != nil {
 		return false, nil
 	}
-	go qb.forwardRequest(key, w, r)
+	go qb.forwardRequest(db, key, w, r)
 	return true, nil
 }
-func (qb *HttpBalance) forwardRequest(measurement string, response *http.ResponseWriter, r *http.Request) {
+func (qb *HttpBalance) forwardRequest(db string, measurement string, response *http.ResponseWriter, r *http.Request) {
 	var err error
-	ips := qb.classIpMap[qb.otherMeasurement[measurement]]
+	ips := qb.classIpMap[qb.otherMeasurement[db][measurement]]
 	w := *response
 	if ips == nil || len(ips) == 0 {
 		qb.Logger.Error("Balance error !!! Measurement does not exist in any node " +
@@ -207,7 +209,7 @@ func (qb *HttpBalance) writeBalance(w *http.ResponseWriter, r *http.Request, poi
 	for _, point := range points {
 		name := string(point.Name())
 		if qb.measurement[name] == nil {
-			classId := qb.otherMeasurement[name]
+			classId := qb.otherMeasurement[db][name]
 			if classId == 0 {
 				newMeasurementPoint = append(newMeasurementPoint, point)
 				continue

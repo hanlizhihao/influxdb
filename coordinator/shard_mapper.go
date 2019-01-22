@@ -258,6 +258,7 @@ func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influx
 		go func(ctxTimeOut context.Context, m *influxql.Measurement, opt query.IteratorOptions, resultCh chan *query.Iterator) {
 			defer wait.Done()
 			err = a.qb.Query(ctxTimeOut, m, opt, resultCh)
+			a.s.CheckErrPrintLog("Local Booster Query failed", err)
 		}(ctx, m, opt, resultCh)
 	}
 	go func(resultCh chan *query.Iterator) {

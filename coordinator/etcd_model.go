@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxql"
 	"time"
@@ -59,14 +60,14 @@ type (
 		ClassId    uint64   `json:"class_id"`
 		Limit      int      `json:"limit"`
 		ClusterIds []uint64 `json:"cluster_ids"`
+		// key:db ;value->measurement
 		// latest measurement
-		Measurements []string `json:"measurements"`
+		DBMeasurements map[string][]string `json:"db_measurements"`
 		// Incremental measurement
-		NewMeasurement []string `json:"new_measurement"`
+		DBNewMeasure map[string][]string `json:"db_new_measure"`
 		// Incremental delete measurement
-		DeleteMeasurement []string `json:"delete_measurement"`
+		DBDelMeasure map[string][]string `json:"db_del_measure"`
 	}
-	// clusters:[{id,masterNode:{id,host,weight}}], measurements: [name]
 
 	ClassDetail struct {
 		Clusters     []WorkClusterInfo `json:"clusters"`
@@ -78,5 +79,10 @@ type (
 		Password   string                        `json:"password"`
 		Admin      bool                          `json:"admin"`
 		Privileges map[string]influxql.Privilege `json:"privileges"`
+	}
+	// Global Statement
+	Statement struct {
+		Sql     string                 `json:"sql"`
+		ExecOpt query.ExecutionOptions `json:"exec_opt"`
 	}
 )

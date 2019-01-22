@@ -13,7 +13,9 @@ import (
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tsdb"
+	"github.com/influxdata/influxql"
 	"go.uber.org/zap"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -41,6 +43,9 @@ const (
 	TSDBUsers     = "tsdb-users"
 	// default class limit
 	DefaultClassLimit = 3
+
+	TSDBStatement                = "tsdb-statement-"
+	TSDBStatementAutoIncrementId = "tsdb-auto-increment-statement-id"
 )
 
 var IgnoreDBS = []string{"_internal", "database"}
@@ -77,10 +82,10 @@ type Service struct {
 	udpConfig  udp.Config
 	cli        *clientv3.Client
 	lease      *clientv3.LeaseGrantResponse
-	// local class's measurements
-	measurement map[string]interface{}
-	// other class's measurement
-	otherMeasurement map[string]uint64
+	// FirstKey: db, SecondKey: measurement local class's measurements
+	measurement map[string]map[string]interface{}
+	// FirstKey: db, SecondKey: measurement other class's measurement
+	otherMeasurement map[string]map[string]uint64
 	// if there is point transfer to class, will need ip
 	classIpMap map[uint64][]string
 	// latest classes info
@@ -113,8 +118,8 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		classDetail:      make(map[string]Node),
 		Cluster:          false,
 		classes:          new(Classes),
-		measurement:      make(map[string]interface{}),
-		otherMeasurement: make(map[string]uint64),
+		measurement:      make(map[string]map[string]interface{}),
+		otherMeasurement: make(map[string]map[string]uint64),
 		classIpMap:       make(map[uint64][]string),
 		masterNode:       new(Node),
 		ch:               consistent.NewConsistent(),
@@ -123,31 +128,6 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 }
 func (s *Service) SetHttpdService(httpd *httpd.Service) {
 	s.httpd = httpd
-}
-
-// 获取集群及物理节点的自增id
-func (s *Service) GetLatestID(key string) (uint64, error) {
-	response, err := s.cli.Get(context.Background(), key)
-	if err != nil {
-		return 0, err
-	}
-	if response.Count == 0 {
-		_, err = s.cli.Put(context.Background(), key, "1")
-	}
-getClusterId:
-	response, err = s.cli.Get(context.Background(), key)
-	cmp := clientv3.Compare(clientv3.Value(key), "=", string(response.Kvs[0].Value))
-	clusterId, err := strconv.ParseUint(string(response.Kvs[0].Value), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	clusterId++
-	put := clientv3.OpPut(key, strconv.FormatUint(clusterId, 10))
-	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
-	if !resp.Succeeded {
-		goto getClusterId
-	}
-	return clusterId, nil
 }
 
 func (s *Service) Open() error {
@@ -252,8 +232,9 @@ func (s *Service) processNewMeasurement() {
 		failedPoints := make([]models.Point, 0)
 		for _, point := range newMeasurementPoint.Points {
 			measurement := string(point.Name())
-			mapValue := s.measurement[measurement]
-			classId := s.otherMeasurement[measurement]
+			mapValue := s.measurement[newMeasurementPoint.DB][measurement]
+			classId := s.otherMeasurement[newMeasurementPoint.DB][measurement]
+			// the point belong to new measurement
 			if mapValue == nil && classId == 0 {
 				if len(*s.classes) == 0 {
 					s.Logger.Error("Meta Data is nil, please restart database")
@@ -265,12 +246,19 @@ func (s *Service) processNewMeasurement() {
 					ParseJson(resp.Kvs[0].Value, s.classes)
 					var classes = *s.classes
 					// balance measurement algorithm
-					classes[0].Measurements = append(classes[0].Measurements, string(point.Name()))
-					classes[0].NewMeasurement = append(classes[0].NewMeasurement, string(point.Name()))
-					updateClass := classes[0]
+					class := classes[0]
+					ms := class.DBMeasurements[newMeasurementPoint.DB]
+					if ms == nil {
+						ms := []string{measurement}
+						class.DBMeasurements[newMeasurementPoint.DB] = ms
+					} else {
+						ms = append(ms, measurement)
+						class.DBMeasurements[newMeasurementPoint.DB] = ms
+					}
+					class.DBNewMeasure[newMeasurementPoint.DB] = []string{measurement}
 					if len(classes) > 1 {
 						classes = classes[1:]
-						classes = append(classes, updateClass)
+						classes = append(classes, class)
 					}
 					cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
 					putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
@@ -485,19 +473,6 @@ func (s *Service) addNewDatabase(additionalDB Databases) error {
 		}
 	}
 	return err
-}
-
-func (s *Service) CheckErrorExit(msg string, err error) {
-	if err != nil {
-		s.Logger.Error(msg, zap.Error(err))
-		os.Exit(1)
-		return
-	}
-}
-func (s *Service) CheckErrPrintLog(mag string, err error) {
-	if err != nil {
-		s.Logger.Error(mag, zap.Error(err))
-	}
 }
 
 func (s *Service) watchContinuesQuery() {
@@ -834,12 +809,12 @@ RetryCreateClass:
 			return err
 		}
 		classes := []Class{{
-			ClassId:           classIdResp,
-			Limit:             DefaultClassLimit,
-			ClusterIds:        []uint64{workClusterInfo.ClusterId},
-			Measurements:      make([]string, 0),
-			DeleteMeasurement: make([]string, 0),
-			NewMeasurement:    make([]string, 0),
+			ClassId:        classIdResp,
+			Limit:          DefaultClassLimit,
+			ClusterIds:     []uint64{workClusterInfo.ClusterId},
+			DBMeasurements: make(map[string][]string),
+			DBNewMeasure:   make(map[string][]string),
+			DBDelMeasure:   make(map[string][]string),
 		}}
 		metaData := s.MetaClient.Data()
 		metaData.ClassID = classIdResp
@@ -1325,27 +1300,37 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 	ParseJson(data, s.classes)
 	var classes = *s.classes
 	for _, class := range classes {
-		if len(class.NewMeasurement) == 0 && len(class.DeleteMeasurement) == 0 {
+		if len(class.DBMeasurements) == 0 && len(class.DBDelMeasure) == 0 {
 			continue
 		}
 		// process local class
 		if class.ClassId == s.MetaClient.Data().ClassID {
-			for _, measurementName := range class.Measurements {
-				s.measurement[measurementName] = ""
+			for db, ms := range class.DBMeasurements {
+				for _, m := range ms {
+					s.measurement[db][m] = ""
+				}
 			}
-			if len(class.DeleteMeasurement) != 0 {
-				for _, deleteMeasurement := range class.DeleteMeasurement {
-					delete(s.measurement, deleteMeasurement)
+			if len(class.DBDelMeasure) != 0 {
+				for db, ms := range class.DBDelMeasure {
+					for _, m := range ms {
+						// local class delete measurement need clear local data
+						delete(s.measurement[db], m)
+						s.store.DeleteMeasurement(db, m)
+					}
 				}
 			}
 			continue
 		}
 		// process other class
-		for _, measurement := range class.Measurements {
-			s.otherMeasurement[measurement] = class.ClassId
+		for db, ms := range class.DBMeasurements {
+			for _, m := range ms {
+				s.otherMeasurement[db][m] = class.ClassId
+			}
 		}
-		for _, deleteMeasurement := range class.DeleteMeasurement {
-			delete(s.otherMeasurement, deleteMeasurement)
+		for db, ms := range class.DBMeasurements {
+			for _, m := range ms {
+				delete(s.otherMeasurement[db], m)
+			}
 		}
 		// process ip map index
 		if classIp := s.classIpMap[class.ClassId]; classIp == nil || len(classIp) <= 1 {
@@ -1373,6 +1358,58 @@ func (s *Service) buildConsistentHash() {
 		s.httpd.Handler.Balancing.SetConsistent(s.ch)
 	})
 }
+func (s *Service) putSql(state *Statement) error {
+	if state == nil {
+		return errors.New("Statement is nil error ")
+	}
+PutSql:
+	id, err := s.GetLatestID(TSDBStatementAutoIncrementId)
+	if err != nil {
+		return err
+	}
+	idStr := TSDBStatement + strconv.FormatUint(id, 10)
+	cmp := clientv3.Compare(clientv3.CreateRevision(idStr), "=", 0)
+	put := clientv3.OpPut(idStr, ToJson(state))
+	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+	if !resp.Succeeded || err != nil {
+		goto PutSql
+	}
+	return nil
+}
+func (s *Service) watchStatement() {
+	stateCh := s.cli.Watch(context.Background(), TSDBStatement, clientv3.WithPrefix())
+	for stateInfo := range stateCh {
+		for _, event := range stateInfo.Events {
+			var state Statement
+			ParseJson(event.Kv.Value, &state)
+			var qr io.Reader
+			qr = strings.NewReader(state.Sql)
+			if qr == nil {
+				continue
+			}
+			p := influxql.NewParser(qr)
+			q, err := p.ParseQuery()
+			if err != nil {
+				continue
+			}
+			executionCont := &query.ExecutionContext{
+				ExecutionOptions: state.ExecOpt,
+			}
+			for i, statement := range q.Statements {
+				if executor, ok := s.httpd.Handler.QueryExecutor.StatementExecutor.(*ClusterStatementExecutor); ok {
+					executionCont.QueryID = uint64(i)
+					err = executor.StatementExecutor.ExecuteStatement(statement, executionCont)
+					s.CheckErrPrintLog("WatchStatemet StatementExecutor execute statement failed, sql is"+state.Sql+
+						" error message is ", err)
+				}
+			}
+		}
+	}
+}
+
+func (s *Service) dropMeasurement() {
+
+}
 
 func ContainsStr(all []string, sub string) bool {
 	for _, s := range all {
@@ -1381,4 +1418,44 @@ func ContainsStr(all []string, sub string) bool {
 		}
 	}
 	return false
+}
+
+// 获取集群及物理节点的自增id
+func (s *Service) GetLatestID(key string) (uint64, error) {
+	response, err := s.cli.Get(context.Background(), key)
+	if err != nil {
+		return 0, err
+	}
+	if response.Count == 0 {
+		_, err = s.cli.Put(context.Background(), key, "1")
+	}
+getClusterId:
+	response, err = s.cli.Get(context.Background(), key)
+	cmp := clientv3.Compare(clientv3.Value(key), "=", string(response.Kvs[0].Value))
+	clusterId, err := strconv.ParseUint(string(response.Kvs[0].Value), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if clusterId > uint64(18446744073709551610) {
+		clusterId = 0
+	}
+	clusterId++
+	put := clientv3.OpPut(key, strconv.FormatUint(clusterId, 10))
+	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+	if !resp.Succeeded {
+		goto getClusterId
+	}
+	return clusterId, nil
+}
+func (s *Service) CheckErrorExit(msg string, err error) {
+	if err != nil {
+		s.Logger.Error(msg, zap.Error(err))
+		os.Exit(1)
+		return
+	}
+}
+func (s *Service) CheckErrPrintLog(mag string, err error) {
+	if err != nil {
+		s.Logger.Error(mag, zap.Error(err))
+	}
 }
