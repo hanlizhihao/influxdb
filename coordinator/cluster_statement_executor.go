@@ -68,7 +68,8 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 		}
 		err = e.executeCreateUserStatement(stmt)
 	case *influxql.DeleteSeriesStatement:
-		err = e.executeDeleteSeriesStatement(stmt, ctx.Database)
+		messages, err = e.executeDistributeSql(ctx, messages, stmt)
+		// err = e.executeDeleteSeriesStatement(stmt, ctx.Database)
 	case *influxql.DropContinuousQueryStatement:
 		if ctx.ReadOnly {
 			messages = append(messages, query.ReadOnlyWarning(stmt.String()))
@@ -85,14 +86,7 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 		}
 		err = e.executeDropMeasurementStatement(stmt, ctx.Database)
 	case *influxql.DropSeriesStatement:
-		if ctx.ReadOnly {
-			messages = append(messages, query.ReadOnlyWarning(stmt.String()))
-		}
-		statement := &Statement{
-			Sql:     stmt.String(),
-			ExecOpt: ctx.ExecutionOptions,
-		}
-		err = e.EtcdService.putSql(statement)
+		messages, err = e.executeDistributeSql(ctx, messages, stmt)
 		// err = e.executeDropSeriesStatement(stmt, ctx.Database)
 	case *influxql.DropRetentionPolicyStatement:
 		if ctx.ReadOnly {
@@ -190,6 +184,18 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 		Series:   rows,
 		Messages: messages,
 	})
+}
+
+func (e *ClusterStatementExecutor) executeDistributeSql(ctx *query.ExecutionContext, messages []*query.Message,
+	stmt influxql.Statement) ([]*query.Message, error) {
+	if ctx.ReadOnly {
+		messages = append(messages, query.ReadOnlyWarning(stmt.String()))
+	}
+	statement := &Statement{
+		Sql:     stmt.String(),
+		ExecOpt: ctx.ExecutionOptions,
+	}
+	return messages, e.EtcdService.putSql(statement)
 }
 
 func (e *ClusterStatementExecutor) executeAlterRetentionPolicyStatement(stmt *influxql.AlterRetentionPolicyStatement) error {
@@ -350,30 +356,7 @@ func (e *ClusterStatementExecutor) executeDeleteSeriesStatement(stmt *influxql.D
 }
 
 func (e *ClusterStatementExecutor) executeDropContinuousQueryStatement(q *influxql.DropContinuousQueryStatement) error {
-	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBcq)
-	if resp.Count == 0 || err != nil {
-		return errors.New("Get meta data from etcd failed ")
-	}
-	var cqs Cqs
-	ParseJson(resp.Kvs[0].Value, &cqs)
-	cqInfo := cqs[q.Database]
-	index := -1
-	for i, cq := range cqInfo {
-		if cq.Name == q.Name {
-			index = i
-			break
-		}
-	}
-	if index == -1 {
-		return errors.New("Continues Query don't exist ")
-	}
-	if index >= len(cqInfo)-1 {
-		cqInfo = cqInfo[0 : len(cqInfo)-1]
-	} else {
-		cqInfo = append(cqInfo[0:index], cqInfo[index+1:]...)
-	}
-	cqs[q.Database] = cqInfo
-	return e.EtcdService.PutMetaDataForEtcd(cqs, TSDBcq)
+	return e.EtcdService.dropCqs(q.Database, q.Name)
 }
 
 // executeDropDatabaseStatement drops a database from the Cluster.
@@ -389,8 +372,9 @@ func (e *ClusterStatementExecutor) executeDropDatabaseStatement(stmt *influxql.D
 		return err
 	}
 
-	// Remove the database from the Meta Store.
-	return e.MetaClient.DropDatabase(stmt.Name)
+	return e.EtcdService.dropDB(stmt.Name)
+	//// Remove the database from the Meta Store.
+	//return e.MetaClient.DropDatabase(stmt.Name)
 }
 
 func (e *ClusterStatementExecutor) executeDropMeasurementStatement(stmt *influxql.DropMeasurementStatement, database string) error {
@@ -398,8 +382,9 @@ func (e *ClusterStatementExecutor) executeDropMeasurementStatement(stmt *influxq
 		return query.ErrDatabaseNotFound(database)
 	}
 
+	return e.EtcdService.dropMeasurement(database, stmt.Name)
 	// Locally drop the measurement
-	return e.TSDBStore.DeleteMeasurement(database, stmt.Name)
+	//return e.TSDBStore.DeleteMeasurement(database, stmt.Name)
 }
 
 func (e *ClusterStatementExecutor) executeDropSeriesStatement(stmt *influxql.DropSeriesStatement, database string) error {

@@ -405,6 +405,7 @@ func (s *Service) watchDatabasesInfo() {
 			for _, localDB := range s.MetaClient.Databases() {
 				rps := s.databases[localDB.Name]
 				if rps == nil {
+					s.store.DeleteDatabase(localDB.Name)
 					_ = s.MetaClient.DropDatabase(localDB.Name)
 					continue
 				}
@@ -474,6 +475,24 @@ func (s *Service) addNewDatabase(additionalDB Databases) error {
 		}
 	}
 	return err
+}
+func (s *Service) dropDB(name string) error {
+	s.dbsMu.Lock()
+	defer s.dbsMu.Unlock()
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBDatabase)
+	if err != nil || resp.Count == 0 {
+		return errors.New("DeleteDB Get latest dbs error")
+	}
+	ParseJson(resp.Kvs[0].Value, &s.databases)
+	delete(s.databases, name)
+	cmp := clientv3.Compare(clientv3.Value(TSDBDatabase), "=", string(resp.Kvs[0].Value))
+	put := clientv3.OpPut(TSDBDatabase, ToJson(s.databases))
+	txResp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+	if txResp.Succeeded {
+		return nil
+	}
+	goto Retry
 }
 
 func (s *Service) watchContinuesQuery() {
@@ -1381,27 +1400,29 @@ func (s *Service) watchStatement() {
 	stateCh := s.cli.Watch(context.Background(), TSDBStatement, clientv3.WithPrefix())
 	for stateInfo := range stateCh {
 		for _, event := range stateInfo.Events {
-			var state Statement
-			ParseJson(event.Kv.Value, &state)
-			var qr io.Reader
-			qr = strings.NewReader(state.Sql)
-			if qr == nil {
-				continue
-			}
-			p := influxql.NewParser(qr)
-			q, err := p.ParseQuery()
-			if err != nil {
-				continue
-			}
-			executionCont := &query.ExecutionContext{
-				ExecutionOptions: state.ExecOpt,
-			}
-			for i, statement := range q.Statements {
-				if executor, ok := s.httpd.Handler.QueryExecutor.StatementExecutor.(*ClusterStatementExecutor); ok {
-					executionCont.QueryID = uint64(i)
-					err = executor.StatementExecutor.ExecuteStatement(statement, executionCont)
-					s.CheckErrPrintLog("WatchStatemet StatementExecutor execute statement failed, sql is"+state.Sql+
-						" error message is ", err)
+			if event.Type == mvccpb.PUT {
+				var state Statement
+				ParseJson(event.Kv.Value, &state)
+				var qr io.Reader
+				qr = strings.NewReader(state.Sql)
+				if qr == nil {
+					continue
+				}
+				p := influxql.NewParser(qr)
+				q, err := p.ParseQuery()
+				if err != nil {
+					continue
+				}
+				executionCont := &query.ExecutionContext{
+					ExecutionOptions: state.ExecOpt,
+				}
+				for i, statement := range q.Statements {
+					if executor, ok := s.httpd.Handler.QueryExecutor.StatementExecutor.(*ClusterStatementExecutor); ok {
+						executionCont.QueryID = uint64(i)
+						err = executor.StatementExecutor.ExecuteStatement(statement, executionCont)
+						s.CheckErrPrintLog("WatchStatemet StatementExecutor execute statement failed, sql is"+state.Sql+
+							" error message is ", err)
+					}
 				}
 			}
 		}
@@ -1409,12 +1430,68 @@ func (s *Service) watchStatement() {
 }
 
 func (s *Service) dropMeasurement(db string, name string) error {
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return errors.New("Classes meta data don't exist!!! ,Etcd Service may be crash or occur error ")
+	}
+	ParseJson(resp.Kvs[0].Value, s.classes)
 	var classes = *s.classes
-	for _, class := range classes {
+	update := false
+	for i, class := range classes {
 		if ms := class.DBMeasurements[db]; ms != nil {
 			ms = slices.DeleteStr(ms, name)
+			update = true
+			classes[i] = class
 			break
 		}
 	}
-	return s.PutMetaDataForEtcd(classes, TSDBClassesInfo)
+	if update {
+		cmp := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
+		put := clientv3.OpPut(TSDBClassesInfo, ToJson(classes))
+		txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+		if txnResp.Succeeded && err == nil {
+			return nil
+		}
+		goto Retry
+	}
+
+	return nil
+}
+
+func (s *Service) dropCqs(db string, name string) error {
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBcq)
+	if resp.Count == 0 || err != nil {
+		return errors.New("Get meta data from etcd failed ")
+	}
+	var cqs Cqs
+	ParseJson(resp.Kvs[0].Value, &cqs)
+	cqInfo := cqs[db]
+	index := -1
+	for i, cq := range cqInfo {
+		if cq.Name == name {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return errors.New("Continues Query don't exist ")
+	}
+	if index >= len(cqInfo)-1 {
+		cqInfo = cqInfo[0 : len(cqInfo)-1]
+	} else {
+		cqInfo = append(cqInfo[0:index], cqInfo[index+1:]...)
+	}
+	cqs[db] = cqInfo
+	cmp := clientv3.Compare(clientv3.Value(TSDBcq), "=", string(resp.Kvs[0].Value))
+	put := clientv3.OpPut(TSDBcq, ToJson(cqs))
+	txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
 }

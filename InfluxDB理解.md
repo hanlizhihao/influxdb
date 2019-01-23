@@ -123,4 +123,4 @@ listen client url 不能用公网ip?
 * 新建measurement 写入失败
 * with lease key disappear
 * 元数据管理，需要数据库启动时恢复的数据，需要单独设置metaData，例如： database、RetentionPolicy、Continues Query，除此以外的
-可以使用Statement转sql方式
+* 该到dropRetentionPolicy，subscription 应该为元数据，方便集群导出数据
