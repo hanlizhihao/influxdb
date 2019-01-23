@@ -7,6 +7,7 @@ import (
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/promise"
+	"github.com/influxdata/influxdb/pkg/slices"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/httpd"
 	"github.com/influxdata/influxdb/services/httpd/consistent"
@@ -1407,55 +1408,13 @@ func (s *Service) watchStatement() {
 	}
 }
 
-func (s *Service) dropMeasurement() {
-
-}
-
-func ContainsStr(all []string, sub string) bool {
-	for _, s := range all {
-		if s == sub {
-			return true
+func (s *Service) dropMeasurement(db string, name string) error {
+	var classes = *s.classes
+	for _, class := range classes {
+		if ms := class.DBMeasurements[db]; ms != nil {
+			ms = slices.DeleteStr(ms, name)
+			break
 		}
 	}
-	return false
-}
-
-// 获取集群及物理节点的自增id
-func (s *Service) GetLatestID(key string) (uint64, error) {
-	response, err := s.cli.Get(context.Background(), key)
-	if err != nil {
-		return 0, err
-	}
-	if response.Count == 0 {
-		_, err = s.cli.Put(context.Background(), key, "1")
-	}
-getClusterId:
-	response, err = s.cli.Get(context.Background(), key)
-	cmp := clientv3.Compare(clientv3.Value(key), "=", string(response.Kvs[0].Value))
-	clusterId, err := strconv.ParseUint(string(response.Kvs[0].Value), 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	if clusterId > uint64(18446744073709551610) {
-		clusterId = 0
-	}
-	clusterId++
-	put := clientv3.OpPut(key, strconv.FormatUint(clusterId, 10))
-	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
-	if !resp.Succeeded {
-		goto getClusterId
-	}
-	return clusterId, nil
-}
-func (s *Service) CheckErrorExit(msg string, err error) {
-	if err != nil {
-		s.Logger.Error(msg, zap.Error(err))
-		os.Exit(1)
-		return
-	}
-}
-func (s *Service) CheckErrPrintLog(mag string, err error) {
-	if err != nil {
-		s.Logger.Error(mag, zap.Error(err))
-	}
+	return s.PutMetaDataForEtcd(classes, TSDBClassesInfo)
 }

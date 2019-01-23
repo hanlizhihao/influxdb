@@ -122,3 +122,5 @@ listen client url 不能用公网ip?
 * 在初始化、新增和删除表时，应该确保newMeasurement和deleteMeasurement至少不为空
 * 新建measurement 写入失败
 * with lease key disappear
+* 元数据管理，需要数据库启动时恢复的数据，需要单独设置metaData，例如： database、RetentionPolicy、Continues Query，除此以外的
+可以使用Statement转sql方式

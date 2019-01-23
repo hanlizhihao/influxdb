@@ -350,7 +350,30 @@ func (e *ClusterStatementExecutor) executeDeleteSeriesStatement(stmt *influxql.D
 }
 
 func (e *ClusterStatementExecutor) executeDropContinuousQueryStatement(q *influxql.DropContinuousQueryStatement) error {
-	return e.MetaClient.DropContinuousQuery(q.Database, q.Name)
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBcq)
+	if resp.Count == 0 || err != nil {
+		return errors.New("Get meta data from etcd failed ")
+	}
+	var cqs Cqs
+	ParseJson(resp.Kvs[0].Value, &cqs)
+	cqInfo := cqs[q.Database]
+	index := -1
+	for i, cq := range cqInfo {
+		if cq.Name == q.Name {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return errors.New("Continues Query don't exist ")
+	}
+	if index >= len(cqInfo)-1 {
+		cqInfo = cqInfo[0 : len(cqInfo)-1]
+	} else {
+		cqInfo = append(cqInfo[0:index], cqInfo[index+1:]...)
+	}
+	cqs[q.Database] = cqInfo
+	return e.EtcdService.PutMetaDataForEtcd(cqs, TSDBcq)
 }
 
 // executeDropDatabaseStatement drops a database from the Cluster.
