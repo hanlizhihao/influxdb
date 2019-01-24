@@ -463,8 +463,8 @@ func (data *Data) DropContinuousQuery(database, name string) error {
 	return nil
 }
 
-// validateURL returns an error if the URL does not have a port or uses a scheme other than UDP or HTTP.
-func validateURL(input string) error {
+// ValidateURL returns an error if the URL does not have a port or uses a scheme other than UDP or HTTP.
+func ValidateURL(input string) error {
 	u, err := url.Parse(input)
 	if err != nil {
 		return ErrInvalidSubscriptionURL(input)
@@ -485,7 +485,7 @@ func validateURL(input string) error {
 // CreateSubscription adds a named subscription to a database and retention policy.
 func (data *Data) CreateSubscription(database, rp, name, mode string, destinations []string) error {
 	for _, d := range destinations {
-		if err := validateURL(d); err != nil {
+		if err := ValidateURL(d); err != nil {
 			return err
 		}
 	}

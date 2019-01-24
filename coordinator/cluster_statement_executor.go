@@ -426,7 +426,8 @@ func (e *ClusterStatementExecutor) executeDropRetentionPolicyStatement(stmt *inf
 		return err
 	}
 
-	return e.MetaClient.DropRetentionPolicy(stmt.Database, stmt.Name)
+	return e.EtcdService.dropRetentionPolicy(stmt.Database, stmt.Name)
+	//return e.MetaClient.DropRetentionPolicy(stmt.Database, stmt.Name)
 }
 
 func (e *ClusterStatementExecutor) executeDropSubscriptionStatement(q *influxql.DropSubscriptionStatement) error {

@@ -85,4 +85,13 @@ type (
 		Sql     string                 `json:"sql"`
 		ExecOpt query.ExecutionOptions `json:"exec_opt"`
 	}
+	// FirstKey:db,SecondKey:rp,ThirdKey: name
+	Subscriptions map[string]map[string]map[string]Subscription
+	Subscription  struct {
+		DB           string   `json:"db"`
+		RP           string   `json:"rp"`
+		Name         string   `json:"name"`
+		Mode         string   `json:"mode"`
+		Destinations []string `json:"destinations"`
+	}
 )
