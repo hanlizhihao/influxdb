@@ -11,8 +11,11 @@ import (
 	"sync"
 
 	"github.com/cespare/xxhash"
+	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/binaryutil"
+	"github.com/influxdata/influxdb/pkg/rhh"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -35,6 +38,13 @@ type SeriesFile struct {
 	path       string
 	partitions []*SeriesPartition
 
+	// N.B we have many partitions, but they must share the same metrics, so the
+	// metrics are managed in a single shared package variable and
+	// each partition decorates the same metric measurements with different
+	// partition id label values.
+	defaultMetricLabels prometheus.Labels
+	metricsEnabled      bool
+
 	refs sync.RWMutex // RWMutex to track references to the SeriesFile that are in use.
 
 	Logger *zap.Logger
@@ -43,13 +53,37 @@ type SeriesFile struct {
 // NewSeriesFile returns a new instance of SeriesFile.
 func NewSeriesFile(path string) *SeriesFile {
 	return &SeriesFile{
-		path:   path,
-		Logger: zap.NewNop(),
+		path:           path,
+		metricsEnabled: true,
+		Logger:         zap.NewNop(),
 	}
+}
+
+// WithLogger sets the logger on the SeriesFile and all underlying partitions. It must be called before Open.
+func (f *SeriesFile) WithLogger(log *zap.Logger) {
+	f.Logger = log.With(zap.String("service", "series-file"))
+}
+
+// SetDefaultMetricLabels sets the default labels for metrics on the Series File.
+// It must be called before the SeriesFile is opened.
+func (f *SeriesFile) SetDefaultMetricLabels(labels prometheus.Labels) {
+	f.defaultMetricLabels = make(prometheus.Labels, len(labels))
+	for k, v := range labels {
+		f.defaultMetricLabels[k] = v
+	}
+}
+
+// DisableMetrics ensures that activity is not collected via the prometheus metrics.
+// DisableMetrics must be called before Open.
+func (f *SeriesFile) DisableMetrics() {
+	f.metricsEnabled = false
 }
 
 // Open memory maps the data file at the file's path.
 func (f *SeriesFile) Open() error {
+	_, logEnd := logger.NewOperation(f.Logger, "Opening Series File", "series_file_open", zap.String("path", f.path))
+	defer logEnd()
+
 	// Wait for all references to be released and prevent new ones from being acquired.
 	f.refs.Lock()
 	defer f.refs.Unlock()
@@ -59,11 +93,46 @@ func (f *SeriesFile) Open() error {
 		return err
 	}
 
+	// Initialise metrics for trackers.
+	mmu.Lock()
+	if sms == nil && f.metricsEnabled {
+		sms = newSeriesFileMetrics(f.defaultMetricLabels)
+	}
+	if ims == nil && f.metricsEnabled {
+		// Make a copy of the default labels so that another label can be provided.
+		labels := make(prometheus.Labels, len(f.defaultMetricLabels))
+		for k, v := range f.defaultMetricLabels {
+			labels[k] = v
+		}
+		labels["series_file_partition"] = "" // All partitions have this label.
+		ims = rhh.NewMetrics(namespace, seriesFileSubsystem+"_index", labels)
+	}
+	mmu.Unlock()
+
 	// Open partitions.
 	f.partitions = make([]*SeriesPartition, 0, SeriesFilePartitionN)
 	for i := 0; i < SeriesFilePartitionN; i++ {
+		// TODO(edd): These partition initialisation should be moved up to NewSeriesFile.
 		p := NewSeriesPartition(i, f.SeriesPartitionPath(i))
 		p.Logger = f.Logger.With(zap.Int("partition", p.ID()))
+
+		// For each series file index, rhh trackers are used to track the RHH Hashmap.
+		// Each of the trackers needs to be given slightly different default
+		// labels to ensure the correct partition_ids are set as labels.
+		labels := make(prometheus.Labels, len(f.defaultMetricLabels))
+		for k, v := range f.defaultMetricLabels {
+			labels[k] = v
+		}
+		labels["series_file_partition"] = fmt.Sprint(p.ID())
+
+		p.index.rhhMetrics = ims
+		p.index.rhhLabels = labels
+		p.index.rhhMetricsEnabled = f.metricsEnabled
+
+		// Set the metric trackers on the partition with any injected default labels.
+		p.tracker = newSeriesPartitionTracker(sms, labels)
+		p.tracker.enabled = f.metricsEnabled
+
 		if err := p.Open(); err != nil {
 			f.Close()
 			return err
@@ -131,29 +200,33 @@ func (f *SeriesFile) Wait() {
 	defer f.refs.Unlock()
 }
 
-// CreateSeriesListIfNotExists creates a list of series in bulk if they don't exist.
-// The returned ids slice returns IDs for every name+tags, creating new series IDs as needed.
-func (f *SeriesFile) CreateSeriesListIfNotExists(names [][]byte, tagsSlice []models.Tags) ([]uint64, error) {
-	keys := GenerateSeriesKeys(names, tagsSlice)
-	keyPartitionIDs := f.SeriesKeysPartitionIDs(keys)
-	ids := make([]uint64, len(keys))
+// CreateSeriesListIfNotExists creates a list of series in bulk if they don't exist. It overwrites
+// the collection's Keys and SeriesIDs fields. The collection's SeriesIDs slice will have IDs for
+// every name+tags, creating new series IDs as needed. If any SeriesID is zero, then a type
+// conflict has occured for that series.
+func (f *SeriesFile) CreateSeriesListIfNotExists(collection *SeriesCollection) error {
+	collection.SeriesKeys = GenerateSeriesKeys(collection.Names, collection.Tags)
+	collection.SeriesIDs = make([]SeriesID, len(collection.SeriesKeys))
+	keyPartitionIDs := f.SeriesKeysPartitionIDs(collection.SeriesKeys)
 
 	var g errgroup.Group
 	for i := range f.partitions {
 		p := f.partitions[i]
 		g.Go(func() error {
-			return p.CreateSeriesListIfNotExists(keys, keyPartitionIDs, ids)
+			return p.CreateSeriesListIfNotExists(collection, keyPartitionIDs)
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return err
 	}
-	return ids, nil
+
+	collection.ApplyConcurrentDrops()
+	return nil
 }
 
 // DeleteSeriesID flags a series as permanently deleted.
 // If the series is reintroduced later then it must create a new id.
-func (f *SeriesFile) DeleteSeriesID(id uint64) error {
+func (f *SeriesFile) DeleteSeriesID(id SeriesID) error {
 	p := f.SeriesIDPartition(id)
 	if p == nil {
 		return ErrInvalidSeriesPartitionID
@@ -162,7 +235,7 @@ func (f *SeriesFile) DeleteSeriesID(id uint64) error {
 }
 
 // IsDeleted returns true if the ID has been deleted before.
-func (f *SeriesFile) IsDeleted(id uint64) bool {
+func (f *SeriesFile) IsDeleted(id SeriesID) bool {
 	p := f.SeriesIDPartition(id)
 	if p == nil {
 		return false
@@ -171,8 +244,8 @@ func (f *SeriesFile) IsDeleted(id uint64) bool {
 }
 
 // SeriesKey returns the series key for a given id.
-func (f *SeriesFile) SeriesKey(id uint64) []byte {
-	if id == 0 {
+func (f *SeriesFile) SeriesKey(id SeriesID) []byte {
+	if id.IsZero() {
 		return nil
 	}
 	p := f.SeriesIDPartition(id)
@@ -182,8 +255,22 @@ func (f *SeriesFile) SeriesKey(id uint64) []byte {
 	return p.SeriesKey(id)
 }
 
+// SeriesKeyName returns the measurement name for a series id.
+func (f *SeriesFile) SeriesKeyName(id SeriesID) []byte {
+	if id.IsZero() {
+		return nil
+	}
+	data := f.SeriesIDPartition(id).SeriesKey(id)
+	if data == nil {
+		return nil
+	}
+	_, data = ReadSeriesKeyLen(data)
+	name, _ := ReadSeriesKeyMeasurement(data)
+	return name
+}
+
 // SeriesKeys returns a list of series keys from a list of ids.
-func (f *SeriesFile) SeriesKeys(ids []uint64) [][]byte {
+func (f *SeriesFile) SeriesKeys(ids []SeriesID) [][]byte {
 	keys := make([][]byte, len(ids))
 	for i := range ids {
 		keys[i] = f.SeriesKey(ids[i])
@@ -192,7 +279,7 @@ func (f *SeriesFile) SeriesKeys(ids []uint64) [][]byte {
 }
 
 // Series returns the parsed series name and tags for an offset.
-func (f *SeriesFile) Series(id uint64) ([]byte, models.Tags) {
+func (f *SeriesFile) Series(id SeriesID) ([]byte, models.Tags) {
 	key := f.SeriesKey(id)
 	if key == nil {
 		return nil, nil
@@ -200,19 +287,29 @@ func (f *SeriesFile) Series(id uint64) ([]byte, models.Tags) {
 	return ParseSeriesKey(key)
 }
 
-// SeriesID return the series id for the series.
-func (f *SeriesFile) SeriesID(name []byte, tags models.Tags, buf []byte) uint64 {
+// SeriesID returns the series id for the series.
+func (f *SeriesFile) SeriesID(name []byte, tags models.Tags, buf []byte) SeriesID {
+	return f.SeriesIDTyped(name, tags, buf).SeriesID()
+}
+
+// SeriesIDTyped returns the typed series id for the series.
+func (f *SeriesFile) SeriesIDTyped(name []byte, tags models.Tags, buf []byte) SeriesIDTyped {
 	key := AppendSeriesKey(buf[:0], name, tags)
+	return f.SeriesIDTypedBySeriesKey(key)
+}
+
+// SeriesIDTypedBySeriesKey returns the typed series id for the series.
+func (f *SeriesFile) SeriesIDTypedBySeriesKey(key []byte) SeriesIDTyped {
 	keyPartition := f.SeriesKeyPartition(key)
 	if keyPartition == nil {
-		return 0
+		return SeriesIDTyped{}
 	}
-	return keyPartition.FindIDBySeriesKey(key)
+	return keyPartition.FindIDTypedBySeriesKey(key)
 }
 
 // HasSeries return true if the series exists.
 func (f *SeriesFile) HasSeries(name []byte, tags models.Tags, buf []byte) bool {
-	return f.SeriesID(name, tags, buf) > 0
+	return !f.SeriesID(name, tags, buf).IsZero()
 }
 
 // SeriesCount returns the number of series.
@@ -226,19 +323,19 @@ func (f *SeriesFile) SeriesCount() uint64 {
 
 // SeriesIterator returns an iterator over all the series.
 func (f *SeriesFile) SeriesIDIterator() SeriesIDIterator {
-	var ids []uint64
+	var ids []SeriesID
 	for _, p := range f.partitions {
 		ids = p.AppendSeriesIDs(ids)
 	}
-	sort.Sort(uint64Slice(ids))
+	sort.Slice(ids, func(i, j int) bool { return ids[i].Less(ids[j]) })
 	return NewSeriesIDSliceIterator(ids)
 }
 
-func (f *SeriesFile) SeriesIDPartitionID(id uint64) int {
-	return int((id - 1) % SeriesFilePartitionN)
+func (f *SeriesFile) SeriesIDPartitionID(id SeriesID) int {
+	return int((id.RawID() - 1) % SeriesFilePartitionN)
 }
 
-func (f *SeriesFile) SeriesIDPartition(id uint64) *SeriesPartition {
+func (f *SeriesFile) SeriesIDPartition(id SeriesID) *SeriesPartition {
 	partitionID := f.SeriesIDPartitionID(id)
 	if partitionID >= len(f.partitions) {
 		return nil
@@ -478,19 +575,5 @@ func SeriesKeySize(name []byte, tags models.Tags) int {
 	n += binaryutil.UvarintSize(uint64(n))
 	return n
 }
-
-type seriesKeys [][]byte
-
-func (a seriesKeys) Len() int      { return len(a) }
-func (a seriesKeys) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a seriesKeys) Less(i, j int) bool {
-	return CompareSeriesKeys(a[i], a[j]) == -1
-}
-
-type uint64Slice []uint64
-
-func (a uint64Slice) Len() int           { return len(a) }
-func (a uint64Slice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a uint64Slice) Less(i, j int) bool { return a[i] < a[j] }
 
 func nop() {}

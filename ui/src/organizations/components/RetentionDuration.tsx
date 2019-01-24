@@ -1,0 +1,78 @@
+import React, {ChangeEvent, PureComponent} from 'react'
+// Components
+import {Columns, Form, Grid, Input, InputType} from 'src/clockface'
+// Utils
+import {secondsToDuration} from 'src/utils/formatting'
+import {BucketRetentionRules} from 'src/api'
+
+interface Props {
+  type: BucketRetentionRules.TypeEnum
+  retentionSeconds: number
+  onChangeInput: (e: ChangeEvent<HTMLInputElement>) => void
+}
+
+enum DurationKey {
+  Days = 'days',
+  Hours = 'hours',
+  Minutes = 'minutes',
+  Seconds = 'seconds',
+}
+
+export default class RetentionDuration extends PureComponent<Props> {
+  public render() {
+    const {type, retentionSeconds, onChangeInput} = this.props
+    const {days, hours, minutes, seconds} = secondsToDuration(retentionSeconds)
+
+    if (type === null) {
+      return null
+    }
+
+    return (
+      <Grid.Row>
+        <Grid.Column widthSM={Columns.Three}>
+          <Form.Element label="Days">
+            <Input
+              name={DurationKey.Days}
+              type={InputType.Number}
+              value={`${days}`}
+              onChange={onChangeInput}
+            />
+          </Form.Element>
+        </Grid.Column>
+        <Grid.Column widthSM={Columns.Three}>
+          <Form.Element label="Hours">
+            <Input
+              name={DurationKey.Hours}
+              min={0}
+              type={InputType.Number}
+              value={`${hours}`}
+              onChange={onChangeInput}
+            />
+          </Form.Element>
+        </Grid.Column>
+        <Grid.Column widthSM={Columns.Three}>
+          <Form.Element label="Minutes">
+            <Input
+              name={DurationKey.Minutes}
+              min={0}
+              type={InputType.Number}
+              value={`${minutes}`}
+              onChange={onChangeInput}
+            />
+          </Form.Element>
+        </Grid.Column>
+        <Grid.Column widthSM={Columns.Three}>
+          <Form.Element label="Seconds">
+            <Input
+              name={DurationKey.Seconds}
+              min={0}
+              type={InputType.Number}
+              value={`${seconds}`}
+              onChange={onChangeInput}
+            />
+          </Form.Element>
+        </Grid.Column>
+      </Grid.Row>
+    )
+  }
+}

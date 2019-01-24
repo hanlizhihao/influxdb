@@ -10,6 +10,7 @@ import (
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/mmap"
 	"github.com/influxdata/influxdb/pkg/rhh"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -40,8 +41,14 @@ type SeriesIndex struct {
 	capacity int64
 	mask     int64
 
-	maxSeriesID uint64
+	maxSeriesID SeriesID
 	maxOffset   int64
+
+	// metrics stores a shard instance of some Prometheus metrics. metrics
+	// must be set before Open is called.
+	rhhMetrics        *rhh.Metrics
+	rhhLabels         prometheus.Labels
+	rhhMetricsEnabled bool
 
 	data         []byte // mmap data
 	keyIDData    []byte // key/id mmap data
@@ -49,13 +56,14 @@ type SeriesIndex struct {
 
 	// In-memory data since rebuild.
 	keyIDMap    *rhh.HashMap
-	idOffsetMap map[uint64]int64
-	tombstones  map[uint64]struct{}
+	idOffsetMap map[SeriesID]int64
+	tombstones  map[SeriesID]struct{}
 }
 
 func NewSeriesIndex(path string) *SeriesIndex {
 	return &SeriesIndex{
-		path: path,
+		path:              path,
+		rhhMetricsEnabled: true,
 	}
 }
 
@@ -86,9 +94,14 @@ func (idx *SeriesIndex) Open() (err error) {
 		return err
 	}
 
-	idx.keyIDMap = rhh.NewHashMap(rhh.DefaultOptions)
-	idx.idOffsetMap = make(map[uint64]int64)
-	idx.tombstones = make(map[uint64]struct{})
+	options := rhh.DefaultOptions
+	options.Metrics = idx.rhhMetrics
+	options.Labels = idx.rhhLabels
+	options.MetricsEnabled = idx.rhhMetricsEnabled
+
+	idx.keyIDMap = rhh.NewHashMap(options)
+	idx.idOffsetMap = make(map[SeriesID]int64)
+	idx.tombstones = make(map[SeriesID]struct{})
 	return nil
 }
 
@@ -109,9 +122,13 @@ func (idx *SeriesIndex) Close() (err error) {
 // Recover rebuilds the in-memory index for all new entries.
 func (idx *SeriesIndex) Recover(segments []*SeriesSegment) error {
 	// Allocate new in-memory maps.
-	idx.keyIDMap = rhh.NewHashMap(rhh.DefaultOptions)
-	idx.idOffsetMap = make(map[uint64]int64)
-	idx.tombstones = make(map[uint64]struct{})
+	options := rhh.DefaultOptions
+	options.Metrics = idx.rhhMetrics
+	options.Labels = idx.rhhLabels
+
+	idx.keyIDMap = rhh.NewHashMap(options)
+	idx.idOffsetMap = make(map[SeriesID]int64)
+	idx.tombstones = make(map[SeriesID]struct{})
 
 	// Process all entries since the maximum offset in the on-disk index.
 	minSegmentID, _ := SplitSeriesOffset(idx.maxOffset)
@@ -120,7 +137,7 @@ func (idx *SeriesIndex) Recover(segments []*SeriesSegment) error {
 			continue
 		}
 
-		if err := segment.ForEachEntry(func(flag uint8, id uint64, offset int64, key []byte) error {
+		if err := segment.ForEachEntry(func(flag uint8, id SeriesIDTyped, offset int64, key []byte) error {
 			if offset <= idx.maxOffset {
 				return nil
 			}
@@ -144,52 +161,64 @@ func (idx *SeriesIndex) OnDiskCount() uint64 { return idx.count }
 // InMemCount returns the number of series in the in-memory index.
 func (idx *SeriesIndex) InMemCount() uint64 { return uint64(len(idx.idOffsetMap)) }
 
-func (idx *SeriesIndex) Insert(key []byte, id uint64, offset int64) {
+// OnDiskSize returns the on-disk size of the index in bytes.
+func (idx *SeriesIndex) OnDiskSize() uint64 { return uint64(len(idx.data)) }
+
+// InMemSize returns the heap size of the index in bytes. The returned value is
+// an estimation and does not include include all allocated memory.
+func (idx *SeriesIndex) InMemSize() uint64 {
+	n := len(idx.idOffsetMap)
+	return uint64(2*8*n) + uint64(len(idx.tombstones)*8)
+}
+
+func (idx *SeriesIndex) Insert(key []byte, id SeriesIDTyped, offset int64) {
 	idx.execEntry(SeriesEntryInsertFlag, id, offset, key)
 }
 
 // Delete marks the series id as deleted.
-func (idx *SeriesIndex) Delete(id uint64) {
-	idx.execEntry(SeriesEntryTombstoneFlag, id, 0, nil)
+func (idx *SeriesIndex) Delete(id SeriesID) {
+	// NOTE: WithType(0) kinda sucks here, but we know it will be masked off.
+	idx.execEntry(SeriesEntryTombstoneFlag, id.WithType(0), 0, nil)
 }
 
 // IsDeleted returns true if series id has been deleted.
-func (idx *SeriesIndex) IsDeleted(id uint64) bool {
+func (idx *SeriesIndex) IsDeleted(id SeriesID) bool {
 	if _, ok := idx.tombstones[id]; ok {
 		return true
 	}
 	return idx.FindOffsetByID(id) == 0
 }
 
-func (idx *SeriesIndex) execEntry(flag uint8, id uint64, offset int64, key []byte) {
+func (idx *SeriesIndex) execEntry(flag uint8, id SeriesIDTyped, offset int64, key []byte) {
+	untypedID := id.SeriesID()
 	switch flag {
 	case SeriesEntryInsertFlag:
-		idx.keyIDMap.Put(key, id)
-		idx.idOffsetMap[id] = offset
+		idx.keyIDMap.PutQuiet(key, id)
+		idx.idOffsetMap[untypedID] = offset
 
-		if id > idx.maxSeriesID {
-			idx.maxSeriesID = id
+		if untypedID.Greater(idx.maxSeriesID) {
+			idx.maxSeriesID = untypedID
 		}
 		if offset > idx.maxOffset {
 			idx.maxOffset = offset
 		}
 
 	case SeriesEntryTombstoneFlag:
-		idx.tombstones[id] = struct{}{}
+		idx.tombstones[untypedID] = struct{}{}
 
 	default:
 		panic("unreachable")
 	}
 }
 
-func (idx *SeriesIndex) FindIDBySeriesKey(segments []*SeriesSegment, key []byte) uint64 {
+func (idx *SeriesIndex) FindIDBySeriesKey(segments []*SeriesSegment, key []byte) SeriesIDTyped {
 	if v := idx.keyIDMap.Get(key); v != nil {
-		if id, _ := v.(uint64); id != 0 && !idx.IsDeleted(id) {
+		if id, _ := v.(SeriesIDTyped); !id.IsZero() && !idx.IsDeleted(id.SeriesID()) {
 			return id
 		}
 	}
 	if len(idx.data) == 0 {
-		return 0
+		return SeriesIDTyped{}
 	}
 
 	hash := rhh.HashKey(key)
@@ -198,36 +227,36 @@ func (idx *SeriesIndex) FindIDBySeriesKey(segments []*SeriesSegment, key []byte)
 		elemOffset := int64(binary.BigEndian.Uint64(elem[:8]))
 
 		if elemOffset == 0 {
-			return 0
+			return SeriesIDTyped{}
 		}
 
 		elemKey := ReadSeriesKeyFromSegments(segments, elemOffset+SeriesEntryHeaderSize)
 		elemHash := rhh.HashKey(elemKey)
 		if d > rhh.Dist(elemHash, pos, idx.capacity) {
-			return 0
+			return SeriesIDTyped{}
 		} else if elemHash == hash && bytes.Equal(elemKey, key) {
-			id := binary.BigEndian.Uint64(elem[8:])
-			if idx.IsDeleted(id) {
-				return 0
+			id := NewSeriesIDTyped(binary.BigEndian.Uint64(elem[8:]))
+			if idx.IsDeleted(id.SeriesID()) {
+				return SeriesIDTyped{}
 			}
 			return id
 		}
 	}
 }
 
-func (idx *SeriesIndex) FindIDByNameTags(segments []*SeriesSegment, name []byte, tags models.Tags, buf []byte) uint64 {
+func (idx *SeriesIndex) FindIDByNameTags(segments []*SeriesSegment, name []byte, tags models.Tags, buf []byte) SeriesIDTyped {
 	id := idx.FindIDBySeriesKey(segments, AppendSeriesKey(buf[:0], name, tags))
-	if _, ok := idx.tombstones[id]; ok {
-		return 0
+	if _, ok := idx.tombstones[id.SeriesID()]; ok {
+		return SeriesIDTyped{}
 	}
 	return id
 }
 
-func (idx *SeriesIndex) FindIDListByNameTags(segments []*SeriesSegment, names [][]byte, tagsSlice []models.Tags, buf []byte) (ids []uint64, ok bool) {
-	ids, ok = make([]uint64, len(names)), true
+func (idx *SeriesIndex) FindIDListByNameTags(segments []*SeriesSegment, names [][]byte, tagsSlice []models.Tags, buf []byte) (ids []SeriesIDTyped, ok bool) {
+	ids, ok = make([]SeriesIDTyped, len(names)), true
 	for i := range names {
 		id := idx.FindIDByNameTags(segments, names[i], tagsSlice[i], buf)
-		if id == 0 {
+		if id.IsZero() {
 			ok = false
 			continue
 		}
@@ -236,21 +265,21 @@ func (idx *SeriesIndex) FindIDListByNameTags(segments []*SeriesSegment, names []
 	return ids, ok
 }
 
-func (idx *SeriesIndex) FindOffsetByID(id uint64) int64 {
+func (idx *SeriesIndex) FindOffsetByID(id SeriesID) int64 {
 	if offset := idx.idOffsetMap[id]; offset != 0 {
 		return offset
 	} else if len(idx.data) == 0 {
 		return 0
 	}
 
-	hash := rhh.HashUint64(id)
+	hash := rhh.HashUint64(id.RawID())
 	for d, pos := int64(0), hash&idx.mask; ; d, pos = d+1, (pos+1)&idx.mask {
 		elem := idx.idOffsetData[(pos * SeriesIndexElemSize):]
-		elemID := binary.BigEndian.Uint64(elem[:8])
+		elemID := NewSeriesID(binary.BigEndian.Uint64(elem[:8]))
 
 		if elemID == id {
 			return int64(binary.BigEndian.Uint64(elem[8:]))
-		} else if elemID == 0 || d > rhh.Dist(rhh.HashUint64(elemID), pos, idx.capacity) {
+		} else if elemID.IsZero() || d > rhh.Dist(rhh.HashUint64(elemID.RawID()), pos, idx.capacity) {
 			return 0
 		}
 	}
@@ -258,12 +287,12 @@ func (idx *SeriesIndex) FindOffsetByID(id uint64) int64 {
 
 // Clone returns a copy of idx for use during compaction. In-memory maps are not cloned.
 func (idx *SeriesIndex) Clone() *SeriesIndex {
-	tombstones := make(map[uint64]struct{}, len(idx.tombstones))
+	tombstones := make(map[SeriesID]struct{}, len(idx.tombstones))
 	for id := range idx.tombstones {
 		tombstones[id] = struct{}{}
 	}
 
-	idOffsetMap := make(map[uint64]int64)
+	idOffsetMap := make(map[SeriesID]int64)
 	for k, v := range idx.idOffsetMap {
 		idOffsetMap[k] = v
 	}
@@ -287,7 +316,7 @@ func (idx *SeriesIndex) Clone() *SeriesIndex {
 type SeriesIndexHeader struct {
 	Version uint8
 
-	MaxSeriesID uint64
+	MaxSeriesID SeriesID
 	MaxOffset   int64
 
 	Count    uint64
@@ -327,7 +356,7 @@ func ReadSeriesIndexHeader(data []byte) (hdr SeriesIndexHeader, err error) {
 	}
 
 	// Read max offset.
-	if err := binary.Read(r, binary.BigEndian, &hdr.MaxSeriesID); err != nil {
+	if err := binary.Read(r, binary.BigEndian, &hdr.MaxSeriesID.ID); err != nil {
 		return hdr, err
 	} else if err := binary.Read(r, binary.BigEndian, &hdr.MaxOffset); err != nil {
 		return hdr, err

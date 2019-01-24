@@ -1,11 +1,10 @@
 package tsdb
 
-import (
-	"context"
+import "github.com/influxdata/influxdb/tsdb/cursors"
 
-	"github.com/influxdata/influxdb/query"
-	"github.com/influxdata/platform/tsdb/cursors"
-)
+// These aliases exist to maintain api compatability when they were moved
+// into their own package to avoid having a heavy dependency in order to
+// talk about consuming data.
 
 type (
 	IntegerArray  = cursors.IntegerArray
@@ -21,7 +20,6 @@ type (
 	BooleanArrayCursor  = cursors.BooleanArrayCursor
 
 	Cursor          = cursors.Cursor
-	CursorStats     = cursors.CursorStats
 	CursorRequest   = cursors.CursorRequest
 	CursorIterator  = cursors.CursorIterator
 	CursorIterators = cursors.CursorIterators
@@ -32,20 +30,3 @@ func NewFloatArrayLen(sz int) *FloatArray       { return cursors.NewFloatArrayLe
 func NewUnsignedArrayLen(sz int) *UnsignedArray { return cursors.NewUnsignedArrayLen(sz) }
 func NewStringArrayLen(sz int) *StringArray     { return cursors.NewStringArrayLen(sz) }
 func NewBooleanArrayLen(sz int) *BooleanArray   { return cursors.NewBooleanArrayLen(sz) }
-
-// EOF represents a "not found" key returned by a Cursor.
-const EOF = query.ZeroTime
-
-func CreateCursorIterators(ctx context.Context, shards []*Shard) (CursorIterators, error) {
-	q := make(CursorIterators, 0, len(shards))
-	for _, s := range shards {
-		// possible errors are ErrEngineClosed or ErrShardDisabled, so we can safely skip those shards
-		if cq, err := s.CreateCursorIterator(ctx); cq != nil && err == nil {
-			q = append(q, cq)
-		}
-	}
-	if len(q) == 0 {
-		return nil, nil
-	}
-	return q, nil
-}

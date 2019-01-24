@@ -1,19 +1,214 @@
 version: 2
-
 jobs:
-  build:
-    machine:
-      enabled: true
-      docker_layer_caching: true
-    environment:
-      - PARALLELISM: 4 # Input to influxdb/build.py
-    parallelism: 5 # How many CircleCI test containers
+  jstest:
+    docker:
+      - image: circleci/golang:1.11-node-browsers
+    working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
+
+      # Run npm install, using Circle's cache if applicable.
+      - restore_cache:
+          name: Restore npm package cache
+          keys:
+            # Only cache on exact package-lock.json match, as in Circle's yarn example:
+            - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+      - run: make node_modules
+      - save_cache:
+          name: Save Yarn package cache
+          key: chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+          paths:
+            - ~/.cache/npm
+
+      - run: make test-js
+      - run: make chronograf_lint
+
+  gotest:
+    docker:
+      - image: circleci/golang:1.11
+    environment:
+      GOCACHE: /tmp/go-cache
+      GOFLAGS: "-mod=readonly -p=2" # Go on Circle thinks 32 CPUs are available, but there aren't.
+    working_directory: /go/src/github.com/influxdata/influxdb
+    steps:
+      - checkout
+
+      # Populate GOCACHE.
+      - restore_cache:
+          name: Restoring GOCACHE
+          keys:
+            - influxdb-gocache-{{ .Branch }}-{{ .Revision }} # Matches when retrying a single run.
+            - influxdb-gocache-{{ .Branch }}-                # Matches a new commit on an existing branch.
+            - influxdb-gocache-                              # Matches a new branch.
+      # Populate GOPATH/pkg.
+      - restore_cache:
+          name: Restoring GOPATH/pkg/mod
+          keys:
+            - influxdb-gomod-{{ checksum "go.sum" }}         # Matches based on go.sum checksum.
+      - run: make test-go # This uses the test cache so it may succeed or fail quickly.
+      - run: make vet
+      - run: make checkfmt
+      - run: make checktidy
+      - run: make test-go-race # This doesn't use the test cache because of -count=1, so it will not complete quickly.
+      # TODO add these checks to the Makefile
+      # - run: go get -v -t -d ./...
+
+      - run: GO111MODULE=on go mod vendor # staticcheck looks in vendor for dependencies.
+      - run: GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck # Install staticcheck from the version we specify in go.mod.
+      - run: staticcheck ./...
+      # In go1.11, running go mod vendor when go.mod contains replace entries, "taints" go.sum, even with -mod=readonly.
+      # See https://github.com/golang/go/issues/27868.
+      # Clean up go.sum so that we save to the same module key we attempted to restore from.
+      # TODO: remove this call to git checkout after we are on go1.12.
+      - run: git checkout -- go.sum
+
+      - save_cache:
+          name: Saving GOCACHE
+          key: influxdb-gocache-{{ .Branch }}-{{ .Revision }}
+          paths:
+            - /tmp/go-cache
+          when: always
+      - save_cache:
+          name: Saving GOPATH/pkg/mod
+          key: influxdb-gomod-{{ checksum "go.sum" }}
+          paths:
+            - /go/pkg/mod
+          when: always
+
+  build:
+    docker:
+      - image: circleci/golang:1.11-node-browsers
+    environment:
+      GOCACHE: /tmp/go-cache
+      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
+    working_directory: /go/src/github.com/influxdata/influxdb
+    steps:
+      - checkout
+
+      # Speed up `make build` by restoring caches from previous runs.
+      - restore_cache:
+          name: Restoring GOCACHE
+          keys:
+            - influxdb-gocache- # Just match the most recent Go cache.
+      - restore_cache:
+          name: Restoring GOPATH/pkg/mod
+          keys:
+            - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
+      - restore_cache:
+          name: Restore Yarn package cache
+          keys:
+            - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+      - run: make build
+
+  deploy-nightly:
+    docker:
+      - image: circleci/golang:1.11-node-browsers
+    environment:
+      GOCACHE: /tmp/go-cache
+      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
+    working_directory: /go/src/github.com/influxdata/influxdb
+    steps:
+      - checkout
+
+      # Speed up `make nightly` by restoring caches from previous runs.
+      - restore_cache:
+          name: Restoring GOCACHE
+          keys:
+            - influxdb-gocache- # Just match the most recent Go cache.
+      - restore_cache:
+          name: Restoring GOPATH/pkg/mod
+          keys:
+            - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
+      - restore_cache:
+          name: Restore Yarn package cache
+          keys:
+            - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+      - setup_remote_docker
       - run:
-          name: Ensure CircleCI parallelism matches "./test.sh count"
-          command: "[ `./test.sh count` -eq $CIRCLE_NODE_TOTAL ]"
+          name: "Docker Login"
+          command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
       - run:
-          name: Execute test
-          command: ./test.sh $CIRCLE_NODE_INDEX
-          no_output_timeout: 1500s
+          name: "Build nightly"
+          command: make nightly
+  release:
+    docker:
+      - image: circleci/golang:1.11-node-browsers
+    environment:
+      GOCACHE: /tmp/go-cache
+      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
+      DOCKER_VERSION: 2.0.0-alpha
+    working_directory: /go/src/github.com/influxdata/influxdb
+    steps:
+      - checkout
+
+      # Speed up `make nightly` by restoring caches from previous runs.
+      - restore_cache:
+          name: Restoring GOCACHE
+          keys:
+            - influxdb-gocache- # Just match the most recent Go cache.
+      - restore_cache:
+          name: Restoring GOPATH/pkg/mod
+          keys:
+            - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
+      - restore_cache:
+          name: Restore Yarn package cache
+          keys:
+            - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+      - setup_remote_docker
+      - run:
+          name: "Docker Login"
+          command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
+      - run:
+          name: "Build release"
+          command: make release
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - gotest
+      - jstest
+      - build
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 7 * * *"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - gotest
+      - jstest
+      - deploy-nightly:
+          requires:
+            - gotest
+            - jstest
+          filters:
+            branches:
+              only: master
+  release:
+    jobs:
+      - gotest:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$/
+
+      - jstest:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$/
+      - release:
+          requires:
+            - gotest
+            - jstest
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$/

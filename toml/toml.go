@@ -1,5 +1,5 @@
 // Package toml adds support to marshal and unmarshal types not in the official TOML spec.
-package toml // import "github.com/influxdata/influxdb/toml"
+package toml
 
 import (
 	"encoding"
@@ -158,10 +158,6 @@ func applyEnvOverrides(getenv func(string) string, prefix string, spec reflect.V
 		v := spec.Addr()
 		if u, ok := v.Interface().(encoding.TextUnmarshaler); ok {
 			value := getenv(prefix)
-			// Skip any fields we don't have a value to set
-			if len(value) == 0 {
-				return nil
-			}
 			return u.UnmarshalText([]byte(value))
 		}
 	}

@@ -16,9 +16,11 @@ import (
 
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/storage"
+	"github.com/influxdata/influxdb/toml"
 	"github.com/influxdata/influxdb/tsdb"
-	"github.com/influxdata/influxdb/tsdb/engine/tsm1"
-	"github.com/influxdata/influxdb/tsdb/index/tsi1"
+	"github.com/influxdata/influxdb/tsdb/tsi1"
+	"github.com/influxdata/influxdb/tsdb/tsm1"
 	"go.uber.org/zap"
 )
 
@@ -60,8 +62,8 @@ func (cmd *Command) Run(args ...string) error {
 	fs.StringVar(&cmd.databaseFilter, "database", "", "optional: database name")
 	fs.StringVar(&cmd.retentionFilter, "retention", "", "optional: retention policy")
 	fs.StringVar(&cmd.shardFilter, "shard", "", "optional: shard id")
-	fs.Int64Var(&cmd.maxLogFileSize, "max-log-file-size", tsdb.DefaultMaxIndexLogFileSize, "optional: maximum log file size")
-	fs.Uint64Var(&cmd.maxCacheSize, "max-cache-size", tsdb.DefaultCacheMaxMemorySize, "optional: maximum cache size")
+	fs.Int64Var(&cmd.maxLogFileSize, "max-log-file-size", tsi1.DefaultMaxIndexLogFileSize, "optional: maximum log file size")
+	fs.Uint64Var(&cmd.maxCacheSize, "max-cache-size", tsm1.DefaultCacheMaxMemorySize, "optional: maximum cache size")
 	fs.IntVar(&cmd.batchSize, "batch-size", defaultBatchSize, "optional: set the size of the batches we write to the index. Setting this can have adverse affects on performance and heap requirements")
 	fs.BoolVar(&cmd.Verbose, "v", false, "verbose")
 	fs.SetOutput(cmd.Stdout)
@@ -114,7 +116,7 @@ func (cmd *Command) run(dataDir, walDir string) error {
 func (cmd *Command) processDatabase(dbName, dataDir, walDir string) error {
 	cmd.Logger.Info("Rebuilding database", zap.String("name", dbName))
 
-	sfile := tsdb.NewSeriesFile(filepath.Join(dataDir, tsdb.SeriesFileDirectory))
+	sfile := tsdb.NewSeriesFile(filepath.Join(dataDir, storage.DefaultSeriesFileDirectoryName))
 	sfile.Logger = cmd.Logger
 	if err := sfile.Open(); err != nil {
 		return err
@@ -130,7 +132,7 @@ func (cmd *Command) processDatabase(dbName, dataDir, walDir string) error {
 		rpName := fi.Name()
 		if !fi.IsDir() {
 			continue
-		} else if rpName == tsdb.SeriesFileDirectory {
+		} else if rpName == storage.DefaultSeriesFileDirectoryName {
 			continue
 		} else if cmd.retentionFilter != "" && rpName != cmd.retentionFilter {
 			continue
@@ -221,15 +223,17 @@ func IndexShard(sfile *tsdb.SeriesFile, dataDir, walDir string, maxLogFileSize i
 	}
 
 	// Open TSI index in temporary path.
-	tsiIndex := tsi1.NewIndex(sfile, "",
+	c := tsi1.NewConfig()
+	c.MaxIndexLogFileSize = toml.Size(maxLogFileSize)
+
+	tsiIndex := tsi1.NewIndex(sfile, c,
 		tsi1.WithPath(tmpPath),
-		tsi1.WithMaximumLogFileSize(maxLogFileSize),
 		tsi1.DisableFsync(),
 		// Each new series entry in a log file is ~12 bytes so this should
 		// roughly equate to one flush to the file for every batch.
 		tsi1.WithLogFileBufferSize(12*batchSize),
+		tsi1.DisableMetrics(), // Disable metrics when rebuilding an index
 	)
-
 	tsiIndex.WithLogger(log)
 
 	log.Info("Opening tsi index in temporary location", zap.String("path", tmpPath))
@@ -262,7 +266,7 @@ func IndexShard(sfile *tsdb.SeriesFile, dataDir, walDir string, maxLogFileSize i
 
 	} else {
 		log.Info("Building cache from wal files")
-		cache := tsm1.NewCache(maxCacheSize)
+		cache := tsm1.NewCache(tsm1.DefaultCacheMaxMemorySize)
 		loader := tsm1.NewCacheLoader(walPaths)
 		loader.WithLogger(log)
 		if err := loader.Load(cache); err != nil {
@@ -270,41 +274,42 @@ func IndexShard(sfile *tsdb.SeriesFile, dataDir, walDir string, maxLogFileSize i
 		}
 
 		log.Info("Iterating over cache")
-		keysBatch := make([][]byte, 0, batchSize)
-		namesBatch := make([][]byte, 0, batchSize)
-		tagsBatch := make([]models.Tags, 0, batchSize)
+		collection := &tsdb.SeriesCollection{
+			Keys:  make([][]byte, 0, batchSize),
+			Names: make([][]byte, 0, batchSize),
+			Tags:  make([]models.Tags, 0, batchSize),
+			Types: make([]models.FieldType, 0, batchSize),
+		}
 
 		for _, key := range cache.Keys() {
 			seriesKey, _ := tsm1.SeriesAndFieldFromCompositeKey(key)
 			name, tags := models.ParseKeyBytes(seriesKey)
+			typ, _ := cache.Type(key)
 
 			if verboseLogging {
 				log.Info("Series", zap.String("name", string(name)), zap.String("tags", tags.String()))
 			}
 
-			keysBatch = append(keysBatch, seriesKey)
-			namesBatch = append(namesBatch, name)
-			tagsBatch = append(tagsBatch, tags)
+			collection.Keys = append(collection.Keys, seriesKey)
+			collection.Names = append(collection.Names, name)
+			collection.Tags = append(collection.Tags, tags)
+			collection.Types = append(collection.Types, typ)
 
 			// Flush batch?
-			if len(keysBatch) == batchSize {
-				if err := tsiIndex.CreateSeriesListIfNotExists(keysBatch, namesBatch, tagsBatch); err != nil {
+			if collection.Length() == batchSize {
+				if err := tsiIndex.CreateSeriesListIfNotExists(collection); err != nil {
 					return fmt.Errorf("problem creating series: (%s)", err)
 				}
-				keysBatch = keysBatch[:0]
-				namesBatch = namesBatch[:0]
-				tagsBatch = tagsBatch[:0]
+				collection.Truncate(0)
 			}
 		}
 
 		// Flush any remaining series in the batches
-		if len(keysBatch) > 0 {
-			if err := tsiIndex.CreateSeriesListIfNotExists(keysBatch, namesBatch, tagsBatch); err != nil {
+		if collection.Length() > 0 {
+			if err := tsiIndex.CreateSeriesListIfNotExists(collection); err != nil {
 				return fmt.Errorf("problem creating series: (%s)", err)
 			}
-			keysBatch = nil
-			namesBatch = nil
-			tagsBatch = nil
+			collection = nil
 		}
 	}
 
@@ -338,38 +343,49 @@ func IndexTSMFile(index *tsi1.Index, path string, batchSize int, log *zap.Logger
 	}
 	defer r.Close()
 
-	keysBatch := make([][]byte, 0, batchSize)
-	namesBatch := make([][]byte, 0, batchSize)
-	tagsBatch := make([]models.Tags, batchSize)
+	collection := &tsdb.SeriesCollection{
+		Keys:  make([][]byte, 0, batchSize),
+		Names: make([][]byte, 0, batchSize),
+		Tags:  make([]models.Tags, batchSize),
+		Types: make([]models.FieldType, 0, batchSize),
+	}
 	var ti int
-	for i := 0; i < r.KeyCount(); i++ {
-		key, _ := r.KeyAt(i)
+	iter := r.Iterator(nil)
+	for iter.Next() {
+		key := iter.Key()
 		seriesKey, _ := tsm1.SeriesAndFieldFromCompositeKey(key)
 		var name []byte
-		name, tagsBatch[ti] = models.ParseKeyBytesWithTags(seriesKey, tagsBatch[ti])
+		name, collection.Tags[ti] = models.ParseKeyBytesWithTags(seriesKey, collection.Tags[ti])
+		typ := iter.Type()
 
 		if verboseLogging {
-			log.Info("Series", zap.String("name", string(name)), zap.String("tags", tagsBatch[ti].String()))
+			log.Info("Series", zap.String("name", string(name)), zap.String("tags", collection.Tags[ti].String()))
 		}
 
-		keysBatch = append(keysBatch, seriesKey)
-		namesBatch = append(namesBatch, name)
+		collection.Keys = append(collection.Keys, seriesKey)
+		collection.Names = append(collection.Names, name)
+		collection.Types = append(collection.Types, modelsFieldType(typ))
 		ti++
 
 		// Flush batch?
-		if len(keysBatch) == batchSize {
-			if err := index.CreateSeriesListIfNotExists(keysBatch, namesBatch, tagsBatch[:ti]); err != nil {
+		if len(collection.Keys) == batchSize {
+			collection.Truncate(ti)
+			if err := index.CreateSeriesListIfNotExists(collection); err != nil {
 				return fmt.Errorf("problem creating series: (%s)", err)
 			}
-			keysBatch = keysBatch[:0]
-			namesBatch = namesBatch[:0]
+			collection.Truncate(0)
+			collection.Tags = collection.Tags[:batchSize]
 			ti = 0 // Reset tags.
 		}
 	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("problem creating series: (%s)", err)
+	}
 
 	// Flush any remaining series in the batches
-	if len(keysBatch) > 0 {
-		if err := index.CreateSeriesListIfNotExists(keysBatch, namesBatch, tagsBatch[:ti]); err != nil {
+	if len(collection.Keys) > 0 {
+		collection.Truncate(ti)
+		if err := index.CreateSeriesListIfNotExists(collection); err != nil {
 			return fmt.Errorf("problem creating series: (%s)", err)
 		}
 	}
@@ -417,4 +433,21 @@ func collectWALFiles(path string) ([]string, error) {
 func isRoot() bool {
 	user, _ := user.Current()
 	return user != nil && user.Username == "root"
+}
+
+func modelsFieldType(block byte) models.FieldType {
+	switch block {
+	case tsm1.BlockFloat64:
+		return models.Float
+	case tsm1.BlockInteger:
+		return models.Integer
+	case tsm1.BlockBoolean:
+		return models.Boolean
+	case tsm1.BlockString:
+		return models.String
+	case tsm1.BlockUnsigned:
+		return models.Unsigned
+	default:
+		return models.Empty
+	}
 }
