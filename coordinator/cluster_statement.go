@@ -1,6 +1,7 @@
 package coordinator
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"github.com/coreos/etcd/clientv3"
@@ -12,6 +13,41 @@ import (
 	"io"
 	"strconv"
 	"strings"
+)
+
+const (
+	// Value is a collection of all database instances.
+	TSDBCommonNodeIdKey = "tsdb-common-node-"
+	// Value is a collection of all available Cluster, every item is key of Cluster
+	TSDBClustersKey = "tsdb-available-clusters"
+	// master key: -master; common node: -node
+	TSDBWorkKey                = "tsdb-work-cluster-"
+	TSDBRecruitClustersKey     = "tsdb-recruit-clusters"
+	TSDBClusterAutoIncrementId = "tsdb-cluster-auto-increment-id"
+	TSDBNodeAutoIncrementId    = "tsdb-node-auto-increment-id"
+	TSDBClassAutoIncrementId   = "tsdb-class-auto-increment-id"
+	TSDBClassesInfo            = "tsdb-classes"
+	TSDBClassId                = "tsdb-class-"
+	// example tsdb-cla-1-cluster-1, describe class 1 has cluster 1
+	TSDBClassNode = "tsdb-cla-"
+	TSDBDatabase  = "tsdb-databases"
+	// map[string]map[string]rp if first value rp exist, only delete rp
+	TSDBDatabaseDel    = "tsdb-databases-del"
+	TSDBDatabaseNew    = "tsdb-databases-new"
+	TSDBDatabaseUpdate = "tsdb-databases-update"
+
+	TSDBcq    = "tsdb-cq"
+	TSDBUsers = "tsdb-users"
+
+	TSDBStatement                = "tsdb-statement-"
+	TSDBStatementAutoIncrementId = "tsdb-auto-increment-statement-id"
+
+	// subscription
+	TSDBSubscription    = "tsdb-subscription"
+	TSDBSubscriptionDel = "tsdb-subscription-del"
+	TSDBSubscriptionNew = "tsdb-subscription-new"
+	// default class limit
+	DefaultClassLimit = 3
 )
 
 func (s *Service) putSql(state *Statement) error {
@@ -222,14 +258,20 @@ Retry:
 	if rp := s.databases[db][name]; &rp == nil {
 		return nil
 	}
+	// put delete data for TSDBDatabaseDel
+	delDatabases := make(Databases)
+	rp := make(map[string]Rp)
+	rp[name] = s.databases[db][name]
+	delDatabases[db] = rp
+	opPutDelDB := clientv3.OpPut(TSDBDatabaseDel, ToJson(delDatabases))
 	delete(s.databases[db], name)
 	cmp := clientv3.Compare(clientv3.Value(TSDBDatabase), "=", string(resp.Kvs[0].Value))
 	opPut := clientv3.OpPut(TSDBDatabase, ToJson(s.databases))
 	var txnResp *clientv3.TxnResponse
 	if &opSub == nil {
-		txnResp, err = s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
+		txnResp, err = s.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutDelDB).Commit()
 	} else {
-		txnResp, err = s.cli.Txn(context.Background()).If(cmp).Then(opSub, opPut).Commit()
+		txnResp, err = s.cli.Txn(context.Background()).If(cmp).Then(opSub, opPut, opPutDelDB).Commit()
 	}
 	if txnResp.Succeeded && err == nil {
 		return nil
@@ -247,25 +289,29 @@ func (s *Service) createClusterSubscription(q *influxql.CreateSubscriptionStatem
 				if err != nil {
 					return err
 				}
-				// validate pass
-				resp, err := s.cli.Get(context.Background(), TSDBSubscription)
-				var subscriptions Subscriptions
-				ParseJson(resp.Kvs[0].Value, &subscriptions)
-				if sub := subscriptions[q.Database][q.RetentionPolicy][q.Name]; &sub == nil {
-					subscriptions[q.Database][q.RetentionPolicy][q.Name] = Subscription{
-						DB:           q.Database,
-						RP:           q.RetentionPolicy,
-						Name:         q.Name,
-						Mode:         q.Mode,
-						Destinations: q.Destinations,
-					}
+			}
+			// validate pass
+			resp, err := s.cli.Get(context.Background(), TSDBSubscription)
+			var subscriptions Subscriptions
+			ParseJson(resp.Kvs[0].Value, &subscriptions)
+			newSubs := make([]Subscription, 0)
+			if sub := subscriptions[q.Database][q.RetentionPolicy][q.Name]; &sub == nil {
+				sub = Subscription{
+					DB:           q.Database,
+					RP:           q.RetentionPolicy,
+					Name:         q.Name,
+					Mode:         q.Mode,
+					Destinations: q.Destinations,
 				}
-				cmp := clientv3.Compare(clientv3.Value(TSDBSubscription), "=", string(resp.Kvs[0].Value))
-				opPut := clientv3.OpPut(TSDBSubscription, ToJson(subscriptions))
-				txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
-				if txnResp.Succeeded && err == nil {
-					return nil
-				}
+				subscriptions[q.Database][q.RetentionPolicy][q.Name] = sub
+				newSubs = append(newSubs, sub)
+			}
+			cmp := clientv3.Compare(clientv3.Value(TSDBSubscription), "=", string(resp.Kvs[0].Value))
+			opPut := clientv3.OpPut(TSDBSubscription, ToJson(subscriptions))
+			opPutNew := clientv3.OpPut(TSDBSubscriptionNew, ToJson(newSubs))
+			txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutNew).Commit()
+			if txnResp.Succeeded && err == nil {
+				return nil
 			}
 		}
 		return meta.ErrRetentionPolicyNotFound
@@ -326,14 +372,17 @@ Retry:
 		return errors.New("DeleteDB Get latest dbs error")
 	}
 	ParseJson(resp.Kvs[0].Value, &s.databases)
+	delDB := make(Databases)
+	delDB[name] = make(map[string]Rp)
+	opPutDel := clientv3.OpPut(TSDBDatabaseDel, ToJson(delDB))
 	delete(s.databases, name)
 	cmp := clientv3.Compare(clientv3.Value(TSDBDatabase), "=", string(resp.Kvs[0].Value))
 	put := clientv3.OpPut(TSDBDatabase, ToJson(s.databases))
 	var txResp *clientv3.TxnResponse
 	if &opSub == nil {
-		txResp, err = s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
+		txResp, err = s.cli.Txn(context.Background()).If(cmp).Then(put, opPutDel).Commit()
 	} else {
-		txResp, err = s.cli.Txn(context.Background()).If(cmp).Then(put, opSub).Commit()
+		txResp, err = s.cli.Txn(context.Background()).If(cmp).Then(put, opSub, opPutDel).Commit()
 	}
 	if txResp.Succeeded && err == nil {
 		return nil
@@ -358,80 +407,127 @@ func (s *Service) watchDatabasesInfo() {
 		err := s.addNewDatabase(s.databases)
 		s.CheckErrorExit("synchronize database failed, error message: ", err)
 	}
-	databaseInfo := s.cli.Watch(context.Background(), TSDBDatabase, clientv3.WithPrefix())
+	databaseInfo := s.cli.Watch(context.Background(), TSDBDatabase+"-", clientv3.WithPrefix())
 	for database := range databaseInfo {
-		s.Logger.Info("The database has changed,db")
-		for _, db := range database.Events {
-			localDBInfo := make(map[string]map[string]Rp, len(s.MetaClient.Databases()))
+		s.Logger.Info("WatchDatabaseInfo get db change event")
+		for _, event := range database.Events {
 			s.dbsMu.Lock()
-			ParseJson(db.Kv.Value, &s.databases)
-			s.dbsMu.Unlock()
-
-			// Correlation deletion cluster subscription
-			var additionalDB = s.databases
-			// Add new database and retention policy
-			for _, localDB := range s.MetaClient.Databases() {
-				rps := s.databases[localDB.Name]
-				if rps == nil {
-					s.store.DeleteDatabase(localDB.Name)
-					s.MetaClient.DropDatabase(localDB.Name)
-					continue
-				}
-				// Local information is up to date.
-				rpInfo := make(map[string]Rp, len(localDB.RetentionPolicies))
-				for _, localRP := range localDB.RetentionPolicies {
-					if s.subscriptions == nil || len(s.subscriptions) == 0 {
-						s.subscriptions = localRP.Subscriptions
-					}
-					latestRP := rps[localRP.Name]
-					if &latestRP == nil {
-						s.store.DeleteRetentionPolicy(localDB.Name, localRP.Name)
-						s.MetaClient.DropRetentionPolicy(localDB.Name, localRP.Name)
+			var dbs Databases
+			ParseJson(event.Kv.Value, &dbs)
+			if bytes.Equal(event.Kv.Key, []byte(TSDBDatabaseNew)) {
+				for db, rp := range dbs {
+					oldDB := s.databases[db]
+					if oldDB == nil {
+						s.databases[db] = rp
+						_, err = s.MetaClient.CreateDatabase(db)
+						s.CheckErrPrintLog("WatchDatabasesInfo MetaClient CreateDatabase failed", err)
 						continue
 					}
-					if latestRP.NeedUpdate {
-						_ = s.MetaClient.UpdateRetentionPolicy(localDB.Name, localRP.Name, &meta.RetentionPolicyUpdate{
-							Duration:           &latestRP.Duration,
-							ReplicaN:           &latestRP.Replica,
-							ShardGroupDuration: &latestRP.ShardGroupDuration,
+					for rpName, rpInfo := range rp {
+						if oldRp := oldDB[rpName]; &oldRp == nil {
+							oldDB[rpName] = rpInfo
+							_, err = s.MetaClient.CreateRetentionPolicy(db, &meta.RetentionPolicySpec{
+								Duration:           &rpInfo.Duration,
+								ReplicaN:           &rpInfo.Replica,
+								ShardGroupDuration: rpInfo.ShardGroupDuration,
+							}, false)
+							s.CheckErrPrintLog("WatchDatabasesInfo MetaClient CreateRetentionPolicy failed", err)
+							for _, sub := range s.subscriptions {
+								err = s.MetaClient.CreateSubscription(db, rpName, sub.Name, sub.Mode, sub.Destinations)
+								s.CheckErrPrintLog("WatchDatabasesInfo MetaClient CreateSubscription failed", err)
+							}
+						}
+					}
+					s.databases[db] = oldDB
+				}
+				continue
+			}
+			if bytes.Equal(event.Kv.Key, []byte(TSDBDatabaseUpdate)) {
+				for db, rps := range dbs {
+					oldDB := s.databases[db]
+					for _, rp := range rps {
+						oldDB[rp.Name] = rp
+						err = s.MetaClient.UpdateRetentionPolicy(db, rp.Name, &meta.RetentionPolicyUpdate{
+							Duration:           &rp.Duration,
+							ReplicaN:           &rp.Replica,
+							ShardGroupDuration: &rp.ShardGroupDuration,
 						}, false)
+						s.CheckErrPrintLog("WatchDatabasesInfo MetaClient UpdateRetentionPolicy failed", err)
 					}
-					// Save RP that has been completed.
-					rpInfo[localRP.Name] = latestRP
-					// Delete RP that has been completed
-					delete(rps, localRP.Name)
-					s.databases[localDB.Name] = rps
+					s.databases[db] = oldDB
 				}
-				// rps will only save new rp
-				for _, value := range rps {
-					_, _ = s.MetaClient.CreateRetentionPolicy(localDB.Name, &meta.RetentionPolicySpec{
-						Name:               value.Name,
-						ReplicaN:           &value.Replica,
-						Duration:           &value.Duration,
-						ShardGroupDuration: value.ShardGroupDuration,
-					}, false)
-					for _, sub := range s.subscriptions {
-						_ = s.MetaClient.CreateSubscription(localDB.Name, value.Name, sub.Name, sub.Mode, sub.Destinations)
+				continue
+			}
+			if bytes.Equal(event.Kv.Key, []byte(TSDBDatabaseDel)) {
+				for db, rps := range dbs {
+					oldDB := s.databases[db]
+					if len(rps) > 0 {
+						for rp := range rps {
+							delete(oldDB, rp)
+							err = s.store.DeleteRetentionPolicy(db, rp)
+							s.CheckErrPrintLog("WatchDatabasesInfo Store DeleteRetentionPolicy failed", err)
+							err = s.MetaClient.DropRetentionPolicy(db, rp)
+							s.CheckErrPrintLog("WatchDatabasesInfo MetaClient DropRetentionPolicy failed", err)
+						}
+						s.databases[db] = oldDB
+						continue
 					}
+					delete(s.databases, db)
+					err = s.store.DeleteDatabase(db)
+					s.CheckErrPrintLog("WatchDatabasesInfo Store DeleteDatabase failed", err)
+					err = s.MetaClient.DropDatabase(db)
+					s.CheckErrPrintLog("WatchDatabasesInfo MetaClient DropDatabase  failed", err)
 				}
-				// save DB that has been completed
-				localDBInfo[localDB.Name] = rpInfo
-				delete(additionalDB, localDB.Name)
 			}
-
-			err = s.addNewDatabase(additionalDB)
-			if err != nil {
-				s.Logger.Error("create new database error !")
-				s.Logger.Error(err.Error())
-			}
+			s.dbsMu.Unlock()
 		}
 	}
 }
 
-func (s Service) watchSubscriptions() {
+func (s *Service) watchSubscriptions() {
 	resp, err := s.cli.Get(context.Background(), TSDBSubscription)
-	if err != nil || resp.Count == 0 {
-		// todo initial
-
+	s.CheckErrorExit("WatchSubscriptions get subscriptions failed, err message", err)
+	var subscriptions Subscriptions
+	if resp.Count == 0 {
+		subscriptions = make(Subscriptions)
+		s.cli.Put(context.Background(), TSDBSubscription, ToJson(subscriptions))
+	}
+	if subscriptions == nil {
+		ParseJson(resp.Kvs[0].Value, &subscriptions)
+	}
+	// Every cluster's master node of the class need transfer data to cluster subscription
+	if s.masterNode.Id == s.MetaClient.Data().NodeID {
+		for _, rps := range subscriptions {
+			for _, subs := range rps {
+				for _, sub := range subs {
+					err = s.MetaClient.CreateSubscription(sub.DB, sub.RP, sub.Name, sub.Mode, sub.Destinations)
+					s.CheckErrorExit("sync remote meta data ", err)
+				}
+			}
+		}
+	}
+	subChan := s.cli.Watch(context.Background(), TSDBSubscription, clientv3.WithPrefix())
+	for subInfo := range subChan {
+		for _, event := range subInfo.Events {
+			if s.masterNode.Id == s.MetaClient.Data().NodeID {
+				if bytes.Equal(event.Kv.Key, []byte(TSDBSubscriptionNew)) {
+					var subs []Subscription
+					ParseJson(event.Kv.Value, &subs)
+					for _, sub := range subs {
+						err = s.MetaClient.CreateSubscription(sub.DB, sub.RP, sub.Name, sub.Mode, sub.Destinations)
+						s.CheckErrPrintLog("WatchSubscriptions get create sub event, MetaClient CreateSub failed", err)
+					}
+					continue
+				}
+				if bytes.Equal(event.Kv.Key, []byte(TSDBSubscriptionDel)) {
+					var subs []Subscription
+					ParseJson(event.Kv.Value, &subs)
+					for _, subs := range subs {
+						err = s.MetaClient.DropSubscription(subs.DB, subs.RP, subs.Name)
+						s.CheckErrPrintLog("WatchSubscriptions get del sub event, MetaClient del sub failed", err)
+					}
+				}
+			}
+		}
 	}
 }

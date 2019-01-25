@@ -51,7 +51,6 @@ type (
 		Replica            int           `json:"replica"`
 		Duration           time.Duration `json:"duration"`
 		ShardGroupDuration time.Duration `json:"shard_group_duration"`
-		NeedUpdate         bool          `json:"need_update"`
 	}
 	// TSDB-Class
 	Classes []Class

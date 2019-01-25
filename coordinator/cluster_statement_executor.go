@@ -320,7 +320,6 @@ func (e *ClusterStatementExecutor) executeCreateRetentionPolicyStatement(stmt *i
 		Duration:           stmt.Duration,
 		ShardGroupDuration: stmt.ShardGroupDuration,
 		Replica:            stmt.Replication,
-		NeedUpdate:         false,
 	}
 	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
 }

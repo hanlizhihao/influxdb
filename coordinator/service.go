@@ -22,32 +22,6 @@ import (
 	"time"
 )
 
-const (
-	// Value is a collection of all database instances.
-	TSDBCommonNodeIdKey = "tsdb-common-node-"
-	// Value is a collection of all available Cluster, every item is key of Cluster
-	TSDBClustersKey = "tsdb-available-clusters"
-	// master key: -master; common node: -node
-	TSDBWorkKey                = "tsdb-work-cluster-"
-	TSDBRecruitClustersKey     = "tsdb-recruit-clusters"
-	TSDBClusterAutoIncrementId = "tsdb-cluster-auto-increment-id"
-	TSDBNodeAutoIncrementId    = "tsdb-node-auto-increment-id"
-	TSDBClassAutoIncrementId   = "tsdb-class-auto-increment-id"
-	TSDBClassesInfo            = "tsdb-classes"
-	TSDBClassId                = "tsdb-class-"
-	// example tsdb-cla-1-cluster-1, describe class 1 has cluster 1
-	TSDBClassNode = "tsdb-cla-"
-	TSDBDatabase  = "tsdb-databases"
-	TSDBcq        = "tsdb-cq"
-	TSDBUsers     = "tsdb-users"
-
-	TSDBStatement                = "tsdb-statement-"
-	TSDBStatementAutoIncrementId = "tsdb-auto-increment-statement-id"
-	TSDBSubscription             = "tsdb-subscription"
-	// default class limit
-	DefaultClassLimit = 3
-)
-
 func ErrMetaDataDisappear() error {
 	return errors.New("Attemp to get data from etcd failed, meta data don't exist ")
 }
@@ -74,9 +48,10 @@ type Service struct {
 		DropContinuousQuery(database, name string) error
 		CreateUser(name, password string, admin bool) (meta.User, error)
 	}
-	closed        bool
-	mu            sync.Mutex
-	Logger        *zap.Logger
+	closed bool
+	mu     sync.Mutex
+	Logger *zap.Logger
+	// cluster member, they need Subscribe local data
 	subscriptions []meta.SubscriptionInfo
 
 	httpd      *httpd.Service
@@ -183,6 +158,7 @@ func (s *Service) Open() error {
 	go s.processNewMeasurement()
 	go s.watchUsers()
 	go s.watchStatement()
+	go s.watchSubscriptions()
 	s.closed = false
 	s.Logger.Info("Opened Coordinator Service")
 	// Cluster query rpc process
