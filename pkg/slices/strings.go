@@ -50,12 +50,15 @@ func StringsToBytes(s ...string) [][]byte {
 }
 
 // Delete array
-func DeleteStr(set []string, find string) []string {
+func DeleteStr(set []string, find string) ([]string, bool) {
 	indexes := make([]int, 0)
 	for i, s := range set {
 		if s == find {
 			indexes = append(indexes, i)
 		}
+	}
+	if len(indexes) == 0 {
+		return set, false
 	}
 	result := make([]string, 0)
 	index := 0
@@ -63,5 +66,5 @@ func DeleteStr(set []string, find string) []string {
 		result = append(result[0:], set[index:i]...)
 		index = i + 1
 	}
-	return result
+	return result, true
 }

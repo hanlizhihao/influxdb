@@ -50,6 +50,18 @@ const (
 	DefaultClassLimit = 3
 )
 
+func (s *Service) getTimeoutLease() (*clientv3.LeaseGrantResponse, error) {
+	lease, err := s.cli.Grant(context.Background(), 3)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.cli.KeepAliveOnce(context.Background(), lease.ID)
+	if err != nil {
+		return nil, err
+	}
+	return lease, nil
+}
+
 func (s *Service) putSql(state *Statement) error {
 	if state == nil {
 		return errors.New("Statement is nil error ")
@@ -61,7 +73,11 @@ PutSql:
 	}
 	idStr := TSDBStatement + strconv.FormatUint(id, 10)
 	cmp := clientv3.Compare(clientv3.CreateRevision(idStr), "=", 0)
-	put := clientv3.OpPut(idStr, ToJson(state))
+	lease, err := s.getTimeoutLease()
+	if err != nil {
+		return err
+	}
+	put := clientv3.OpPut(idStr, ToJson(state), clientv3.WithLease(lease.ID))
 	resp, err := s.cli.Txn(context.Background()).If(cmp).Then(put).Commit()
 	if !resp.Succeeded || err != nil {
 		goto PutSql
@@ -115,7 +131,11 @@ Retry:
 	update := false
 	for i, class := range classes {
 		if ms := class.DBMeasurements[db]; ms != nil {
-			ms = slices.DeleteStr(ms, name)
+			result, ok := slices.DeleteStr(ms, name)
+			if !ok {
+				continue
+			}
+			class.DBMeasurements[db] = result
 			update = true
 			classes[i] = class
 			break
@@ -131,7 +151,7 @@ Retry:
 		goto Retry
 	}
 
-	return nil
+	return ErrMeasurementNotExist(name)
 }
 
 func (s *Service) dropCqs(db string, name string) error {
@@ -225,6 +245,131 @@ func (s *Service) watchContinuesQuery() {
 	}
 }
 
+func (s *Service) watchUsers() {
+	resp, err := s.cli.Get(context.Background(), TSDBUsers)
+	s.CheckErrorExit("Get users info from etcd failed, stop watch users", err)
+	if resp == nil || resp.Count == 0 {
+		users := make(Users)
+		_, err = s.cli.Put(context.Background(), TSDBUsers, ToJson(users))
+		s.CheckErrorExit("Update databases failed, stop watch databases, error message", err)
+	}
+	usersCh := s.cli.Watch(context.Background(), TSDBUsers)
+	for userResp := range usersCh {
+		for _, event := range userResp.Events {
+			s.mu.Lock()
+			ParseJson(event.Kv.Value, &s.latestUsers)
+			s.mu.Unlock()
+			noProcessed := s.latestUsers
+			for _, user := range s.MetaClient.Data().Users {
+				delete(noProcessed, user.Name)
+				if user := s.latestUsers[user.Name]; &user != nil {
+					continue
+				}
+				s.MetaClient.DropUser(user.Name)
+			}
+			for _, user := range noProcessed {
+				s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
+			}
+		}
+	}
+}
+
+func (s *Service) createDatabase(stmt *influxql.CreateDatabaseStatement) error {
+	s.dbsMu.Lock()
+	defer s.dbsMu.Unlock()
+	if !meta.ValidName(stmt.Name) {
+		// TODO This should probably be in `(*meta.Data).CreateDatabase`
+		// but can't go there until 1.1 is used everywhere
+		return meta.ErrInvalidName
+	}
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBDatabase)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear()
+	}
+	ParseJson(resp.Kvs[0].Value, &s.databases)
+	if s.databases[stmt.Name] != nil {
+		return errors.New("Database " + stmt.Name + "exist")
+	}
+	if stmt.RetentionPolicyCreate {
+		if stmt.RetentionPolicyName != "" && !meta.ValidName(stmt.RetentionPolicyName) {
+			return meta.ErrInvalidName
+		}
+		rp := make(map[string]Rp, 0)
+		rp[stmt.RetentionPolicyName] = Rp{
+			Name:               stmt.RetentionPolicyName,
+			Duration:           *stmt.RetentionPolicyDuration,
+			Replica:            *stmt.RetentionPolicyReplication,
+			ShardGroupDuration: stmt.RetentionPolicyShardGroupDuration,
+		}
+		s.databases[stmt.Name] = rp
+	} else {
+		s.databases[stmt.Name] = make(map[string]Rp)
+	}
+	databaseNew := make(Databases)
+	databaseNew[stmt.Name] = s.databases[stmt.Name]
+	cmp := clientv3.Compare(clientv3.Value(TSDBDatabase), "=", string(resp.Kvs[0].Value))
+	opPut := clientv3.OpPut(TSDBDatabase, ToJson(s.databases))
+	opPutNew := clientv3.OpPut(TSDBDatabaseNew, ToJson(databaseNew))
+	txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutNew).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
+}
+
+func (s *Service) createRetentionPolicy(stmt *influxql.CreateRetentionPolicyStatement) error {
+	s.dbsMu.Lock()
+	defer s.dbsMu.Unlock()
+	if !meta.ValidName(stmt.Name) {
+		// TODO This should probably be in `(*meta.Data).CreateRetentionPolicy`
+		// but can't go there until 1.1 is used everywhere
+		return meta.ErrInvalidName
+	}
+	if &stmt.Duration != nil && stmt.Duration < meta.MinRetentionPolicyDuration && stmt.Duration != 0 {
+		return meta.ErrRetentionPolicyDurationTooLow
+	}
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBDatabase)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear()
+	}
+	ParseJson(resp.Kvs[0].Value, &s.databases)
+	rpsNew := make(map[string]Rp)
+	rps := s.databases[stmt.Database]
+	if rps == nil {
+		return ErrDatabaseNotExist(stmt.Database)
+	}
+	if rp := rps[stmt.Name]; &rp != nil {
+		return meta.ErrContinuousQueryExists
+	}
+	rp := Rp{
+		Name:               stmt.Name,
+		Duration:           stmt.Duration,
+		ShardGroupDuration: stmt.ShardGroupDuration,
+		Replica:            stmt.Replication,
+	}
+	rps[stmt.Name] = rp
+	s.databases[stmt.Database] = rps
+	databases := make(Databases)
+	rpsNew[stmt.Name] = rp
+	databases[stmt.Database] = rpsNew
+	cmp := clientv3.Compare(clientv3.Value(TSDBDatabase), "=", string(resp.Kvs[0].Value))
+	opPut := clientv3.OpPut(TSDBDatabase, ToJson(s.databases))
+	opPutNew := clientv3.OpPut(TSDBDatabaseNew, ToJson(databases))
+	txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPutNew, opPut).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
+}
+
 func (s *Service) dropRetentionPolicy(db string, name string) error {
 	var opSub clientv3.Op
 	var subscriptions Subscriptions
@@ -256,7 +401,7 @@ Retry:
 	defer s.dbsMu.Unlock()
 	ParseJson(resp.Kvs[0].Value, &s.databases)
 	if rp := s.databases[db][name]; &rp == nil {
-		return nil
+		return ErrRetentionPolicyNotExist(name)
 	}
 	// put delete data for TSDBDatabaseDel
 	delDatabases := make(Databases)
@@ -277,75 +422,6 @@ Retry:
 		return nil
 	}
 	goto Retry
-}
-
-func (s *Service) createClusterSubscription(q *influxql.CreateSubscriptionStatement) error {
-	s.dbsMu.RLock()
-	defer s.dbsMu.RUnlock()
-	if rp := s.databases[q.Database]; rp != nil {
-		if rpInfo := rp[q.RetentionPolicy]; &rpInfo != nil {
-			for _, destination := range q.Destinations {
-				err := meta.ValidateURL(destination)
-				if err != nil {
-					return err
-				}
-			}
-			// validate pass
-			resp, err := s.cli.Get(context.Background(), TSDBSubscription)
-			var subscriptions Subscriptions
-			ParseJson(resp.Kvs[0].Value, &subscriptions)
-			newSubs := make([]Subscription, 0)
-			if sub := subscriptions[q.Database][q.RetentionPolicy][q.Name]; &sub == nil {
-				sub = Subscription{
-					DB:           q.Database,
-					RP:           q.RetentionPolicy,
-					Name:         q.Name,
-					Mode:         q.Mode,
-					Destinations: q.Destinations,
-				}
-				subscriptions[q.Database][q.RetentionPolicy][q.Name] = sub
-				newSubs = append(newSubs, sub)
-			}
-			cmp := clientv3.Compare(clientv3.Value(TSDBSubscription), "=", string(resp.Kvs[0].Value))
-			opPut := clientv3.OpPut(TSDBSubscription, ToJson(subscriptions))
-			opPutNew := clientv3.OpPut(TSDBSubscriptionNew, ToJson(newSubs))
-			txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutNew).Commit()
-			if txnResp.Succeeded && err == nil {
-				return nil
-			}
-		}
-		return meta.ErrRetentionPolicyNotFound
-	}
-	return meta.ErrDatabaseNotExists
-}
-
-func (s *Service) watchUsers() {
-	resp, err := s.cli.Get(context.Background(), TSDBUsers)
-	s.CheckErrorExit("Get users info from etcd failed, stop watch users", err)
-	if resp == nil || resp.Count == 0 {
-		users := make(Users)
-		_, err = s.cli.Put(context.Background(), TSDBUsers, ToJson(users))
-		s.CheckErrorExit("Update databases failed, stop watch databases, error message", err)
-	}
-	usersCh := s.cli.Watch(context.Background(), TSDBUsers)
-	for userResp := range usersCh {
-		for _, event := range userResp.Events {
-			s.mu.Lock()
-			ParseJson(event.Kv.Value, &s.latestUsers)
-			s.mu.Unlock()
-			noProcessed := s.latestUsers
-			for _, user := range s.MetaClient.Data().Users {
-				delete(noProcessed, user.Name)
-				if user := s.latestUsers[user.Name]; &user != nil {
-					continue
-				}
-				s.MetaClient.DropUser(user.Name)
-			}
-			for _, user := range noProcessed {
-				s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
-			}
-		}
-	}
 }
 
 func (s *Service) dropDB(name string) error {
@@ -372,6 +448,9 @@ Retry:
 		return errors.New("DeleteDB Get latest dbs error")
 	}
 	ParseJson(resp.Kvs[0].Value, &s.databases)
+	if ok := s.databases[name]; ok == nil {
+		return ErrDatabaseExist(name)
+	}
 	delDB := make(Databases)
 	delDB[name] = make(map[string]Rp)
 	opPutDel := clientv3.OpPut(TSDBDatabaseDel, ToJson(delDB))
@@ -482,6 +561,95 @@ func (s *Service) watchDatabasesInfo() {
 			s.dbsMu.Unlock()
 		}
 	}
+}
+
+func (s *Service) createClusterSubscription(q *influxql.CreateSubscriptionStatement) error {
+	s.dbsMu.RLock()
+	defer s.dbsMu.RUnlock()
+	if rp := s.databases[q.Database]; rp != nil {
+		if rpInfo := rp[q.RetentionPolicy]; &rpInfo != nil {
+			for _, destination := range q.Destinations {
+				err := meta.ValidateURL(destination)
+				if err != nil {
+					return err
+				}
+			}
+			// validate pass
+			resp, err := s.cli.Get(context.Background(), TSDBSubscription)
+			if err != nil {
+				return err
+			}
+			if resp.Count == 0 {
+				return ErrMetaDataDisappear()
+			}
+			var subscriptions Subscriptions
+			ParseJson(resp.Kvs[0].Value, &subscriptions)
+			newSubs := make([]Subscription, 0)
+			if sub := subscriptions[q.Database][q.RetentionPolicy][q.Name]; &sub == nil {
+				sub = Subscription{
+					DB:           q.Database,
+					RP:           q.RetentionPolicy,
+					Name:         q.Name,
+					Mode:         q.Mode,
+					Destinations: q.Destinations,
+				}
+				subscriptions[q.Database][q.RetentionPolicy][q.Name] = sub
+				newSubs = append(newSubs, sub)
+			} else {
+				return ErrSubscriptionExist(q.Name)
+			}
+			cmp := clientv3.Compare(clientv3.Value(TSDBSubscription), "=", string(resp.Kvs[0].Value))
+			opPut := clientv3.OpPut(TSDBSubscription, ToJson(subscriptions))
+			opPutNew := clientv3.OpPut(TSDBSubscriptionNew, ToJson(newSubs))
+			txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutNew).Commit()
+			if txnResp.Succeeded && err == nil {
+				return nil
+			}
+		}
+		return meta.ErrRetentionPolicyNotFound
+	}
+	return meta.ErrDatabaseNotExists
+}
+
+func (s *Service) dropClusterSubscription(q *influxql.DropSubscriptionStatement) error {
+	s.dbsMu.RLock()
+	defer s.dbsMu.Unlock()
+Retry:
+	resp, err := s.cli.Get(context.Background(), TSDBSubscription)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear()
+	}
+	var subscriptions Subscriptions
+	ParseJson(resp.Kvs[0].Value, &subscriptions)
+	originalRpsMap := subscriptions[q.Database]
+	originalSubsMap := originalRpsMap[q.RetentionPolicy]
+	originalSub := originalSubsMap[q.Name]
+	// the sub has bean delete
+	if &originalSub == nil {
+		return ErrSubscriptionNotExist(q.Name)
+	}
+	// create delete subscription
+	subDel := make(Subscriptions)
+	subDelMap := make(map[string]Subscription)
+	subDelMap[q.Name] = originalSub
+	rpMap := make(map[string]map[string]Subscription)
+	rpMap[q.RetentionPolicy] = subDelMap
+	subDel[q.Database] = rpMap
+
+	delete(originalSubsMap, q.Name)
+	originalRpsMap[q.RetentionPolicy] = originalSubsMap
+	subscriptions[q.Database] = originalRpsMap
+	cmp := clientv3.Compare(clientv3.Value(TSDBSubscription), "=", string(resp.Kvs[0].Value))
+	opPut := clientv3.OpPut(TSDBSubscription, ToJson(subscriptions))
+	opPutDel := clientv3.OpPut(TSDBDatabaseDel, ToJson(subDel))
+	txnResp, err := s.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutDel).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
 }
 
 func (s *Service) watchSubscriptions() {

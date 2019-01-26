@@ -220,7 +220,6 @@ func (e *ClusterStatementExecutor) executeAlterRetentionPolicyStatement(stmt *in
 		return meta.ErrIncompatibleDurations
 	}
 	rp.Duration = *stmt.Duration
-	rp.NeedUpdate = true
 	rp.Replica = *stmt.Replication
 	rp.ShardGroupDuration = *stmt.ShardGroupDuration
 	rps[stmt.Name] = rp
@@ -274,58 +273,15 @@ func (e *ClusterStatementExecutor) executeCreateContinuousQueryStatement(q *infl
 }
 
 func (e *ClusterStatementExecutor) executeCreateDatabaseStatement(stmt *influxql.CreateDatabaseStatement) error {
-	e.EtcdService.dbsMu.Lock()
-	defer e.EtcdService.dbsMu.Unlock()
-	if !meta.ValidName(stmt.Name) {
-		// TODO This should probably be in `(*meta.Data).CreateDatabase`
-		// but can't go there until 1.1 is used everywhere
-		return meta.ErrInvalidName
-	}
-	if e.EtcdService.databases[stmt.Name] != nil {
-		return errors.New("Database " + stmt.Name + "exist")
-	}
-	if stmt.RetentionPolicyCreate {
-		if stmt.RetentionPolicyName != "" && !meta.ValidName(stmt.RetentionPolicyName) {
-			return meta.ErrInvalidName
-		}
-		rp := make(map[string]Rp, 1)
-		rp[stmt.RetentionPolicyName] = Rp{
-			Name:               stmt.RetentionPolicyName,
-			Duration:           *stmt.RetentionPolicyDuration,
-			Replica:            *stmt.RetentionPolicyReplication,
-			ShardGroupDuration: stmt.RetentionPolicyShardGroupDuration,
-		}
-	} else {
-		e.EtcdService.databases[stmt.Name] = make(map[string]Rp)
-	}
-	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
+	return e.EtcdService.createDatabase(stmt)
 }
 func (e *ClusterStatementExecutor) executeCreateRetentionPolicyStatement(stmt *influxql.CreateRetentionPolicyStatement) error {
-	e.EtcdService.dbsMu.Lock()
-	defer e.EtcdService.dbsMu.Unlock()
-	if !meta.ValidName(stmt.Name) {
-		// TODO This should probably be in `(*meta.Data).CreateRetentionPolicy`
-		// but can't go there until 1.1 is used everywhere
-		return meta.ErrInvalidName
-	}
-	if &stmt.Duration != nil && stmt.Duration < meta.MinRetentionPolicyDuration && stmt.Duration != 0 {
-		return meta.ErrRetentionPolicyDurationTooLow
-	}
-	rps := e.EtcdService.databases[stmt.Database]
-	if rp := rps[stmt.Name]; &rp != nil {
-		return meta.ErrContinuousQueryExists
-	}
-	rps[stmt.Database] = Rp{
-		Name:               stmt.Name,
-		Duration:           stmt.Duration,
-		ShardGroupDuration: stmt.ShardGroupDuration,
-		Replica:            stmt.Replication,
-	}
-	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.databases, TSDBDatabase)
+	return e.EtcdService.createRetentionPolicy(stmt)
 }
 
 func (e *ClusterStatementExecutor) executeCreateSubscriptionStatement(q *influxql.CreateSubscriptionStatement) error {
-	return e.MetaClient.CreateSubscription(q.Database, q.RetentionPolicy, q.Name, q.Mode, q.Destinations)
+	return e.EtcdService.createClusterSubscription(q)
+	// return e.MetaClient.CreateSubscription(q.Database, q.RetentionPolicy, q.Name, q.Mode, q.Destinations)
 }
 
 func (e *ClusterStatementExecutor) executeCreateUserStatement(q *influxql.CreateUserStatement) error {
@@ -372,18 +328,13 @@ func (e *ClusterStatementExecutor) executeDropDatabaseStatement(stmt *influxql.D
 	}
 
 	return e.EtcdService.dropDB(stmt.Name)
-	//// Remove the database from the Meta Store.
-	//return e.MetaClient.DropDatabase(stmt.Name)
 }
 
 func (e *ClusterStatementExecutor) executeDropMeasurementStatement(stmt *influxql.DropMeasurementStatement, database string) error {
 	if dbi := e.MetaClient.Database(database); dbi == nil {
 		return query.ErrDatabaseNotFound(database)
 	}
-
 	return e.EtcdService.dropMeasurement(database, stmt.Name)
-	// Locally drop the measurement
-	//return e.TSDBStore.DeleteMeasurement(database, stmt.Name)
 }
 
 func (e *ClusterStatementExecutor) executeDropSeriesStatement(stmt *influxql.DropSeriesStatement, database string) error {
@@ -426,7 +377,6 @@ func (e *ClusterStatementExecutor) executeDropRetentionPolicyStatement(stmt *inf
 	}
 
 	return e.EtcdService.dropRetentionPolicy(stmt.Database, stmt.Name)
-	//return e.MetaClient.DropRetentionPolicy(stmt.Database, stmt.Name)
 }
 
 func (e *ClusterStatementExecutor) executeDropSubscriptionStatement(q *influxql.DropSubscriptionStatement) error {

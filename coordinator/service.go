@@ -23,8 +23,14 @@ import (
 )
 
 func ErrMetaDataDisappear() error {
-	return errors.New("Attemp to get data from etcd failed, meta data don't exist ")
+	return errors.New("Attempt to get data from etcd failed, meta data don't exist ")
 }
+func ErrDatabaseNotExist(db string) error        { return errors.New(db + "Database not exist") }
+func ErrDatabaseExist(db string) error           { return errors.New(db + "Database already exist") }
+func ErrSubscriptionNotExist(sub string) error   { return errors.New(sub + "Subscription not exist") }
+func ErrSubscriptionExist(sub string) error      { return errors.New(sub + "Subscription already exists") }
+func ErrRetentionPolicyNotExist(rp string) error { return errors.New(rp + "Retention Policy exist ") }
+func ErrMeasurementNotExist(m string) error      { return errors.New(m + "Measurement not exist") }
 
 var IgnoreDBS = []string{"_internal", "database"}
 
