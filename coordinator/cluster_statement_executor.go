@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/coreos/etcd/clientv3"
 	"sort"
 	"strings"
 	"time"
@@ -253,6 +254,7 @@ func (e *ClusterStatementExecutor) executeCreateContinuousQueryStatement(q *infl
 		return err
 	}
 
+Retry:
 	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBcq)
 	if resp.Count == 0 || err != nil {
 		return errors.New("Get meta data from etcd failed ")
@@ -269,7 +271,14 @@ func (e *ClusterStatementExecutor) executeCreateContinuousQueryStatement(q *infl
 		}
 	}
 	dbCqs = append(dbCqs, meta.ContinuousQueryInfo{Name: q.Name, Query: q.String()})
-	return e.EtcdService.PutMetaDataForEtcd(cqs, TSDBcq)
+	cmp := clientv3.Compare(clientv3.Value(TSDBcq), "=", string(resp.Kvs[0].Value))
+	opPut := clientv3.OpPut(TSDBcq, ToJson(dbCqs))
+	txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
+	// return e.EtcdService.PutMetaDataForEtcd(cqs, TSDBcq)
 }
 
 func (e *ClusterStatementExecutor) executeCreateDatabaseStatement(stmt *influxql.CreateDatabaseStatement) error {
@@ -287,15 +296,35 @@ func (e *ClusterStatementExecutor) executeCreateSubscriptionStatement(q *influxq
 func (e *ClusterStatementExecutor) executeCreateUserStatement(q *influxql.CreateUserStatement) error {
 	e.EtcdService.mu.Lock()
 	defer e.EtcdService.mu.Unlock()
+Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return nil
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	ParseJson(resp.Kvs[0].Value, e.EtcdService.latestUsers)
 	if user := e.EtcdService.latestUsers[q.Name]; &user != nil {
 		return meta.ErrUserExists
 	}
-	e.EtcdService.latestUsers[q.Name] = User{
+	user := User{
 		Name:     q.Name,
 		Password: q.Password,
 		Admin:    q.Admin,
 	}
-	return e.EtcdService.PutMetaDataForEtcd(e.EtcdService.latestUsers, TSDBUsers)
+	lease, err := e.EtcdService.getTimeoutLease()
+	if err != nil {
+		return err
+	}
+	cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+	opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+	opPutNew := clientv3.OpPut(TSDBUserNew, ToJson(user), clientv3.WithLease(lease.ID))
+	txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutNew).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
 }
 
 func (e *ClusterStatementExecutor) executeDeleteSeriesStatement(stmt *influxql.DeleteSeriesStatement, database string) error {
@@ -384,7 +413,33 @@ func (e *ClusterStatementExecutor) executeDropSubscriptionStatement(q *influxql.
 }
 
 func (e *ClusterStatementExecutor) executeDropUserStatement(q *influxql.DropUserStatement) error {
-	return e.MetaClient.DropUser(q.Name)
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return nil
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	ParseJson(resp.Kvs[0].Value, e.EtcdService.latestUsers)
+	if user := e.EtcdService.latestUsers[q.Name]; &user != nil {
+		lease, err := e.EtcdService.getTimeoutLease()
+		if err != nil {
+			return err
+		}
+		delete(e.EtcdService.latestUsers, user.Name)
+		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+		opPutDel := clientv3.OpPut(TSDBUserDel, ToJson(user), clientv3.WithLease(lease.ID))
+		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutDel).Commit()
+		if txnResp.Succeeded && err == nil {
+			return nil
+		}
+		goto Retry
+	}
+	return meta.ErrUserNotFound
 }
 
 func (e *ClusterStatementExecutor) executeExplainStatement(q *influxql.ExplainStatement, ctx *query.ExecutionContext) (models.Rows, error) {
@@ -486,11 +541,72 @@ CLEANUP:
 }
 
 func (e *ClusterStatementExecutor) executeGrantStatement(stmt *influxql.GrantStatement) error {
-	return e.MetaClient.SetPrivilege(stmt.User, stmt.On, stmt.Privilege)
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	ParseJson(resp.Kvs[0].Value, &e.EtcdService.latestUsers)
+	if user := e.EtcdService.latestUsers[stmt.User]; &user != nil {
+		e.EtcdService.dbsMu.RLock()
+		defer e.EtcdService.dbsMu.RUnlock()
+		if db := e.EtcdService.databases[stmt.On]; db == nil {
+			return influxdb.ErrDatabaseNotFound(stmt.On)
+		}
+		if user.Privileges == nil {
+			user.Privileges = make(map[string]influxql.Privilege)
+		}
+		user.Privileges[stmt.On] = stmt.Privilege
+		lease, err := e.EtcdService.getTimeoutLease()
+		if err != nil {
+			return err
+		}
+		e.EtcdService.latestUsers[user.Name] = user
+		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+		opPutGrant := clientv3.OpPut(TSDBUserGrant+user.Name, ToJson(user), clientv3.WithLease(lease.ID))
+		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutGrant).Commit()
+		if txnResp.Succeeded && err == nil {
+			return nil
+		}
+		goto Retry
+	}
+	return meta.ErrUserNotFound
 }
 
 func (e *ClusterStatementExecutor) executeGrantAdminStatement(stmt *influxql.GrantAdminStatement) error {
-	return e.MetaClient.SetAdminPrivilege(stmt.User, true)
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	if u := e.EtcdService.latestUsers[stmt.User]; &u != nil {
+		lease, err := e.EtcdService.getTimeoutLease()
+		if err != nil {
+			return err
+		}
+		u.Admin = true
+		e.EtcdService.latestUsers[u.Name] = u
+		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+		opPutAdmin := clientv3.OpPut(TSDBUserAdmin+u.Name, ToJson(u), clientv3.WithLease(lease.ID))
+		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutAdmin).Commit()
+		if txnResp.Succeeded && err == nil {
+			return nil
+		}
+		goto Retry
+	}
+	return meta.ErrUserNotFound
 }
 
 func (e *ClusterStatementExecutor) executeRevokeStatement(stmt *influxql.RevokeStatement) error {

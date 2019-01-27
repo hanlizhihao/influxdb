@@ -14,6 +14,7 @@ import (
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tsdb"
+	"github.com/influxdata/influxql"
 	"go.uber.org/zap"
 	"os"
 	"strconv"
@@ -22,15 +23,7 @@ import (
 	"time"
 )
 
-func ErrMetaDataDisappear() error {
-	return errors.New("Attempt to get data from etcd failed, meta data don't exist ")
-}
-func ErrDatabaseNotExist(db string) error        { return errors.New(db + "Database not exist") }
-func ErrDatabaseExist(db string) error           { return errors.New(db + "Database already exist") }
-func ErrSubscriptionNotExist(sub string) error   { return errors.New(sub + "Subscription not exist") }
-func ErrSubscriptionExist(sub string) error      { return errors.New(sub + "Subscription already exists") }
-func ErrRetentionPolicyNotExist(rp string) error { return errors.New(rp + "Retention Policy exist ") }
-func ErrMeasurementNotExist(m string) error      { return errors.New(m + "Measurement not exist") }
+func ErrMeasurementNotExist(m string) error { return errors.New(m + "Measurement not exist") }
 
 var IgnoreDBS = []string{"_internal", "database"}
 
@@ -53,6 +46,8 @@ type Service struct {
 		DropRetentionPolicy(database, name string) error
 		DropContinuousQuery(database, name string) error
 		CreateUser(name, password string, admin bool) (meta.User, error)
+		SetPrivilege(username, database string, p influxql.Privilege) error
+		SetAdminPrivilege(username string, admin bool) error
 	}
 	closed bool
 	mu     sync.Mutex
@@ -291,7 +286,8 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 				return s.httpd.Handler.Balancing.ForwardPoint(client, []models.Point{point})
 			}, func() {
 				// success
-			}, func() {
+			}, func(err error) {
+				s.Logger.Error("error", zap.Error(err))
 				// error
 			}, s.Logger)
 		}
@@ -306,7 +302,7 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 		return s.httpd.Handler.Balancing.ForwardPoint(httpClient, []models.Point{point})
 	}, func() {
 
-	}, func() {
+	}, func(err error) {
 
 	}, s.Logger)
 }
@@ -367,6 +363,10 @@ func (s *Service) GetLatestDatabaseInfo() (*Databases, error) {
 }
 func (s *Service) PutMetaDataForEtcd(data interface{}, key string) error {
 	_, err := s.cli.Put(context.Background(), key, ToJson(data))
+	return err
+}
+func (s *Service) PutMetaDataWithLease(data interface{}, key string, id clientv3.LeaseID) error {
+	_, err := s.cli.Put(context.Background(), key, ToJson(data), clientv3.WithLease(id))
 	return err
 }
 
@@ -1004,7 +1004,7 @@ func (s *Service) watchClassCluster() {
 						return nil
 					}, func() {
 
-					}, func() {
+					}, func(err error) {
 
 					}, s.Logger)
 				}

@@ -1,14 +1,15 @@
 package promise
 
 import (
+	"errors"
 	"go.uber.org/zap"
 )
 
-func ExecuteNeedRetryAction(f func() error, then func(), errFunc func(), log *zap.Logger) {
+func ExecuteNeedRetryAction(f func() error, then func(), errFunc func(err error), log *zap.Logger) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Error("!!! ExecuteNeedRetryAction occur error, ", zap.Any("error msg: ", err))
-			errFunc()
+			errFunc(errors.New("Execute func occur error "))
 		}
 	}()
 	var err error
@@ -21,7 +22,7 @@ Retry:
 			times++
 			goto Retry
 		}
-		errFunc()
+		errFunc(err)
 		return
 	}
 	then()

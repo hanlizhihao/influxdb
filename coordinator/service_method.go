@@ -36,8 +36,12 @@ const (
 	TSDBDatabaseNew    = "tsdb-databases-new"
 	TSDBDatabaseUpdate = "tsdb-databases-update"
 
-	TSDBcq    = "tsdb-cq"
-	TSDBUsers = "tsdb-users"
+	TSDBcq        = "tsdb-cq"
+	TSDBUsers     = "tsdb-users"
+	TSDBUserNew   = "tsdb-users-new"
+	TSDBUserDel   = "tsdb-users-del"
+	TSDBUserAdmin = "tsdb-users-admin"
+	TSDBUserGrant = "tsdb-users-grant"
 
 	TSDBStatement                = "tsdb-statement-"
 	TSDBStatementAutoIncrementId = "tsdb-auto-increment-statement-id"
@@ -158,7 +162,7 @@ func (s *Service) dropCqs(db string, name string) error {
 Retry:
 	resp, err := s.cli.Get(context.Background(), TSDBcq)
 	if resp.Count == 0 || err != nil {
-		return ErrMetaDataDisappear()
+		return ErrMetaDataDisappear
 	}
 	var cqs Cqs
 	ParseJson(resp.Kvs[0].Value, &cqs)
@@ -171,7 +175,7 @@ Retry:
 		}
 	}
 	if index == -1 {
-		return errors.New("Continues Query don't exist ")
+		return meta.ErrContinuousQueryNotFound
 	}
 	if index >= len(cqInfo)-1 {
 		cqInfo = cqInfo[0 : len(cqInfo)-1]
@@ -244,31 +248,61 @@ func (s *Service) watchContinuesQuery() {
 		}
 	}
 }
-
 func (s *Service) watchUsers() {
 	resp, err := s.cli.Get(context.Background(), TSDBUsers)
 	s.CheckErrorExit("Get users info from etcd failed, stop watch users", err)
 	if resp == nil || resp.Count == 0 {
 		users := make(Users)
+		s.latestUsers = users
 		_, err = s.cli.Put(context.Background(), TSDBUsers, ToJson(users))
 		s.CheckErrorExit("Update databases failed, stop watch databases, error message", err)
+	} else {
+		var users Users
+		ParseJson(resp.Kvs[0].Value, &users)
+		for _, u := range users {
+			s.MetaClient.CreateUser(u.Name, u.Password, u.Admin)
+			if u.Privileges == nil {
+				continue
+			}
+			for d, p := range u.Privileges {
+				s.MetaClient.SetPrivilege(u.Name, d, p)
+			}
+		}
+		s.latestUsers = users
+		users = nil
 	}
-	usersCh := s.cli.Watch(context.Background(), TSDBUsers)
+	usersCh := s.cli.Watch(context.Background(), TSDBUsers+"-", clientv3.WithPrefix())
 	for userResp := range usersCh {
 		for _, event := range userResp.Events {
-			s.mu.Lock()
-			ParseJson(event.Kv.Value, &s.latestUsers)
-			s.mu.Unlock()
-			noProcessed := s.latestUsers
-			for _, user := range s.MetaClient.Data().Users {
-				delete(noProcessed, user.Name)
-				if user := s.latestUsers[user.Name]; &user != nil {
+			if event.Type == mvccpb.PUT {
+				var user User
+				if bytes.Equal(event.Kv.Key, []byte(TSDBUserNew)) {
+					ParseJson(event.Kv.Value, &user)
+					s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
+					&user = nil
 					continue
 				}
-				s.MetaClient.DropUser(user.Name)
-			}
-			for _, user := range noProcessed {
-				s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
+				if bytes.Equal(event.Kv.Key, []byte(TSDBUserAdmin)) {
+					ParseJson(event.Kv.Value, &user)
+					s.MetaClient.SetAdminPrivilege(user.Name, user.Admin)
+					&user = nil
+					continue
+				}
+				if bytes.Equal(event.Kv.Key, []byte(TSDBUserDel)) {
+					ParseJson(event.Kv.Value, &user)
+					s.MetaClient.DropUser(user.Name)
+					continue
+				}
+				if bytes.Equal(event.Kv.Key, []byte(TSDBUserGrant)) {
+					ParseJson(event.Kv.Value, &user)
+					if user.Privileges == nil {
+						continue
+					}
+					for db, p := range user.Privileges {
+						s.MetaClient.SetPrivilege(user.Name, db, p)
+					}
+					continue
+				}
 			}
 		}
 	}
@@ -288,7 +322,7 @@ Retry:
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrMetaDataDisappear()
+		return ErrMetaDataDisappear
 	}
 	ParseJson(resp.Kvs[0].Value, &s.databases)
 	if s.databases[stmt.Name] != nil {
@@ -338,13 +372,13 @@ Retry:
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrMetaDataDisappear()
+		return ErrMetaDataDisappear
 	}
 	ParseJson(resp.Kvs[0].Value, &s.databases)
 	rpsNew := make(map[string]Rp)
 	rps := s.databases[stmt.Database]
 	if rps == nil {
-		return ErrDatabaseNotExist(stmt.Database)
+		return meta.ErrRetentionPolicyExists
 	}
 	if rp := rps[stmt.Name]; &rp != nil {
 		return meta.ErrContinuousQueryExists
@@ -395,13 +429,13 @@ Retry:
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrMetaDataDisappear()
+		return ErrMetaDataDisappear
 	}
 	s.dbsMu.Lock()
 	defer s.dbsMu.Unlock()
 	ParseJson(resp.Kvs[0].Value, &s.databases)
 	if rp := s.databases[db][name]; &rp == nil {
-		return ErrRetentionPolicyNotExist(name)
+		return meta.ErrRetentionPolicyNotFound
 	}
 	// put delete data for TSDBDatabaseDel
 	delDatabases := make(Databases)
@@ -449,7 +483,7 @@ Retry:
 	}
 	ParseJson(resp.Kvs[0].Value, &s.databases)
 	if ok := s.databases[name]; ok == nil {
-		return ErrDatabaseExist(name)
+		return meta.ErrDatabaseExists
 	}
 	delDB := make(Databases)
 	delDB[name] = make(map[string]Rp)
@@ -580,7 +614,7 @@ func (s *Service) createClusterSubscription(q *influxql.CreateSubscriptionStatem
 				return err
 			}
 			if resp.Count == 0 {
-				return ErrMetaDataDisappear()
+				return ErrMetaDataDisappear
 			}
 			var subscriptions Subscriptions
 			ParseJson(resp.Kvs[0].Value, &subscriptions)
@@ -596,7 +630,7 @@ func (s *Service) createClusterSubscription(q *influxql.CreateSubscriptionStatem
 				subscriptions[q.Database][q.RetentionPolicy][q.Name] = sub
 				newSubs = append(newSubs, sub)
 			} else {
-				return ErrSubscriptionExist(q.Name)
+				return meta.ErrSubscriptionExists
 			}
 			cmp := clientv3.Compare(clientv3.Value(TSDBSubscription), "=", string(resp.Kvs[0].Value))
 			opPut := clientv3.OpPut(TSDBSubscription, ToJson(subscriptions))
@@ -620,7 +654,7 @@ Retry:
 		return err
 	}
 	if resp.Count == 0 {
-		return ErrMetaDataDisappear()
+		return ErrMetaDataDisappear
 	}
 	var subscriptions Subscriptions
 	ParseJson(resp.Kvs[0].Value, &subscriptions)
@@ -629,7 +663,7 @@ Retry:
 	originalSub := originalSubsMap[q.Name]
 	// the sub has bean delete
 	if &originalSub == nil {
-		return ErrSubscriptionNotExist(q.Name)
+		return meta.ErrSubscriptionNotFound
 	}
 	// create delete subscription
 	subDel := make(Subscriptions)
