@@ -25,7 +25,11 @@ type (
 	//[{id:1, nodes:[{id:1,host:,udpHost:}]}]
 	Series struct {
 		Key string `json:"key"`
+		// key: tagKey,value: tagValue
+		TagKey map[string]string `json:"tag_key"`
 	}
+	// key db key measurement value []tag
+	AllTagKey map[string]map[string]map[string]string
 
 	WorkClusterInfo struct {
 		ClusterId    uint64   `json:"cluster_id"`

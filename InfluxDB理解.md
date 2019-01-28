@@ -111,6 +111,9 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 确定timeRange来源
 * 删除shard
 * watch内存溢出
+* 元数据密码
+* Statement Executor monitor data report
+* Schema exploration using InfluxQL 暂时无法支持，元数据或者rpc分布式查询
 ## 使用注意
 * 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 * 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
@@ -125,4 +128,3 @@ listen client url 不能用公网ip?
 * with lease key disappear
 * 元数据管理，需要数据库启动时恢复的数据，需要单独设置metaData，例如： database、RetentionPolicy、Continues Query，除此以外的
 * 该到dropRetentionPolicy，subscription 应该为元数据，方便集群导出数据
-* !!元数据操作，然后

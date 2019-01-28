@@ -109,14 +109,15 @@ func (rs *RpcService) Open() error {
 }
 
 type Measurement struct {
-	Database        string
-	RetentionPolicy string
-	Name            string
-	IsTarget        bool
+	Series []Series `json:"series"`
+	Database        string `json:"database"`
+	RetentionPolicy string `json:"retention_policy"`
+	Name            string `json:"name"`
+	IsTarget        bool `json:"is_target"`
 
 	// This field indicates that the measurement should read be read from the
 	// specified system iterator.
-	SystemIterator string
+	SystemIterator string `json:"system_iterator"`
 }
 type RpcRequest struct {
 	Source *Measurement

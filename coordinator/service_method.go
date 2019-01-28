@@ -28,8 +28,11 @@ const (
 	TSDBClassAutoIncrementId   = "tsdb-class-auto-increment-id"
 	TSDBClassesInfo            = "tsdb-classes"
 	TSDBClassId                = "tsdb-class-"
+	// TSDBMeasurement            = "tsdb-db-name"
+	TSDBTag                    = "tsdb-tag-db-name-tag"
 	// example tsdb-cla-1-cluster-1, describe class 1 has cluster 1
 	TSDBClassNode = "tsdb-cla-"
+
 	TSDBDatabase  = "tsdb-databases"
 	// map[string]map[string]rp if first value rp exist, only delete rp
 	TSDBDatabaseDel    = "tsdb-databases-del"
@@ -42,6 +45,7 @@ const (
 	TSDBUserDel   = "tsdb-users-del"
 	TSDBUserAdmin = "tsdb-users-admin"
 	TSDBUserGrant = "tsdb-users-grant"
+	TSDBUserUpdate = "tsdb-users-update"
 
 	TSDBStatement                = "tsdb-statement-"
 	TSDBStatementAutoIncrementId = "tsdb-auto-increment-statement-id"
@@ -301,6 +305,11 @@ func (s *Service) watchUsers() {
 					for db, p := range user.Privileges {
 						s.MetaClient.SetPrivilege(user.Name, db, p)
 					}
+					continue
+				}
+				if bytes.Equal(event.Kv.Key, []byte(TSDBUserUpdate)) {
+					ParseJson(event.Kv.Value, &user)
+					s.MetaClient.UpdateUser(user.Name, user.Password)
 					continue
 				}
 			}

@@ -48,6 +48,7 @@ type Service struct {
 		CreateUser(name, password string, admin bool) (meta.User, error)
 		SetPrivilege(username, database string, p influxql.Privilege) error
 		SetAdminPrivilege(username string, admin bool) error
+		UpdateUser(name, password string) error
 	}
 	closed bool
 	mu     sync.Mutex
@@ -63,7 +64,7 @@ type Service struct {
 	cli        *clientv3.Client
 	lease      *clientv3.LeaseGrantResponse
 	// FirstKey: db, SecondKey: measurement local class's measurements
-	measurement map[string]map[string]interface{}
+	measurement map[string]map[string]map[string]string
 	// FirstKey: db, SecondKey: measurement other class's measurement
 	otherMeasurement map[string]map[string]uint64
 	// if there is point transfer to class, will need ip
@@ -100,7 +101,7 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		classDetail:      make(map[string]Node),
 		Cluster:          false,
 		classes:          new(Classes),
-		measurement:      make(map[string]map[string]interface{}),
+		measurement:      make(map[string]map[string]map[string]string),
 		otherMeasurement: make(map[string]map[string]uint64),
 		classIpMap:       make(map[uint64][]string),
 		masterNode:       new(Node),
@@ -266,6 +267,7 @@ func (s *Service) processNewMeasurement() {
 }
 
 func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMeasurementPoint *httpd.NewMeasurementPoint) {
+	go s.UpdateTag(point)
 	if classId == s.MetaClient.Data().ClassID {
 		targetClusterMasterNode := s.ch.Get(string(point.Key()))
 		// if target node is self node
@@ -305,6 +307,9 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 	}, func(err error) {
 
 	}, s.Logger)
+}
+func (s *Service) UpdateTag(point models.Point)  {
+
 }
 
 // watch classes info, update index

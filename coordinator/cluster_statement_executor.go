@@ -569,7 +569,7 @@ Retry:
 		e.EtcdService.latestUsers[user.Name] = user
 		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
 		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
-		opPutGrant := clientv3.OpPut(TSDBUserGrant+user.Name, ToJson(user), clientv3.WithLease(lease.ID))
+		opPutGrant := clientv3.OpPut(TSDBUserGrant, ToJson(user), clientv3.WithLease(lease.ID))
 		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutGrant).Commit()
 		if txnResp.Succeeded && err == nil {
 			return nil
@@ -599,7 +599,7 @@ Retry:
 		e.EtcdService.latestUsers[u.Name] = u
 		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
 		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
-		opPutAdmin := clientv3.OpPut(TSDBUserAdmin+u.Name, ToJson(u), clientv3.WithLease(lease.ID))
+		opPutAdmin := clientv3.OpPut(TSDBUserAdmin, ToJson(u), clientv3.WithLease(lease.ID))
 		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutAdmin).Commit()
 		if txnResp.Succeeded && err == nil {
 			return nil
@@ -610,27 +610,102 @@ Retry:
 }
 
 func (e *ClusterStatementExecutor) executeRevokeStatement(stmt *influxql.RevokeStatement) error {
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+	Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	ParseJson(resp.Kvs[0].Value, &e.EtcdService.latestUsers)
+	user := e.EtcdService.latestUsers[stmt.User]
 	priv := influxql.NoPrivileges
 
 	// Revoking all privileges means there's no need to look at existing user privileges.
 	if stmt.Privilege != influxql.AllPrivileges {
-		p, err := e.MetaClient.UserPrivilege(stmt.User, stmt.On)
-		if err != nil {
-			return err
-		}
+		p := user.Privileges[stmt.On]
 		// Bit clear (AND NOT) the user's privilege with the revoked privilege.
-		priv = *p &^ stmt.Privilege
+		priv = p &^ stmt.Privilege
 	}
-
-	return e.MetaClient.SetPrivilege(stmt.User, stmt.On, priv)
+	user.Privileges[stmt.On] = priv
+	e.EtcdService.latestUsers[user.Name] = user
+	cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+	opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+	lease, err := e.EtcdService.getTimeoutLease()
+	if err != nil {
+		return err
+	}
+	opPutRevoke := clientv3.OpPut(TSDBUserGrant, ToJson(user), clientv3.WithLease(lease.ID))
+	txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutRevoke).Commit()
+	if txnResp.Succeeded && err == nil {
+		return nil
+	}
+	goto Retry
 }
 
 func (e *ClusterStatementExecutor) executeRevokeAdminStatement(stmt *influxql.RevokeAdminStatement) error {
-	return e.MetaClient.SetAdminPrivilege(stmt.User, false)
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	ParseJson(resp.Kvs[0].Value, &e.EtcdService.latestUsers)
+	if u := e.EtcdService.latestUsers[stmt.User]; &u != nil {
+		lease, err := e.EtcdService.getTimeoutLease()
+		if err != nil {
+			return err
+		}
+		u.Admin = false
+		e.EtcdService.latestUsers[u.Name] = u
+		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+		opPutAdmin := clientv3.OpPut(TSDBUserAdmin, ToJson(u), clientv3.WithLease(lease.ID))
+		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutAdmin).Commit()
+		if txnResp.Succeeded && err == nil {
+			return nil
+		}
+		goto Retry
+	}
+	return meta.ErrUserNotFound
 }
 
 func (e *ClusterStatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPasswordUserStatement) error {
-	return e.MetaClient.UpdateUser(q.Name, q.Password)
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+	Retry:
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
+	if err != nil {
+		return err
+	}
+	if resp.Count == 0 {
+		return ErrMetaDataDisappear
+	}
+	ParseJson(resp.Kvs[0].Value, &e.EtcdService.latestUsers)
+	if u := e.EtcdService.latestUsers[q.Name]; &u != nil {
+		lease, err := e.EtcdService.getTimeoutLease()
+		if err != nil {
+			return err
+		}
+		u.Password = q.Password
+		e.EtcdService.latestUsers[u.Name] = u
+		cmp := clientv3.Compare(clientv3.Value(TSDBUsers), "=", string(resp.Kvs[0].Value))
+		opPut := clientv3.OpPut(TSDBUsers, ToJson(e.EtcdService.latestUsers))
+		opPutAdmin := clientv3.OpPut(TSDBUserUpdate, ToJson(u), clientv3.WithLease(lease.ID))
+		txnResp, err := e.EtcdService.cli.Txn(context.Background()).If(cmp).Then(opPut, opPutAdmin).Commit()
+		if txnResp.Succeeded && err == nil {
+			return nil
+		}
+		goto Retry
+	}
+	return meta.ErrUserNotFound
 }
 
 func (e *ClusterStatementExecutor) executeSelectStatement(stmt *influxql.SelectStatement, ctx *query.ExecutionContext) error {
@@ -737,13 +812,22 @@ func (e *ClusterStatementExecutor) createIterators(ctx context.Context, stmt *in
 }
 
 func (e *ClusterStatementExecutor) executeShowContinuousQueriesStatement(stmt *influxql.ShowContinuousQueriesStatement) (models.Rows, error) {
-	dis := e.MetaClient.Databases()
-
+	e.EtcdService.dbsMu.RUnlock()
+	defer e.EtcdService.dbsMu.RUnlock()
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBcq)
+	if err != nil {
+		return nil ,err
+	}
+	if resp.Count == 0 {
+		return nil, ErrMetaDataDisappear
+	}
+	var cqs Cqs
+	ParseJson(resp.Kvs[0].Value, &cqs)
 	rows := []*models.Row{}
-	for _, di := range dis {
-		row := &models.Row{Columns: []string{"name", "query"}, Name: di.Name}
-		for _, cqi := range di.ContinuousQueries {
-			row.Values = append(row.Values, []interface{}{cqi.Name, cqi.Query})
+	for db, cq := range cqs {
+		row := &models.Row{Columns: []string{"name", "query"}, Name: db}
+		for _, c := range cq {
+			row.Values = append(row.Values, []interface{}{c.Name, c.Query})
 		}
 		rows = append(rows, row)
 	}
@@ -751,14 +835,16 @@ func (e *ClusterStatementExecutor) executeShowContinuousQueriesStatement(stmt *i
 }
 
 func (e *ClusterStatementExecutor) executeShowDatabasesStatement(q *influxql.ShowDatabasesStatement, ctx *query.ExecutionContext) (models.Rows, error) {
-	dis := e.MetaClient.Databases()
+	e.EtcdService.dbsMu.RLock()
+	defer e.EtcdService.dbsMu.RUnlock()
+	dis := e.EtcdService.databases
 	a := ctx.ExecutionOptions.Authorizer
 
 	row := &models.Row{Name: "databases", Columns: []string{"name"}}
-	for _, di := range dis {
+	for db := range dis {
 		// Only include databases that the user is authorized to read or write.
-		if a.AuthorizeDatabase(influxql.ReadPrivilege, di.Name) || a.AuthorizeDatabase(influxql.WritePrivilege, di.Name) {
-			row.Values = append(row.Values, []interface{}{di.Name})
+		if a.AuthorizeDatabase(influxql.ReadPrivilege, db) || a.AuthorizeDatabase(influxql.WritePrivilege, db) {
+			row.Values = append(row.Values, []interface{}{db})
 		}
 	}
 	return []*models.Row{row}, nil
@@ -793,10 +879,9 @@ func (e *ClusterStatementExecutor) executeShowDiagnosticsStatement(stmt *influxq
 }
 
 func (e *ClusterStatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement) (models.Rows, error) {
-	priv, err := e.MetaClient.UserPrivileges(q.Name)
-	if err != nil {
-		return nil, err
-	}
+	e.EtcdService.mu.Lock()
+	defer e.EtcdService.mu.Unlock()
+	priv := e.EtcdService.latestUsers[q.Name].Privileges
 
 	row := &models.Row{Columns: []string{"database", "privilege"}}
 	for d, p := range priv {
