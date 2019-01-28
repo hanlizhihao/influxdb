@@ -612,7 +612,7 @@ Retry:
 func (e *ClusterStatementExecutor) executeRevokeStatement(stmt *influxql.RevokeStatement) error {
 	e.EtcdService.mu.Lock()
 	defer e.EtcdService.mu.Unlock()
-	Retry:
+Retry:
 	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
 	if err != nil {
 		return err
@@ -680,7 +680,7 @@ Retry:
 func (e *ClusterStatementExecutor) executeSetPasswordUserStatement(q *influxql.SetPasswordUserStatement) error {
 	e.EtcdService.mu.Lock()
 	defer e.EtcdService.mu.Unlock()
-	Retry:
+Retry:
 	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
 	if err != nil {
 		return err
@@ -816,7 +816,7 @@ func (e *ClusterStatementExecutor) executeShowContinuousQueriesStatement(stmt *i
 	defer e.EtcdService.dbsMu.RUnlock()
 	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBcq)
 	if err != nil {
-		return nil ,err
+		return nil, err
 	}
 	if resp.Count == 0 {
 		return nil, ErrMetaDataDisappear
@@ -951,18 +951,20 @@ func (e *ClusterStatementExecutor) executeShowMeasurementCardinalityStatement(st
 }
 
 func (e *ClusterStatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.ShowRetentionPoliciesStatement) (models.Rows, error) {
+	e.EtcdService.dbsMu.RLock()
+	e.EtcdService.dbsMu.RUnlock()
 	if q.Database == "" {
 		return nil, ErrDatabaseNameRequired
 	}
 
-	di := e.MetaClient.Database(q.Database)
+	di := e.EtcdService.databases[q.Database]
 	if di == nil {
 		return nil, influxdb.ErrDatabaseNotFound(q.Database)
 	}
 
 	row := &models.Row{Columns: []string{"name", "duration", "shardGroupDuration", "replicaN", "default"}}
-	for _, rpi := range di.RetentionPolicies {
-		row.Values = append(row.Values, []interface{}{rpi.Name, rpi.Duration.String(), rpi.ShardGroupDuration.String(), rpi.ReplicaN, di.DefaultRetentionPolicy == rpi.Name})
+	for _, rpi := range di {
+		row.Values = append(row.Values, []interface{}{rpi.Name, rpi.Duration.String(), rpi.ShardGroupDuration.String(), rpi.Replica, meta.DefaultRetentionPolicyName == rpi.Name})
 	}
 	return []*models.Row{row}, nil
 }
@@ -1088,14 +1090,21 @@ func (e *ClusterStatementExecutor) executeShowStatsStatement(stmt *influxql.Show
 }
 
 func (e *ClusterStatementExecutor) executeShowSubscriptionsStatement(stmt *influxql.ShowSubscriptionsStatement) (models.Rows, error) {
-	dis := e.MetaClient.Databases()
-
-	rows := []*models.Row{}
-	for _, di := range dis {
-		row := &models.Row{Columns: []string{"retention_policy", "name", "mode", "destinations"}, Name: di.Name}
-		for _, rpi := range di.RetentionPolicies {
-			for _, si := range rpi.Subscriptions {
-				row.Values = append(row.Values, []interface{}{rpi.Name, si.Name, si.Mode, si.Destinations})
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBSubscription)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Count == 0 {
+		return nil, ErrMetaDataDisappear
+	}
+	var subs Subscriptions
+	ParseJson(resp.Kvs[0].Value, &subs)
+	var rows []*models.Row
+	for dbName, db := range subs {
+		row := &models.Row{Columns: []string{"retention_policy", "name", "mode", "destinations"}, Name: dbName}
+		for _, rp := range db {
+			for _, sub := range rp {
+				row.Values = append(row.Values, []interface{}{sub.Name, sub.Name, sub.Mode, sub.Destinations})
 			}
 		}
 		if len(row.Values) > 0 {
@@ -1282,8 +1291,8 @@ func (e *ClusterStatementExecutor) executeShowTagValues(q *influxql.ShowTagValue
 
 func (e *ClusterStatementExecutor) executeShowUsersStatement(q *influxql.ShowUsersStatement) (models.Rows, error) {
 	row := &models.Row{Columns: []string{"user", "admin"}}
-	for _, ui := range e.MetaClient.Users() {
-		row.Values = append(row.Values, []interface{}{ui.Name, ui.Admin})
+	for _, u := range e.EtcdService.latestUsers {
+		row.Values = append(row.Values, []interface{}{u.Name, u.Admin})
 	}
 	return []*models.Row{row}, nil
 }

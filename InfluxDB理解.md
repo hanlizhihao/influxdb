@@ -113,7 +113,21 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * watch内存溢出
 * 元数据密码
 * Statement Executor monitor data report
-* Schema exploration using InfluxQL 暂时无法支持，元数据或者rpc分布式查询
+* Schema exploration using InfluxQL 暂时无法支持，元数据或者rpc分布式查询，需要解决Shard元数据及series以及tagKey元数据问题，
+统计信息异步刷新
+
+### 没有实现集群化的SQL
+* executeShowDiagnosticsStatement
+* executeShowMeasurementsStatement
+* executeExplainAnalyzeStatement
+* executeExplainStatement
+* executeShowMeasurementCardinalityStatement 返回所有shard估计
+* executeShowShardsStatement
+* executeShowSeriesCardinalityStatement
+* executeShowShardGroupsStatement
+* executeShowStatsStatement
+* executeShowTagKeys
+* executeShowTagValues
 ## 使用注意
 * 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 * 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
