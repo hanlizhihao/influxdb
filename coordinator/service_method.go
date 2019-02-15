@@ -291,13 +291,11 @@ func (s *Service) watchUsers() {
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserNew)) {
 					ParseJson(event.Kv.Value, &user)
 					s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
-					&user = nil
 					continue
 				}
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserAdmin)) {
 					ParseJson(event.Kv.Value, &user)
 					s.MetaClient.SetAdminPrivilege(user.Name, user.Admin)
-					&user = nil
 					continue
 				}
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserDel)) {

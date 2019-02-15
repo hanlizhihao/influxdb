@@ -133,7 +133,6 @@ func (s *Service) Open() error {
 		s.Logger.Error("Get etcd client failed, error message " + err.Error())
 		return err
 	}
-	s.store.SetClient(s.cli)
 	metaData := s.MetaClient.Data()
 	metaData.Cli = s.cli
 	err = s.MetaClient.SetData(&metaData)

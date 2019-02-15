@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/influxdata/influxdb/services/meta"
 	"io"
 	"io/ioutil"
 	"math"
@@ -1466,7 +1467,7 @@ func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, predica
 		}
 
 		// Delete all series for etcd
-		key := tsdb.EtcdIndexKey + strconv.FormatUint(e.id, 10) + "-"
+		key := meta.TSDBShardIndex + strconv.FormatUint(e.id, 10) + "-"
 		for _, s := range batch {
 			_, err := e.cli.Delete(context.Background(), key+string(s))
 			if err != nil {

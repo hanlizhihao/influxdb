@@ -14,7 +14,7 @@ func (idx *ShardIndex) syncIndexData() error {
 	if idx.opt.Cli == nil {
 		return nil
 	}
-	key := meta.TSDBShardIndex + idx.database + "-" + strconv.FormatUint(idx.id, 10) + "-"
+	key := meta.TSDBShardIndex + strconv.FormatUint(idx.id, 10) + "-"
 	resp, err := idx.opt.Cli.Get(context.Background(), key, clientv3.WithPrefix())
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (idx *ShardIndex) watchIndexData(key string) {
 
 func (idx *ShardIndex) createSeriesForEtcd(series *meta.Series) error {
 	seriesData := *series
-	_, err := idx.opt.Cli.Put(context.Background(), meta.TSDBShardIndex+idx.database+"-"+strconv.
+	_, err := idx.opt.Cli.Put(context.Background(), meta.TSDBShardIndex+strconv.
 		FormatUint(idx.id, 10)+"-"+string(series.Key), etcd.ToJson(seriesData))
 	return err
 }
