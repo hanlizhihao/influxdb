@@ -20,6 +20,7 @@ type MetaClient interface {
 	Data() meta.Data
 	SetData(data *meta.Data) error
 	DropShard(id uint64) error
+	DropLocalShard(id uint64) error
 	DropContinuousQuery(database, name string) error
 	DropDatabase(name string) error
 	DropRetentionPolicy(database, name string) error

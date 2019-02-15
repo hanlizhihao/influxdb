@@ -7,7 +7,7 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/influxdata/influxdb/models"
-	"github.com/influxdata/influxdb/pkg/promise"
+	"github.com/influxdata/influxdb/pkg/etcd"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/httpd"
 	"github.com/influxdata/influxdb/services/httpd/consistent"
@@ -49,6 +49,9 @@ type Service struct {
 		SetPrivilege(username, database string, p influxql.Privilege) error
 		SetAdminPrivilege(username string, admin bool) error
 		UpdateUser(name, password string) error
+		LocalCreateShardGroup(sgi *meta.ShardGroupInfo) (*meta.ShardGroupInfo, error)
+		DeleteShardGroup(database, policy string, id uint64) error
+		DropShard(id uint64) error
 	}
 	closed bool
 	mu     sync.Mutex
@@ -64,7 +67,7 @@ type Service struct {
 	cli        *clientv3.Client
 	lease      *clientv3.LeaseGrantResponse
 	// FirstKey: db, SecondKey: measurement local class's measurements
-	measurement map[string]map[string]map[string]string
+	measurement map[string]map[string]interface{}
 	// FirstKey: db, SecondKey: measurement other class's measurement
 	otherMeasurement map[string]map[string]uint64
 	// if there is point transfer to class, will need ip
@@ -101,7 +104,7 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		classDetail:      make(map[string]Node),
 		Cluster:          false,
 		classes:          new(Classes),
-		measurement:      make(map[string]map[string]map[string]string),
+		measurement:      make(map[string]map[string]interface{}),
 		otherMeasurement: make(map[string]map[string]uint64),
 		classIpMap:       make(map[uint64][]string),
 		masterNode:       new(Node),
@@ -130,6 +133,11 @@ func (s *Service) Open() error {
 		s.Logger.Error("Get etcd client failed, error message " + err.Error())
 		return err
 	}
+	s.store.SetClient(s.cli)
+	metaData := s.MetaClient.Data()
+	metaData.Cli = s.cli
+	err = s.MetaClient.SetData(&metaData)
+	s.CheckErrorExit("Update meta data error", err)
 	lease, err := s.cli.Grant(context.Background(), 30)
 	_, err = s.cli.KeepAlive(context.Background(), lease.ID)
 	s.lease = lease
@@ -161,6 +169,9 @@ func (s *Service) Open() error {
 	go s.watchUsers()
 	go s.watchStatement()
 	go s.watchSubscriptions()
+	go s.reportDiagnostics()
+	go s.watchShardGroup()
+	go s.watchShard()
 	s.closed = false
 	s.Logger.Info("Opened Coordinator Service")
 	// Cluster query rpc process
@@ -278,7 +289,7 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 				s.Logger.Error(err.Error())
 			}
 		} else {
-			promise.ExecuteNeedRetryAction(func() error {
+			etcd.ExecuteNeedRetryAction(func() error {
 				targetHttpClientPoint, err := s.httpd.Handler.Balancing.GetClient(
 					targetClusterMasterNode.Ip, "")
 				if err != nil {
@@ -295,7 +306,7 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 		}
 		return
 	}
-	promise.ExecuteNeedRetryAction(func() error {
+	etcd.ExecuteNeedRetryAction(func() error {
 		httpClientP, err := s.httpd.Handler.Balancing.GetClientByClassId("InfluxForwardClient", classId)
 		if err != nil {
 			return err
@@ -308,7 +319,7 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 
 	}, s.Logger)
 }
-func (s *Service) UpdateTag(point models.Point)  {
+func (s *Service) UpdateTag(point models.Point) {
 
 }
 
@@ -973,7 +984,7 @@ func (s *Service) watchClassCluster() {
 				delete(s.classDetail, changedNode.Ip)
 				metaData := s.MetaClient.Data()
 				if s.masterNode.Id == metaData.NodeID {
-					promise.ExecuteNeedRetryAction(func() error {
+					etcd.ExecuteNeedRetryAction(func() error {
 						resp, err := s.cli.Get(context.Background(), TSDBClassesInfo)
 						s.CheckErrPrintLog("WatchClassCluster get classes failed", err)
 						if resp.Count > 0 {

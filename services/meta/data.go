@@ -1,10 +1,14 @@
 package meta
 
 import (
+	"context"
 	"errors"
+	"github.com/coreos/etcd/clientv3"
+	"github.com/influxdata/influxdb/pkg/etcd"
 	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +42,14 @@ const (
 	// MaxNameLen is the maximum length of a database or retention policy name.
 	// InfluxDB uses the name for the directory name on disk.
 	MaxNameLen = 255
+
+	TSDBShardGroupId = "tsdb-auto-increment-shard-group-id"
+
+	// shard
+	TSDBShardId    = "tsdb-auto-increment-shard-id"
+	TSDBShardGroup = "tsdb-ShGroup-"
+	TSDBShardIndex = "tsdb-index-shard-"
+	TSDBShard      = "tsdb-shard-"
 )
 
 // Data represents the top level collection of all metadata.
@@ -56,6 +68,8 @@ type Data struct {
 	MaxShardID      uint64
 	ClassID         uint64
 	NodeID          uint64
+
+	Cli *clientv3.Client
 }
 
 // Database returns a DatabaseInfo by the database name.
@@ -297,6 +311,39 @@ func (data *Data) DropShard(id uint64) {
 					if len(shards) == 1 {
 						// We just deleted the last shard in the shard group.
 						data.Databases[dbidx].RetentionPolicies[rpidx].ShardGroups[sgidx].DeletedAt = time.Now()
+						key := TSDBShardGroup + dbi.Name + "-" + rpi.Name + "-" + strconv.FormatUint(sg.ID, 10)
+						data.Cli.Delete(context.Background(), key)
+					}
+					idStr := strconv.FormatUint(id, 10)
+					key := TSDBShard + idStr
+					indexKey := TSDBShardIndex + idStr
+					data.Cli.Delete(context.Background(), key)
+					data.Cli.Delete(context.Background(), indexKey)
+					return
+				}
+			}
+		}
+	}
+}
+func (data *Data) DropLocalShard(id uint64) {
+	found := -1
+	for dbidx, dbi := range data.Databases {
+		for rpidx, rpi := range dbi.RetentionPolicies {
+			for sgidx, sg := range rpi.ShardGroups {
+				for sidx, s := range sg.Shards {
+					if s.ID == id {
+						found = sidx
+						break
+					}
+				}
+
+				if found > -1 {
+					shards := sg.Shards
+					data.Databases[dbidx].RetentionPolicies[rpidx].ShardGroups[sgidx].Shards = append(shards[:found], shards[found+1:]...)
+
+					if len(shards) == 1 {
+						// We just deleted the last shard in the shard group.
+						data.Databases[dbidx].RetentionPolicies[rpidx].ShardGroups[sgidx].DeletedAt = time.Now()
 					}
 					return
 				}
@@ -373,25 +420,71 @@ func (data *Data) CreateShardGroup(database, policy string, timestamp time.Time)
 	}
 
 	// Create the shard group.
-	data.MaxShardGroupID++
+	data.MaxShardGroupID, err = etcd.GetLatestID(TSDBShardGroupId, data.Cli)
+	if err != nil {
+		return err
+	}
 	sgi := ShardGroupInfo{}
 	sgi.ID = data.MaxShardGroupID
 	sgi.StartTime = timestamp.Truncate(rpi.ShardGroupDuration).UTC()
 	sgi.EndTime = sgi.StartTime.Add(rpi.ShardGroupDuration).UTC()
+	sgi.DB = database
+	sgi.RP = policy
 	if sgi.EndTime.After(time.Unix(0, models.MaxNanoTime)) {
 		// Shard group range is [start, end) so add one to the max time.
 		sgi.EndTime = time.Unix(0, models.MaxNanoTime+1)
 	}
 
-	data.MaxShardID++
+	data.MaxShardID, err = etcd.GetLatestID(TSDBShardGroupId, data.Cli)
+	if err != nil {
+		return err
+	}
 	sgi.Shards = []ShardInfo{
 		{ID: data.MaxShardID},
+	}
+	key := TSDBShardGroup + database + "-" + policy + "-" + strconv.FormatUint(data.MaxShardGroupID, 10)
+	cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
+	putShGroup := clientv3.OpPut(key, etcd.ToJson(sgi))
+	putShard := clientv3.OpPut(TSDBShard+strconv.FormatUint(data.MaxShardID, 10), etcd.ToJson(sgi.Shards[0]))
+	ctx := context.Background()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	resp, err := data.Cli.Txn(timeoutCtx).If(cmp).Then(putShard, putShGroup).Commit()
+	cancel()
+	if err != nil {
+		return err
+	}
+	if !resp.Succeeded {
+		return errors.New("Create Shard Group Occur error, MaxShardGroupID " +
+			strconv.FormatUint(data.MaxShardGroupID, 10) + "already exist")
 	}
 
 	// Retention policy has a new shard group, so update the policy. Shard
 	// Groups must be stored in sorted order, as other parts of the system
 	// assume this to be the case.
 	rpi.ShardGroups = append(rpi.ShardGroups, sgi)
+	sort.Sort(ShardGroupInfos(rpi.ShardGroups))
+
+	return nil
+}
+
+func (data *Data) LocalCreateShardGroup(shardGroupInfo *ShardGroupInfo) error {
+	// Find retention policy.
+	rpi, err := data.RetentionPolicy(shardGroupInfo.DB, shardGroupInfo.RP)
+	if err != nil {
+		return err
+	} else if rpi == nil {
+		return influxdb.ErrRetentionPolicyNotFound(shardGroupInfo.RP)
+	}
+
+	// Verify that shard group doesn't already exist for this timestamp.
+	if rpi.ShardGroupByTimestamp(shardGroupInfo.StartTime) != nil {
+		return nil
+	}
+
+	// Retention policy has a new shard group, so update the policy. Shard
+	// Groups must be stored in sorted order, as other parts of the system
+	// assume this to be the case.
+	rpi.ShardGroups = append(rpi.ShardGroups, *shardGroupInfo)
 	sort.Sort(ShardGroupInfos(rpi.ShardGroups))
 
 	return nil
@@ -1295,12 +1388,14 @@ func normalisedShardDuration(sgd, d time.Duration) time.Duration {
 // to be sure that a ShardGroup is not simply missing. If the DeletedAt is set, the system can
 // safely delete any associated shards.
 type ShardGroupInfo struct {
-	ID          uint64
-	StartTime   time.Time
-	EndTime     time.Time
-	DeletedAt   time.Time
-	Shards      []ShardInfo
-	TruncatedAt time.Time
+	ID          uint64      `json:"id"`
+	StartTime   time.Time   `json:"start_time"`
+	EndTime     time.Time   `json:"end_time"`
+	DeletedAt   time.Time   `json:"deleted_at"`
+	Shards      []ShardInfo `json:"shards"`
+	TruncatedAt time.Time   `json:"truncated_at"`
+	DB          string      `json:"db"`
+	RP          string      `json:"rp"`
 }
 
 // ShardGroupInfos implements sort.Interface on []ShardGroupInfo, based
@@ -1421,8 +1516,8 @@ func (sgi *ShardGroupInfo) unmarshal(pb *internal.ShardGroupInfo) {
 
 // ShardInfo represents metadata about a shard.
 type ShardInfo struct {
-	ID     uint64
-	Owners []ShardOwner
+	ID     uint64       `json:"id"`
+	Owners []ShardOwner `json:"owners"`
 }
 
 // OwnedBy determines whether the shard's owner IDs includes nodeID.

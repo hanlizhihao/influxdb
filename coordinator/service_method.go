@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
+	diagnostics2 "github.com/influxdata/influxdb/monitor/diagnostics"
+	"github.com/influxdata/influxdb/pkg/etcd"
 	"github.com/influxdata/influxdb/pkg/slices"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/meta"
@@ -13,6 +16,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -29,22 +33,22 @@ const (
 	TSDBClassesInfo            = "tsdb-classes"
 	TSDBClassId                = "tsdb-class-"
 	// TSDBMeasurement            = "tsdb-db-name"
-	TSDBTag                    = "tsdb-tag-db-name-tag"
+	TSDBTag = "tsdb-tag-db-name-tag"
 	// example tsdb-cla-1-cluster-1, describe class 1 has cluster 1
 	TSDBClassNode = "tsdb-cla-"
 
-	TSDBDatabase  = "tsdb-databases"
+	TSDBDatabase = "tsdb-databases"
 	// map[string]map[string]rp if first value rp exist, only delete rp
 	TSDBDatabaseDel    = "tsdb-databases-del"
 	TSDBDatabaseNew    = "tsdb-databases-new"
 	TSDBDatabaseUpdate = "tsdb-databases-update"
 
-	TSDBcq        = "tsdb-cq"
-	TSDBUsers     = "tsdb-users"
-	TSDBUserNew   = "tsdb-users-new"
-	TSDBUserDel   = "tsdb-users-del"
-	TSDBUserAdmin = "tsdb-users-admin"
-	TSDBUserGrant = "tsdb-users-grant"
+	TSDBcq         = "tsdb-cq"
+	TSDBUsers      = "tsdb-users"
+	TSDBUserNew    = "tsdb-users-new"
+	TSDBUserDel    = "tsdb-users-del"
+	TSDBUserAdmin  = "tsdb-users-admin"
+	TSDBUserGrant  = "tsdb-users-grant"
 	TSDBUserUpdate = "tsdb-users-update"
 
 	TSDBStatement                = "tsdb-statement-"
@@ -56,6 +60,10 @@ const (
 	TSDBSubscriptionNew = "tsdb-subscription-new"
 	// default class limit
 	DefaultClassLimit = 3
+
+	// diagnostics
+	TSDBDiagnostics     = "tsdb-diagnostics"
+	TSDBDiagnosticsLock = "tsdb-diagnostics-lock"
 )
 
 func (s *Service) getTimeoutLease() (*clientv3.LeaseGrantResponse, error) {
@@ -740,5 +748,92 @@ func (s *Service) watchSubscriptions() {
 				}
 			}
 		}
+	}
+}
+func (s *Service) reportDiagnostics() {
+	timer := time.NewTicker(5 * time.Minute)
+	for {
+		select {
+		case <-timer.C:
+			mutex := concurrency.NewMutex(s.session, TSDBDiagnosticsLock)
+			err := mutex.Lock(context.Background())
+			s.CheckErrPrintLog("Report diagnostics information acquire local error", err)
+			resp, err := s.cli.Get(context.Background(), TSDBDiagnostics)
+			s.CheckErrPrintLog("ReportDiagnostics get Diagnostics error", err)
+			var diagnostics map[string]*diagnostics2.Diagnostics
+			if resp.Count > 0 {
+				etcd.ParseJson(resp.Kvs[0].Value, diagnostics)
+			}
+			executor, ok := s.httpd.Handler.QueryExecutor.StatementExecutor.(*ClusterStatementExecutor)
+			if ok {
+				localDiagnostics, err := executor.Monitor.Diagnostics()
+				s.CheckErrPrintLog("ReportDiagnostics get local Diagnostics error", err)
+				if diagnostics == nil {
+					_, err := s.cli.Put(context.Background(), TSDBDiagnostics, etcd.ToJson(localDiagnostics))
+					s.CheckErrPrintLog("ReportDiagnostics put data for etcd error", err)
+					continue
+				}
+				for k, v := range localDiagnostics {
+					diagnostics[k] = v
+				}
+				_, err = s.cli.Put(context.Background(), TSDBDiagnostics, etcd.ToJson(diagnostics))
+				s.CheckErrPrintLog("ReportDiagnostics put data for etcd error", err)
+			}
+		}
+	}
+}
+func (s *Service) watchShardGroup() {
+	s.initETCDIDData(meta.TSDBShardId)
+	s.initETCDIDData(meta.TSDBShardGroupId)
+	resp, err := s.cli.Get(context.Background(), meta.TSDBShardGroup, clientv3.WithPrefix())
+	s.CheckErrorExit("WatchShardAndGroup get tsdb-ShGroup- error", err)
+	if resp.Count > 0 {
+		var shardGroup meta.ShardGroupInfo
+		for _, kv := range resp.Kvs {
+			etcd.ParseJson(kv.Value, &shardGroup)
+			_, err = s.MetaClient.LocalCreateShardGroup(&shardGroup)
+			s.CheckErrorExit("WatchShardAndGroup sync shard data error, LocalCreateShardGroup error", err)
+		}
+	}
+	// 继续watch Shard
+	sgCh := s.cli.Watch(context.Background(), meta.TSDBShardGroup, clientv3.WithPrefix())
+	for sgInfo := range sgCh {
+		for _, event := range sgInfo.Events {
+			var sgi meta.ShardGroupInfo
+			if event.Type == mvccpb.PUT {
+				etcd.ParseJson(event.Kv.Value, &sgi)
+				_, err = s.MetaClient.LocalCreateShardGroup(&sgi)
+				s.CheckErrPrintLog("WatchShardGroup get ShardGroup create event, LocalCreateShardGroup error", err)
+				continue
+			}
+			if event.Type == mvccpb.DELETE {
+				etcd.ParseJson(event.Kv.Value, &sgi)
+				err = s.MetaClient.DeleteShardGroup(sgi.DB, sgi.RP, sgi.ID)
+				s.CheckErrPrintLog("WatchShardGroup get ShardGroup delete event, meta client DeleteShardGroup error", err)
+			}
+		}
+	}
+}
+func (s *Service) watchShard() {
+	shardCh := s.cli.Watch(context.Background(), meta.TSDBShard, clientv3.WithPrefix())
+	for shardInfo := range shardCh {
+		for _, event := range shardInfo.Events {
+			if event.Type == mvccpb.DELETE {
+				var shard meta.ShardInfo
+				etcd.ParseJson(event.Kv.Value, &shard)
+				err := s.store.DeleteShard(shard.ID)
+				s.CheckErrPrintLog("WatchShard get shard delete event, Store delete shard "+strconv.FormatUint(shard.ID, 10), err)
+				err = s.MetaClient.DropShard(shard.ID)
+				s.CheckErrPrintLog("WatchShard get shard delete event, meta client delete shard error", err)
+			}
+		}
+	}
+}
+
+func (s *Service) initETCDIDData(key string) {
+	shardIDResp, err := s.cli.Get(context.Background(), key)
+	s.CheckErrorExit("WatchShardAndGroup error", err)
+	if shardIDResp.Count == 0 {
+		s.cli.Put(context.Background(), meta.TSDBShardId, "0")
 	}
 }

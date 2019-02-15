@@ -30,8 +30,13 @@ Emitter的Emit方法中cursor.Scan方法将得到值，Cursor为数据的来源�
 * httpd handler的路由显示write只能由serveWrite来处理，不是由StatementExecutor来处理，serveWrite的主流程-MapShard查找Shard再由Shard(TSM引擎)来写入数据(与此同时，向subscriber分发请求)
 * Series可能在多个Shard上存在，Shard表示一段时间范围的数据(所有Database)，Store、Shard、Index均保存相同的*tsdb.SeriesFile，从而共享Series
 * shard.validateSeriesAndFields调用engine.createSeriesListIfNotExist->index.createSeriesListIfNotExist->partition.createExist->log_file
+* sgList即ShardGroupList创建时，已经确定shardId，RetentionPolicyInfo包含ShardGroupInfo信息，一个SeriesFile即一个由database name打开的series索引文件
+* engine扩展以及Index扩展的实现方式是通过init函数将index或者engine注册到newIndexFuncs或者newEngineFuncs，在NewEngine和NewIndex函数中通过配置文件解析出的配置，选择特定的索引或者engine创建函数
+* PointsWriter 的mapShards负责在写入没有特定shard的情况下，创建Shard
 ### 设计
 ```
+最佳使用Etcd的方式
+使用key-表示层级
 tsdb-cluster-auto-increment-id
 tsdb-node-auto-increment-id  
 tsdb-class-auto-increment-id    
@@ -99,8 +104,6 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 3.1核心读合并结果集的实现是全组转发，Single Cluster Booster 直接基于time进行分配，将有效加速BigSql查询，提高数倍磁盘IO性能
 ```
 ## 隐藏问题
-* DML没有集群化
-* metaData如何保存在磁盘上的
 * classIpMap，当ip数组数量小于等于1，重新build，使用map索引时，出现失效，则删除数组元素 - 待验证
 * 属于本地class，但series不属于本地的数据处理失败，暂时未作处理，只是重试3次
 * 异步EtcdSerivce写入本地失败，暂时未处理
@@ -109,25 +112,28 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
 * 弹性Hash算法
 * 确定timeRange来源
-* 删除shard
 * watch内存溢出
 * 元数据密码
 * Statement Executor monitor data report
-* Schema exploration using InfluxQL 暂时无法支持，元数据或者rpc分布式查询，需要解决Shard元数据及series以及tagKey元数据问题，
-统计信息异步刷新
+* index索引只支持全内存
+
 
 ### 没有实现集群化的SQL
-* executeShowDiagnosticsStatement
-* executeShowMeasurementsStatement
-* executeExplainAnalyzeStatement
-* executeExplainStatement
-* executeShowMeasurementCardinalityStatement 返回所有shard估计
-* executeShowShardsStatement
-* executeShowSeriesCardinalityStatement
-* executeShowShardGroupsStatement
-* executeShowStatsStatement
-* executeShowTagKeys
-* executeShowTagValues
+* executeShowDiagnosticsStatement  实现-待验证
+* executeShowMeasurementsStatement 实现-待验证
+* executeExplainAnalyzeStatement   不用管
+* executeExplainStatement          不用管
+* executeShowMeasurementCardinalityStatement 按照查询指标数实现-待验证
+* executeShowShardsStatement       实现-待验证
+* executeShowSeriesCardinalityStatement 不用管
+* executeShowShardGroupsStatement 确保meta client 的data准确就不用管
+* executeShowStatsStatement 在确保Index全局一致且monitor数据定时同步的基础上，是正确的
+* executeShowTagKeys 不用管
+* executeShowTagValues 不用管
+应当采用原生方式，直接同步index
+将cli设置到engine上，然后通过插入engine相关函数中的逻辑代码，将tag,key及value同步
+shardIndex实际被用作查询，应当将cli设置在shardIndex上,series的所有信息不能保存在每个shard索引上，因此，
+元数据中需要维护所有的Shard信息，而且需要确保相同时间段的shard的id相同
 ## 使用注意
 * 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 * 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
@@ -140,5 +146,3 @@ listen client url 不能用公网ip?
 * 在初始化、新增和删除表时，应该确保newMeasurement和deleteMeasurement至少不为空
 * 新建measurement 写入失败
 * with lease key disappear
-* 元数据管理，需要数据库启动时恢复的数据，需要单独设置metaData，例如： database、RetentionPolicy、Continues Query，除此以外的
-* 该到dropRetentionPolicy，subscription 应该为元数据，方便集群导出数据

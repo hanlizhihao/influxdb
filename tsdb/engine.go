@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/coreos/etcd/clientv3"
 	"io"
 	"os"
 	"regexp"
@@ -191,6 +192,8 @@ type EngineOptions struct {
 	OnNewEngine func(Engine)
 
 	FileStoreObserver FileStoreObserver
+
+	Cli *clientv3.Client
 }
 
 // NewEngineOptions constructs an EngineOptions object with safe default values.

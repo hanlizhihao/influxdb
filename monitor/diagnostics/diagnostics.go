@@ -27,8 +27,8 @@ func (f ClientFunc) Diagnostics() (*Diagnostics, error) {
 //     182.1.0.2    2890              127.0.0.1   38901
 //     174.33.1.2   2924              127.0.0.1   38902
 type Diagnostics struct {
-	Columns []string
-	Rows    [][]interface{}
+	Columns []string        `json:"columns"`
+	Rows    [][]interface{} `json:"rows"`
 }
 
 // NewDiagnostic initialises a new Diagnostics with the specified columns.

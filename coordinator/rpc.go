@@ -108,17 +108,6 @@ func (rs *RpcService) Open() error {
 	return nil
 }
 
-type Measurement struct {
-	Series []Series `json:"series"`
-	Database        string `json:"database"`
-	RetentionPolicy string `json:"retention_policy"`
-	Name            string `json:"name"`
-	IsTarget        bool `json:"is_target"`
-
-	// This field indicates that the measurement should read be read from the
-	// specified system iterator.
-	SystemIterator string `json:"system_iterator"`
-}
 type RpcRequest struct {
 	Source *Measurement
 	Opt    *query.IteratorOptions
@@ -278,24 +267,6 @@ func (p *floatRpcIterator) Close() error {
 }
 func (p *floatRpcIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
-}
-
-type Point struct {
-	Name string
-	Tags string
-
-	Time          int64
-	FloatValue    float64
-	IntegerValue  int64
-	StringValue   string
-	BooleanValue  bool
-	UnsignedValue uint64
-	Aux           []Aux
-
-	// Total number of points that were combined into this point from an aggregate.
-	// If this is zero, the point is not the result of an aggregate function.
-	Aggregated uint32
-	Nil        bool
 }
 
 func newTagsID(id string) query.Tags {

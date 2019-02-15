@@ -14,6 +14,7 @@ package inmem
 import (
 	"errors"
 	"fmt"
+	"github.com/influxdata/influxdb/services/meta"
 	"regexp"
 	"sort"
 	"sync"
@@ -1200,6 +1201,14 @@ func (idx *ShardIndex) InitializeSeries(keys, names [][]byte, tags []models.Tags
 // CreateSeriesIfNotExists creates the provided series on the index if it is not
 // already present.
 func (idx *ShardIndex) CreateSeriesIfNotExists(key, name []byte, tags models.Tags) error {
+	err := idx.createSeriesForEtcd(&meta.Series{
+		Key:  key,
+		Name: name,
+		Tags: tags,
+	})
+	if err != nil {
+		return err
+	}
 	return idx.Index.CreateSeriesListIfNotExists(idx.seriesIDSet, [][]byte{key}, [][]byte{name}, []models.Tags{tags}, &idx.opt, false)
 }
 
@@ -1215,12 +1224,17 @@ func (idx *ShardIndex) SeriesIDSet() *tsdb.SeriesIDSet {
 
 // NewShardIndex returns a new index for a shard.
 func NewShardIndex(id uint64, seriesIDSet *tsdb.SeriesIDSet, opt tsdb.EngineOptions) tsdb.Index {
-	return &ShardIndex{
+	shardIndex := &ShardIndex{
 		Index:       opt.InmemIndex.(*Index),
 		id:          id,
 		seriesIDSet: seriesIDSet,
 		opt:         opt,
 	}
+	err := shardIndex.syncIndexData()
+	if err == nil {
+		return shardIndex
+	}
+	return nil
 }
 
 // seriesIDIterator emits series ids.

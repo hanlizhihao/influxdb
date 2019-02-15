@@ -23,14 +23,6 @@ type (
 	}
 	CommonNodes []Node
 	//[{id:1, nodes:[{id:1,host:,udpHost:}]}]
-	Series struct {
-		Key string `json:"key"`
-		// key: tagKey,value: tagValue
-		TagKey map[string]string `json:"tag_key"`
-	}
-	// key db key measurement value []tag
-	AllTagKey map[string]map[string]map[string]string
-
 	WorkClusterInfo struct {
 		ClusterId    uint64   `json:"cluster_id"`
 		Limit        int      `json:"limit"`
@@ -96,5 +88,32 @@ type (
 		Name         string   `json:"name"`
 		Mode         string   `json:"mode"`
 		Destinations []string `json:"destinations"`
+	}
+	Measurement struct {
+		Database        string `json:"database"`
+		RetentionPolicy string `json:"retention_policy"`
+		Name            string `json:"name"`
+		IsTarget        bool   `json:"is_target"`
+
+		// This field indicates that the measurement should read be read from the
+		// specified system iterator.
+		SystemIterator string `json:"system_iterator"`
+	}
+	Point struct {
+		Name string
+		Tags string
+
+		Time          int64
+		FloatValue    float64
+		IntegerValue  int64
+		StringValue   string
+		BooleanValue  bool
+		UnsignedValue uint64
+		Aux           []Aux
+
+		// Total number of points that were combined into this point from an aggregate.
+		// If this is zero, the point is not the result of an aggregate function.
+		Aggregated uint32
+		Nil        bool
 	}
 )

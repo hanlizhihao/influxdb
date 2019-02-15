@@ -667,6 +667,14 @@ func (c *Client) DropShard(id uint64) error {
 	data.DropShard(id)
 	return c.commit(data)
 }
+func (c *Client) DropLocalShard(id uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	data := c.cacheData.Clone()
+	data.DropLocalShard(id)
+	return c.commit(data)
+}
 
 // TruncateShardGroups truncates any shard group that could contain timestamps beyond t.
 func (c *Client) TruncateShardGroups(t time.Time) error {
@@ -724,6 +732,32 @@ func (c *Client) CreateShardGroup(database, policy string, timestamp time.Time) 
 	}
 
 	sgi, err := createShardGroup(data, database, policy, timestamp)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.commit(data); err != nil {
+		return nil, err
+	}
+
+	return sgi, nil
+}
+func (c *Client) LocalCreateShardGroup(sgi *ShardGroupInfo) (*ShardGroupInfo, error) {
+	// Check under a read-lock
+	c.mu.RLock()
+	if sg, _ := c.cacheData.ShardGroupByTimestamp(sgi.DB, sgi.RP, sgi.StartTime); sg != nil {
+		c.mu.RUnlock()
+		return sg, nil
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check again under the write lock
+	data := c.cacheData.Clone()
+
+	err := data.LocalCreateShardGroup(sgi)
 	if err != nil {
 		return nil, err
 	}

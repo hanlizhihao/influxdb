@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/influxdata/influxdb/monitor/diagnostics"
+	"github.com/influxdata/influxdb/pkg/etcd"
 	"sort"
 	"strings"
 	"time"
@@ -69,8 +71,7 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 		}
 		err = e.executeCreateUserStatement(stmt)
 	case *influxql.DeleteSeriesStatement:
-		messages, err = e.executeDistributeSql(ctx, messages, stmt)
-		// err = e.executeDeleteSeriesStatement(stmt, ctx.Database)
+		err = e.executeDeleteSeriesStatement(stmt, ctx.Database)
 	case *influxql.DropContinuousQueryStatement:
 		if ctx.ReadOnly {
 			messages = append(messages, query.ReadOnlyWarning(stmt.String()))
@@ -87,8 +88,7 @@ func (e *ClusterStatementExecutor) ExecuteStatement(stmt influxql.Statement, ctx
 		}
 		err = e.executeDropMeasurementStatement(stmt, ctx.Database)
 	case *influxql.DropSeriesStatement:
-		messages, err = e.executeDistributeSql(ctx, messages, stmt)
-		// err = e.executeDropSeriesStatement(stmt, ctx.Database)
+		err = e.executeDropSeriesStatement(stmt, ctx.Database)
 	case *influxql.DropRetentionPolicyStatement:
 		if ctx.ReadOnly {
 			messages = append(messages, query.ReadOnlyWarning(stmt.String()))
@@ -851,10 +851,12 @@ func (e *ClusterStatementExecutor) executeShowDatabasesStatement(q *influxql.Sho
 }
 
 func (e *ClusterStatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement) (models.Rows, error) {
-	diags, err := e.Monitor.Diagnostics()
-	if err != nil {
+	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBDiagnostics)
+	if resp.Count == 0 || err != nil {
 		return nil, err
 	}
+	var diags map[string]*diagnostics.Diagnostics
+	etcd.ParseJson(resp.Kvs[0].Value, diags)
 
 	// Get a sorted list of diagnostics keys.
 	sortedKeys := make([]string, 0, len(diags))
@@ -938,13 +940,13 @@ func (e *ClusterStatementExecutor) executeShowMeasurementCardinalityStatement(st
 	if stmt.Database == "" {
 		return nil, ErrDatabaseNameRequired
 	}
-
-	n, err := e.TSDBStore.MeasurementsCardinality(stmt.Database)
-	if err != nil {
-		return nil, err
+	n := 0
+	class := *e.EtcdService.classes
+	for _, c := range class {
+		n += len(c.DBMeasurements)
 	}
 
-	return []*models.Row{&models.Row{
+	return []*models.Row{{
 		Columns: []string{"cardinality estimation"},
 		Values:  [][]interface{}{{n}},
 	}}, nil
@@ -974,32 +976,30 @@ func (e *ClusterStatementExecutor) executeShowShardsStatement(stmt *influxql.Sho
 
 	rows := []*models.Row{}
 	for _, di := range dis {
-		row := &models.Row{Columns: []string{"id", "database", "retention_policy", "shard_group", "start_time", "end_time", "expiry_time", "owners"}, Name: di.Name}
-		for _, rpi := range di.RetentionPolicies {
-			for _, sgi := range rpi.ShardGroups {
-				// Shards associated with deleted shard groups are effectively deleted.
-				// Don't list them.
-				if sgi.Deleted() {
-					continue
-				}
-
-				for _, si := range sgi.Shards {
-					ownerIDs := make([]uint64, len(si.Owners))
-					for i, owner := range si.Owners {
-						ownerIDs[i] = owner.NodeID
-					}
-
-					row.Values = append(row.Values, []interface{}{
-						si.ID,
-						di.Name,
-						rpi.Name,
-						sgi.ID,
-						sgi.StartTime.UTC().Format(time.RFC3339),
-						sgi.EndTime.UTC().Format(time.RFC3339),
-						sgi.EndTime.Add(rpi.Duration).UTC().Format(time.RFC3339),
-						joinUint64(ownerIDs),
-					})
-				}
+		row := &models.Row{Columns: []string{"id", "database", "retention_policy", "shard_group", "start_time", "end_time", "expiry_time"}, Name: di.Name}
+		resp, err := e.EtcdService.cli.Get(context.Background(), meta.TSDBShardGroup+di.Name, clientv3.WithPrefix())
+		if err != nil {
+			return nil, err
+		}
+		if resp.Count == 0 {
+			return nil, nil
+		}
+		var shardGroup meta.ShardGroupInfo
+		for _, kv := range resp.Kvs {
+			etcd.ParseJson(kv.Value, &shardGroup)
+			if shardGroup.Deleted() {
+				continue
+			}
+			for _, si := range shardGroup.Shards {
+				row.Values = append(row.Values, []interface{}{
+					si.ID,
+					di.Name,
+					shardGroup.RP,
+					shardGroup.ID,
+					shardGroup.StartTime.UTC().Format(time.RFC3339),
+					shardGroup.EndTime.UTC().Format(time.RFC3339),
+					shardGroup.EndTime.Add(e.EtcdService.databases[di.Name][shardGroup.RP].Duration).UTC().Format(time.RFC3339),
+				})
 			}
 		}
 		rows = append(rows, row)
@@ -1017,7 +1017,7 @@ func (e *ClusterStatementExecutor) executeShowSeriesCardinalityStatement(stmt *i
 		return nil, err
 	}
 
-	return []*models.Row{&models.Row{
+	return []*models.Row{{
 		Columns: []string{"cardinality estimation"},
 		Values:  [][]interface{}{{n}},
 	}}, nil

@@ -26,4 +26,5 @@ type MetaClient interface {
 	CreateDatabaseWithRetentionPolicy(name string, spec *meta.RetentionPolicySpec) (*meta.DatabaseInfo, error)
 	DeleteShardGroup(database, policy string, id uint64) error
 	CreateShardGroup(database, policy string, timestamp time.Time) (*meta.ShardGroupInfo, error)
+	LocalCreateShardGroup(sgi *meta.ShardGroupInfo) (*meta.ShardGroupInfo, error)
 }

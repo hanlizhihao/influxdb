@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/coreos/etcd/clientv3"
 	"io"
 	"io/ioutil"
 	"math"
@@ -193,6 +194,9 @@ type Engine struct {
 
 	// seriesTypeMap maps a series key to field type
 	seriesTypeMap *radix.Tree
+
+	// etcd client
+	cli *clientv3.Client
 }
 
 // NewEngine returns a new instance of Engine.
@@ -251,6 +255,7 @@ func NewEngine(id uint64, idx tsdb.Index, path string, walPath string, sfile *ts
 		compactionLimiter: opt.CompactionLimiter,
 		scheduler:         newScheduler(stats, opt.CompactionLimiter.Capacity()),
 		seriesIDSets:      opt.SeriesIDSets,
+		cli:               opt.Cli,
 	}
 
 	// Feature flag to enable per-series type checking, by default this is off and
@@ -1458,6 +1463,15 @@ func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, predica
 		// Delete all matching batch.
 		if err := e.deleteSeriesRange(batch, min, max); err != nil {
 			return err
+		}
+
+		// Delete all series for etcd
+		key := tsdb.EtcdIndexKey + strconv.FormatUint(e.id, 10) + "-"
+		for _, s := range batch {
+			_, err := e.cli.Delete(context.Background(), key+string(s))
+			if err != nil {
+				return err
+			}
 		}
 	}
 
