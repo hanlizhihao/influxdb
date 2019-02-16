@@ -1230,11 +1230,7 @@ func NewShardIndex(id uint64, seriesIDSet *tsdb.SeriesIDSet, opt tsdb.EngineOpti
 		seriesIDSet: seriesIDSet,
 		opt:         opt,
 	}
-	err := shardIndex.syncIndexData()
-	if err == nil {
-		return shardIndex
-	}
-	return nil
+	return shardIndex
 }
 
 // seriesIDIterator emits series ids.

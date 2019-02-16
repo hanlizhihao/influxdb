@@ -108,14 +108,13 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 属于本地class，但series不属于本地的数据处理失败，暂时未作处理，只是重试3次
 * 异步EtcdSerivce写入本地失败，暂时未处理
 * 负载均衡连接池与rpc连接池设计
-* watch前先同步本地metaData至最新
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
 * 弹性Hash算法
 * 确定timeRange来源
-* watch内存溢出
 * 元数据密码
 * Statement Executor monitor data report
 * index索引只支持全内存
+* inmem index 的fieldMap可能与Iterator返回值的值的类型有关
 
 
 ### 没有实现集群化的SQL

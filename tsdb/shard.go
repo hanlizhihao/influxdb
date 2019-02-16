@@ -334,6 +334,13 @@ func (s *Shard) Open() error {
 			return err
 		}
 		s._engine = e
+		if s.database == "_internal" || s.database == "database" {
+			return nil
+		}
+		err = s.index.SyncIndexData()
+		if err != nil {
+			return err
+		}
 
 		return nil
 	}(); err != nil {

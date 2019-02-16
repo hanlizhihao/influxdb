@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 func ErrMeasurementNotExist(m string) error { return errors.New(m + "Measurement not exist") }
@@ -91,7 +90,7 @@ type Service struct {
 }
 
 func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Config, udpConfig udp.Config,
-	mapper *query.ShardMapper) *Service {
+	mapper *query.ShardMapper, cli *clientv3.Client) *Service {
 	nodes := make([]Node, 0)
 	s := &Service{
 		Logger:           zap.NewNop(),
@@ -109,6 +108,7 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		classIpMap:       make(map[uint64][]string),
 		masterNode:       new(Node),
 		ch:               consistent.NewConsistent(),
+		cli:              cli,
 	}
 	return s
 }
@@ -123,20 +123,6 @@ func (s *Service) Open() error {
 		return err
 	}
 	s.ip = ip
-	s.cli, err = clientv3.New(clientv3.Config{
-		Endpoints:            []string{s.etcdConfig.EtcdAddress},
-		DialTimeout:          10 * time.Second,
-		DialKeepAliveTime:    20 * time.Second,
-		DialKeepAliveTimeout: 10 * time.Second,
-	})
-	if err != nil || s.cli == nil {
-		s.Logger.Error("Get etcd client failed, error message " + err.Error())
-		return err
-	}
-	metaData := s.MetaClient.Data()
-	metaData.Cli = s.cli
-	err = s.MetaClient.SetData(&metaData)
-	s.CheckErrorExit("Update meta data error", err)
 	lease, err := s.cli.Grant(context.Background(), 30)
 	_, err = s.cli.KeepAlive(context.Background(), lease.ID)
 	s.lease = lease

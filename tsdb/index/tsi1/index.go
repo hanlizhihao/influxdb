@@ -41,7 +41,7 @@ func init() {
 	}
 
 	tsdb.RegisterIndex(IndexName, func(_ uint64, db, path string, _ *tsdb.SeriesIDSet, sfile *tsdb.SeriesFile, opt tsdb.EngineOptions) tsdb.Index {
-		idx := NewIndex(sfile, db, WithPath(path), WithMaximumLogFileSize(int64(opt.Config.MaxIndexLogFileSize)))
+		idx := NewIndex(sfile, db, opt, WithPath(path), WithMaximumLogFileSize(int64(opt.Config.MaxIndexLogFileSize)))
 		return idx
 	})
 }
@@ -137,6 +137,8 @@ type Index struct {
 
 	// Number of partitions used by the index.
 	PartitionN uint64
+
+	opt tsdb.EngineOptions
 }
 
 func (i *Index) UniqueReferenceID() uintptr {
@@ -144,7 +146,7 @@ func (i *Index) UniqueReferenceID() uintptr {
 }
 
 // NewIndex returns a new instance of Index.
-func NewIndex(sfile *tsdb.SeriesFile, database string, options ...IndexOption) *Index {
+func NewIndex(sfile *tsdb.SeriesFile, database string, opt tsdb.EngineOptions, options ...IndexOption) *Index {
 	idx := &Index{
 		maxLogFileSize: tsdb.DefaultMaxIndexLogFileSize,
 		logger:         zap.NewNop(),
@@ -156,6 +158,7 @@ func NewIndex(sfile *tsdb.SeriesFile, database string, options ...IndexOption) *
 		sSketch:        hll.NewDefaultPlus(),
 		sTSketch:       hll.NewDefaultPlus(),
 		PartitionN:     DefaultPartitionN,
+		opt:            opt,
 	}
 
 	for _, option := range options {

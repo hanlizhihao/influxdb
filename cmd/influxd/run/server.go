@@ -3,6 +3,7 @@ package run
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/coreos/etcd/clientv3"
 	"io"
 	"log"
 	"net"
@@ -31,7 +32,7 @@ import (
 	"github.com/influxdata/influxdb/services/udp"
 	"github.com/influxdata/influxdb/tcp"
 	"github.com/influxdata/influxdb/tsdb"
-	client "github.com/influxdata/usage-client/v1"
+	"github.com/influxdata/usage-client/v1"
 	"go.uber.org/zap"
 
 	"github.com/influxdata/influxdb/services/storage"
@@ -383,11 +384,11 @@ func (s *Server) appendContinuousQueryService(c continuous_querier.Config) {
 	s.Services = append(s.Services, srv)
 }
 
-func (s *Server) appendEtcdService() {
+func (s *Server) appendEtcdService(cli *clientv3.Client) {
 	// Initialize etcd service
 	statement := s.QueryExecutor.StatementExecutor.(*coordinator.ClusterStatementExecutor)
 	s.EtcdService = coordinator.NewService(s.TSDBStore, s.config.EtcdInputs, s.config.HTTPD, s.config.UDPInputs[0],
-		&statement.ShardMapper)
+		&statement.ShardMapper, cli)
 	statement.SetEtcdService(s.EtcdService)
 	shardMapper := statement.ShardMapper.(*coordinator.LocalShardMapper)
 	shardMapper.SetEtcdService(s.EtcdService)
@@ -411,13 +412,30 @@ func (s *Server) Open() error {
 	// Multiplex listener.
 	mux := tcp.NewMux()
 	go mux.Serve(ln)
+	// Open Etcd client
+	metaData := s.MetaClient.Data()
+	metaData.Cli, err = clientv3.New(clientv3.Config{
+		Endpoints:            []string{s.config.EtcdInputs.EtcdAddress},
+		DialTimeout:          10 * time.Second,
+		DialKeepAliveTime:    20 * time.Second,
+		DialKeepAliveTimeout: 10 * time.Second,
+	})
+	if err != nil || metaData.Cli == nil {
+		s.Logger.Error("Get etcd client failed, error message " + err.Error())
+		return err
+	}
+	err = s.MetaClient.SetData(&metaData)
+	if err != nil {
+		return err
+	}
+	s.TSDBStore.EngineOptions.Cli = metaData.Cli
 
 	// Append services.
 	s.appendMonitorService()
 	s.appendPrecreatorService(s.config.Precreator)
 	s.appendSnapshotterService()
 	s.appendContinuousQueryService(s.config.ContinuousQuery)
-	s.appendEtcdService()
+	s.appendEtcdService(metaData.Cli)
 	s.appendHTTPDService(s.config.HTTPD)
 	s.appendStorageService(s.config.Storage)
 	s.appendRetentionPolicyService(s.config.Retention)

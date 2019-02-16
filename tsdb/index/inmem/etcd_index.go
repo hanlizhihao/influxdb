@@ -10,7 +10,7 @@ import (
 	"strconv"
 )
 
-func (idx *ShardIndex) syncIndexData() error {
+func (idx *ShardIndex) SyncIndexData() error {
 	if idx.opt.Cli == nil {
 		return nil
 	}
@@ -70,7 +70,6 @@ func (idx *ShardIndex) watchIndexData(key string) {
 		}
 	}
 }
-
 func (idx *ShardIndex) createSeriesForEtcd(series *meta.Series) error {
 	seriesData := *series
 	_, err := idx.opt.Cli.Put(context.Background(), meta.TSDBShardIndex+strconv.
