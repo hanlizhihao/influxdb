@@ -34,7 +34,7 @@ func (idx *ShardIndex) SyncIndexData() error {
 		etcd.ParseJson(kv.Value, &series)
 		if s := idx.Index.series[string(series.Key)]; s == nil {
 			err = idx.CreateSeriesIfNotExists(series.Key, series.Name, series.Tags)
-			if err == nil {
+			if err != nil {
 				return err
 			}
 		}
