@@ -115,7 +115,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * Statement Executor monitor data report
 * index索引只支持全内存
 * inmem index 的fieldMap可能与Iterator返回值的值的类型有关
-
+* 同步shard信息应早与Store Open信息
 
 ### 没有实现集群化的SQL
 * executeShowDiagnosticsStatement  实现-待验证

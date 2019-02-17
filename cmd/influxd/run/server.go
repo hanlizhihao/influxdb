@@ -480,6 +480,10 @@ func (s *Server) Open() error {
 	s.Monitor.WithLogger(s.Logger)
 	s.EtcdService.WithLogger(s.Logger)
 
+	if err := s.EtcdService.Open(); err != nil {
+		return fmt.Errorf("open EtcdService Service: %s", err)
+	}
+
 	// Open TSDB store.
 	if err := s.TSDBStore.Open(); err != nil {
 		return fmt.Errorf("open tsdb store: %s", err)
@@ -501,9 +505,6 @@ func (s *Server) Open() error {
 		if err := service.Open(); err != nil {
 			return fmt.Errorf("open service: %s", err)
 		}
-	}
-	if err := s.EtcdService.Open(); err != nil {
-		return fmt.Errorf("open EtcdService Service: %s", err)
 	}
 
 	// Start the reporting service, if not disabled.
