@@ -23,6 +23,9 @@ func (idx *ShardIndex) SyncIndexData() error {
 	// Init Etcd data
 	if resp.Count == 0 {
 		for _, s := range idx.series {
+			if s.Key == "" {
+				continue
+			}
 			idx.opt.Cli.Put(context.Background(), key+s.Key, etcd.ToJson(meta.Series{
 				Key:  []byte(s.Key),
 				Name: []byte(s.Measurement.Name),
@@ -48,6 +51,9 @@ func (idx *ShardIndex) SyncIndexData() error {
 	}
 	if mResp.Count == 0 {
 		for _, m := range idx.measurements {
+			if m.Name == "" {
+				continue
+			}
 			idx.opt.Cli.Put(context.Background(), measurementKey+m.Name, etcd.ToJson(*m.ConvertToMetaData()))
 		}
 	}
@@ -82,6 +88,10 @@ func (idx *ShardIndex) watchShardIndexData(key string) {
 				var series meta.Series
 				etcd.ParseJson(event.Kv.Value, &series)
 				err := idx.DropSeriesGlobal(series.Key)
+				s, err := idx.Series(series.Key)
+				if s != nil {
+					err = idx.DropSeries(s.ID, nil, false)
+				}
 				if err != nil {
 					logger.Error("Get delete series event, but delete local index data error", zap.Error(err))
 				}

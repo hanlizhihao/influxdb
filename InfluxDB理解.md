@@ -119,7 +119,6 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 
 ### 没有实现集群化的SQL
 * executeShowDiagnosticsStatement  实现-待验证
-* executeShowMeasurementsStatement 实现-待验证
 * executeExplainAnalyzeStatement   不用管
 * executeExplainStatement          不用管
 * executeShowMeasurementCardinalityStatement 按照查询指标数实现-待验证
