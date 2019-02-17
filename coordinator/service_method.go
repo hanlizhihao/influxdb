@@ -793,7 +793,8 @@ func (s *Service) watchShardGroup() {
 			s.CheckErrorExit("WatchShardAndGroup sync shard data error, LocalCreateShardGroup error", err)
 		}
 	}
-	// 继续watch Shard
+	err = s.checkShardGroup()
+	s.CheckErrorExit("Push local shard group info error", err)
 	sgCh := s.cli.Watch(context.Background(), meta.TSDBShardGroup, clientv3.WithPrefix())
 	for sgInfo := range sgCh {
 		for _, event := range sgInfo.Events {
@@ -811,6 +812,30 @@ func (s *Service) watchShardGroup() {
 			}
 		}
 	}
+}
+
+func (s *Service) checkShardGroup() error {
+	for _, db := range s.MetaClient.Databases() {
+		if db.Name == "_internal" || db.Name == "database" {
+			continue
+		}
+		for _, rp := range db.RetentionPolicies {
+			for _, sg := range rp.ShardGroups {
+				key := meta.TSDBShardGroup + db.Name + "-" + rp.Name + "-" + strconv.FormatUint(sg.ID, 10)
+				resp, err := s.cli.Get(context.Background(), key)
+				if err != nil {
+					return err
+				}
+				if resp.Count == 0 {
+					_, err := s.cli.Put(context.Background(), key, etcd.ToJson(sg))
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 func (s *Service) watchShard() {
 	shardCh := s.cli.Watch(context.Background(), meta.TSDBShard, clientv3.WithPrefix())

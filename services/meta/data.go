@@ -442,20 +442,22 @@ func (data *Data) CreateShardGroup(database, policy string, timestamp time.Time)
 	sgi.Shards = []ShardInfo{
 		{ID: data.MaxShardID},
 	}
-	key := TSDBShardGroup + database + "-" + policy + "-" + strconv.FormatUint(data.MaxShardGroupID, 10)
-	cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
-	putShGroup := clientv3.OpPut(key, etcd.ToJson(sgi))
-	putShard := clientv3.OpPut(TSDBShard+strconv.FormatUint(data.MaxShardID, 10), etcd.ToJson(sgi.Shards[0]))
-	ctx := context.Background()
-	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	resp, err := data.Cli.Txn(timeoutCtx).If(cmp).Then(putShard, putShGroup).Commit()
-	cancel()
-	if err != nil {
-		return err
-	}
-	if !resp.Succeeded {
-		return errors.New("Create Shard Group Occur error, MaxShardGroupID " +
-			strconv.FormatUint(data.MaxShardGroupID, 10) + "already exist")
+	if database != "_internal" && database != "database" {
+		key := TSDBShardGroup + database + "-" + policy + "-" + strconv.FormatUint(data.MaxShardGroupID, 10)
+		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
+		putShGroup := clientv3.OpPut(key, etcd.ToJson(sgi))
+		putShard := clientv3.OpPut(TSDBShard+strconv.FormatUint(data.MaxShardID, 10), etcd.ToJson(sgi.Shards[0]))
+		ctx := context.Background()
+		timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		resp, err := data.Cli.Txn(timeoutCtx).If(cmp).Then(putShard, putShGroup).Commit()
+		cancel()
+		if err != nil {
+			return err
+		}
+		if !resp.Succeeded {
+			return errors.New("Create Shard Group Occur error, MaxShardGroupID " +
+				strconv.FormatUint(data.MaxShardGroupID, 10) + "already exist")
+		}
 	}
 
 	// Retention policy has a new shard group, so update the policy. Shard
