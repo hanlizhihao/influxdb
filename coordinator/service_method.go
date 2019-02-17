@@ -790,7 +790,7 @@ func (s *Service) watchShardGroup() {
 		for _, kv := range resp.Kvs {
 			etcd.ParseJson(kv.Value, &shardGroup)
 			_, err = s.MetaClient.LocalCreateShardGroup(&shardGroup)
-			s.CheckErrorExit("WatchShardAndGroup sync shard data error, LocalCreateShardGroup error", err)
+			s.CheckErrPrintLog("WatchShardAndGroup sync shard data error, create db"+shardGroup.DB+" "+shardGroup.RP, err)
 		}
 	}
 	err = s.checkShardGroup()
