@@ -828,7 +828,7 @@ func (s *Service) checkShardGroup() error {
 				}
 				if resp.Count == 0 {
 					sg.DB = db.Name
-					sg.RP = db.Name
+					sg.RP = rp.Name
 					_, err := s.cli.Put(context.Background(), key, etcd.ToJson(sg))
 					if err != nil {
 						return err
