@@ -59,9 +59,9 @@ type (
 		// latest measurement
 		DBMeasurements map[string][]string `json:"db_measurements"`
 		// Incremental measurement
-		DBNewMeasure map[string][]string `json:"db_new_measure"`
+		DBNewMeasurements map[string][]string `json:"db_new_measure"`
 		// Incremental delete measurement
-		DBDelMeasure map[string][]string `json:"db_del_measure"`
+		DBDelMeasurements map[string][]string `json:"db_del_measure"`
 	}
 
 	ClassDetail struct {

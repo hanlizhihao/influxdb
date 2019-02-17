@@ -238,7 +238,10 @@ func (s *Service) processNewMeasurement() {
 						ms = append(ms, measurement)
 						class.DBMeasurements[newMeasurementPoint.DB] = ms
 					}
-					class.DBNewMeasure[newMeasurementPoint.DB] = []string{measurement}
+					if class.DBNewMeasurements == nil {
+						class.DBNewMeasurements = make(map[string][]string)
+					}
+					class.DBNewMeasurements[newMeasurementPoint.DB] = []string{measurement}
 					if len(classes) > 1 {
 						classes = classes[1:]
 						classes = append(classes, class)
@@ -633,14 +636,28 @@ RetryCreateClass:
 			return err
 		}
 		classes := []Class{{
-			ClassId:        classIdResp,
-			Limit:          DefaultClassLimit,
-			ClusterIds:     []uint64{workClusterInfo.ClusterId},
-			DBMeasurements: make(map[string][]string),
-			DBNewMeasure:   make(map[string][]string),
-			DBDelMeasure:   make(map[string][]string),
+			ClassId:           classIdResp,
+			Limit:             DefaultClassLimit,
+			ClusterIds:        []uint64{workClusterInfo.ClusterId},
+			DBMeasurements:    make(map[string][]string),
+			DBNewMeasurements: make(map[string][]string),
+			DBDelMeasurements: make(map[string][]string),
 		}}
 		metaData := s.MetaClient.Data()
+		for _, db := range metaData.Databases {
+			if db.Name == "database" || db.Name == "_internal" {
+				continue
+			}
+			ms, err := s.store.MeasurementNames(nil, db.Name, nil)
+			if err != nil {
+				return err
+			}
+			msStr := make([]string, 0)
+			for _, m := range ms {
+				msStr = append(msStr, string(m))
+			}
+			classes[0].DBMeasurements[db.Name] = msStr
+		}
 		metaData.ClassID = classIdResp
 		err = s.MetaClient.SetData(&metaData)
 		if err != nil {
@@ -1124,18 +1141,23 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 	ParseJson(data, s.classes)
 	var classes = *s.classes
 	for _, class := range classes {
-		if len(class.DBMeasurements) == 0 && len(class.DBDelMeasure) == 0 {
+		if class.DBMeasurements == nil && class.DBDelMeasurements == nil {
+			continue
+		}
+		if len(class.DBMeasurements) == 0 && len(class.DBDelMeasurements) == 0 {
 			continue
 		}
 		// process local class
 		if class.ClassId == s.MetaClient.Data().ClassID {
 			for db, ms := range class.DBMeasurements {
 				for _, m := range ms {
-					s.measurement[db][m] = ""
+					measurementMap := make(map[string]interface{})
+					measurementMap[m] = ""
+					s.measurement[db] = measurementMap
 				}
 			}
-			if len(class.DBDelMeasure) != 0 {
-				for db, ms := range class.DBDelMeasure {
+			if class.DBDelMeasurements != nil && len(class.DBDelMeasurements) != 0 {
+				for db, ms := range class.DBDelMeasurements {
 					for _, m := range ms {
 						// local class delete measurement need clear local data
 						delete(s.measurement[db], m)

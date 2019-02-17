@@ -35,7 +35,6 @@ Emitter的Emit方法中cursor.Scan方法将得到值，Cursor为数据的来源�
 * PointsWriter 的mapShards负责在写入没有特定shard的情况下，创建Shard
 ### 设计
 ```
-最佳使用Etcd的方式
 使用key-表示层级
 tsdb-cluster-auto-increment-id
 tsdb-node-auto-increment-id  
@@ -102,6 +101,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 2.1分布式索引是指，在小组内均衡索引数据，使用每个节点的一定内存来存储索引，通过简单的Http接口小组互相访问索引，以解决内存占用过大，保存在磁盘上响应速度较慢的问题
 2.2分布式索引的均衡可以通过一致性Hash算法来解决，整体的实现方式类似memached
 3.1核心读合并结果集的实现是全组转发，Single Cluster Booster 直接基于time进行分配，将有效加速BigSql查询，提高数倍磁盘IO性能
+3.2 所有节点的Index数据一致，保证series查询等一致
 ```
 ## 隐藏问题
 * classIpMap，当ip数组数量小于等于1，重新build，使用map索引时，出现失效，则删除数组元素 - 待验证
@@ -127,10 +127,8 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * executeShowSeriesCardinalityStatement 不用管
 * executeShowShardGroupsStatement 确保meta client 的data准确就不用管
 * executeShowStatsStatement 在确保Index全局一致且monitor数据定时同步的基础上，是正确的
-* executeShowTagKeys 不用管
+* executeShowTagKeys 
 * executeShowTagValues 不用管
-应当采用原生方式，直接同步index
-将cli设置到engine上，然后通过插入engine相关函数中的逻辑代码，将tag,key及value同步
 shardIndex实际被用作查询，应当将cli设置在shardIndex上,series的所有信息不能保存在每个shard索引上，因此，
 元数据中需要维护所有的Shard信息，而且需要确保相同时间段的shard的id相同
 ## 使用注意
