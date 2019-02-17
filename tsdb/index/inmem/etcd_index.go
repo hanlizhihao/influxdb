@@ -3,6 +3,7 @@ package inmem
 import (
 	"context"
 	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/mvcc/mvccpb"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/pkg/etcd"
 	"github.com/influxdata/influxdb/services/meta"
@@ -39,11 +40,29 @@ func (idx *ShardIndex) SyncIndexData() error {
 			}
 		}
 	}
-	go idx.watchIndexData(key)
+	go idx.watchShardIndexData(key)
+	measurementKey := key + meta.TSDBMeasurementIndex
+	mResp, err := idx.opt.Cli.Get(context.Background(), measurementKey, clientv3.WithPrefix())
+	if err != nil {
+		return err
+	}
+	if mResp.Count == 0 {
+		for _, m := range idx.measurements {
+			idx.opt.Cli.Put(context.Background(), measurementKey+m.Name, etcd.ToJson(*m.ConvertToMetaData()))
+		}
+	}
+	for _, kv := range mResp.Kvs {
+		var measurement meta.Measurement
+		etcd.ParseJson(kv.Value, &measurement)
+		if m := idx.Index.measurements[measurement.Name]; m == nil {
+			idx.measurements[measurement.Name] = parseMetaDataMeasurement(&measurement)
+		}
+	}
+	go idx.watchIndexMeasurement(measurementKey)
 	return nil
 }
 
-func (idx *ShardIndex) watchIndexData(key string) {
+func (idx *ShardIndex) watchShardIndexData(key string) {
 	logger := zap.NewNop()
 	logger = logger.With(zap.String("ShardIndex", "Watch Index"))
 	indexCh := idx.opt.Cli.Watch(context.Background(), key, clientv3.WithPrefix())
@@ -75,4 +94,31 @@ func (idx *ShardIndex) createSeriesForEtcd(series *meta.Series) error {
 	_, err := idx.opt.Cli.Put(context.Background(), meta.TSDBShardIndex+strconv.
 		FormatUint(idx.id, 10)+"-"+string(series.Key), etcd.ToJson(seriesData))
 	return err
+}
+
+func (idx *ShardIndex) watchIndexMeasurement(key string) {
+	indexCh := idx.opt.Cli.Watch(context.Background(), key, clientv3.WithPrefix())
+	for indexInfo := range indexCh {
+		for _, event := range indexInfo.Events {
+			if event.Type == clientv3.EventTypePut {
+				var measurement meta.Measurement
+				etcd.ParseJson(event.Kv.Value, &measurement)
+				idx.mu.Lock()
+				if m := idx.measurements[measurement.Name]; m == nil {
+					idx.measurements[measurement.Name] = parseMetaDataMeasurement(&measurement)
+				}
+				idx.mu.Unlock()
+				continue
+			}
+			if event.Type == mvccpb.DELETE {
+				var measurement meta.Measurement
+				etcd.ParseJson(event.Kv.Value, &measurement)
+				idx.mu.Lock()
+				if m := idx.measurements[measurement.Name]; m != nil {
+					delete(idx.measurements, m.Name)
+				}
+				idx.mu.Unlock()
+			}
+		}
+	}
 }

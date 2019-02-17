@@ -46,10 +46,11 @@ const (
 	TSDBShardGroupId = "tsdb-auto-increment-shard-group-id"
 
 	// shard
-	TSDBShardId    = "tsdb-auto-increment-shard-id"
-	TSDBShardGroup = "tsdb-ShGroup-"
-	TSDBShardIndex = "tsdb-index-shard-"
-	TSDBShard      = "tsdb-shard-"
+	TSDBShardId          = "tsdb-auto-increment-shard-id"
+	TSDBShardGroup       = "tsdb-ShGroup-"
+	TSDBShardIndex       = "tsdb-index-shard-"
+	TSDBMeasurementIndex = "measurement-"
+	TSDBShard            = "tsdb-shard-"
 )
 
 // Data represents the top level collection of all metadata.

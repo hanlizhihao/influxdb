@@ -3,6 +3,7 @@ package inmem
 import (
 	"bytes"
 	"fmt"
+	"github.com/influxdata/influxdb/services/meta"
 	"regexp"
 	"sort"
 	"sync"
@@ -783,6 +784,92 @@ func (m *measurement) idsForExpr(n *influxql.BinaryExpr) (seriesIDs, influxql.Ex
 	// We do not know how to evaluate this expression so pass it
 	// on to the query engine.
 	return m.SeriesIDs(), n, nil
+}
+
+func (m *measurement) ConvertToMetaData() *meta.Measurement {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	seriesById := make(map[uint64]*meta.MeasurementSeries)
+	if m.seriesByID != nil {
+		for k, v := range m.seriesByID {
+			seriesById[k] = &meta.MeasurementSeries{
+				Deleted: v.deleted,
+				ID:      v.ID,
+				Key:     v.Key,
+				Tags:    v.Tags,
+			}
+		}
+	}
+	seriesByTagKeyValue := make(map[string]map[string]*meta.TagKeyValueEntry)
+	if m.seriesByTagKeyValue != nil {
+		for k, tagKeyValue := range m.seriesByTagKeyValue {
+			for tagKey, entry := range tagKeyValue.entries {
+				metaTagKeyValueEntry := make(map[string]*meta.TagKeyValueEntry)
+				metaTagKeyValueEntry[tagKey] = &meta.TagKeyValueEntry{
+					M: entry.m,
+					A: entry.a,
+				}
+				seriesByTagKeyValue[k] = metaTagKeyValueEntry
+			}
+		}
+	}
+	measurementPointer := &meta.Measurement{
+		Database:            m.Database,
+		Name:                m.Name,
+		NameBytes:           m.NameBytes,
+		FieldNames:          m.fieldNames,
+		SeriesByID:          seriesById,
+		SeriesByTagKeyValue: seriesByTagKeyValue,
+		SortedSeriesIDs:     m.sortedSeriesIDs,
+		Dirty:               m.dirty,
+	}
+	measurementPointer.SeriesByID = seriesById
+	return measurementPointer
+}
+
+func parseMetaDataMeasurement(m *meta.Measurement) *measurement {
+	seriesById := make(map[uint64]*series)
+	if m.SeriesByID != nil {
+		for k, v := range m.SeriesByID {
+			seriesById[k] = &series{
+				deleted: v.Deleted,
+				ID:      v.ID,
+				Key:     v.Key,
+				Tags:    v.Tags,
+			}
+		}
+	}
+	seriesByTagKeyValue := make(map[string]*tagKeyValue)
+	if m.SeriesByTagKeyValue != nil {
+		for k, seriesTagKeyValue := range m.SeriesByTagKeyValue {
+			entries := make(map[string]*tagKeyValueEntry)
+			for tagKey, entry := range seriesTagKeyValue {
+				entries[tagKey] = &tagKeyValueEntry{
+					m: entry.M,
+					a: entry.A,
+				}
+			}
+			seriesByTagKeyValue[k] = &tagKeyValue{
+				entries: entries,
+			}
+		}
+	}
+	measurementPointer := &measurement{
+		Database:            m.Database,
+		Name:                m.Name,
+		NameBytes:           m.NameBytes,
+		fieldNames:          m.FieldNames,
+		seriesByID:          seriesById,
+		seriesByTagKeyValue: seriesByTagKeyValue,
+		sortedSeriesIDs:     m.SortedSeriesIDs,
+		dirty:               m.Dirty,
+	}
+	for k, v := range seriesById {
+		v.Measurement = measurementPointer
+		seriesById[k] = v
+	}
+	measurementPointer.seriesByID = seriesById
+	return measurementPointer
 }
 
 // FilterExprs represents a map of series IDs to filter expressions.
