@@ -424,14 +424,14 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 		metaData.ClusterID = cluster.ClusterId
 		// if class id is null, it is exception
 		err = s.MetaClient.SetData(&metaData)
-		// change master node
-		var masterNode Node
 		masterNodeResp, err := s.cli.Get(context.Background(), originMasterNodeKey, clientv3.WithPrefix())
 		s.CheckErrorExit("Join Cluster Success, but master node dont't exist", err)
 		if masterNodeResp.Count == 0 {
 			s.Logger.Error("Join Cluster Success, but the cluster master node crash")
 			os.Exit(1)
 		}
+		// change master node
+		var masterNode Node
 		ParseJson(masterNodeResp.Kvs[0].Value, &masterNode)
 		masterNode.ClusterId = cluster.ClusterId
 		s.masterNode = &masterNode
@@ -776,7 +776,7 @@ func (s *Service) watchWorkCluster(clusterId uint64) {
 					}
 				}
 				// election master node
-				if strings.Contains(string(ev.Kv.Key), strconv.FormatUint(s.masterNode.Id, 10)+"-master") {
+				if strings.Contains(string(ev.Kv.Key), strconv.FormatUint(s.MetaClient.Data().ClusterID, 10)+"-master") {
 					s.masterNode = nil
 					masterKey := clusterKey + "-master"
 					// choice master
