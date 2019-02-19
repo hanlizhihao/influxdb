@@ -1030,7 +1030,7 @@ func (s *Service) watchClassCluster() {
 			}
 			// New Cluster join
 			s.classDetail[changedNode.Ip] = changedNode
-			s.Logger.Error("Get New cluster join the class, but TSDBWorkKey dont exist")
+			s.Logger.Info("Get New cluster join the class")
 		}
 	}
 }
