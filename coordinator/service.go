@@ -154,7 +154,7 @@ func (s *Service) Open() error {
 	go s.watchUsers()
 	go s.watchStatement()
 	go s.watchSubscriptions()
-	go s.reportDiagnostics()
+	// go s.reportDiagnostics()
 	go s.watchShardGroup()
 	go s.watchShard()
 	s.closed = false

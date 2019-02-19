@@ -118,16 +118,11 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 同步shard信息应早与Store Open信息
 
 ### 没有实现集群化的SQL
-* executeShowDiagnosticsStatement  实现-待验证
+* executeShowDiagnosticsStatement  集群诊断再议
 * executeExplainAnalyzeStatement   不用管
 * executeExplainStatement          不用管
-* executeShowMeasurementCardinalityStatement 按照查询指标数实现-待验证
 * executeShowShardsStatement       实现-待验证
-* executeShowSeriesCardinalityStatement 不用管
-* executeShowShardGroupsStatement 确保meta client 的data准确就不用管
-* executeShowStatsStatement 在确保Index全局一致且monitor数据定时同步的基础上，是正确的
-* executeShowTagKeys 
-* executeShowTagValues 不用管
+* executeShowStatsStatement 集群监控再议
 shardIndex实际被用作查询，应当将cli设置在shardIndex上,series的所有信息不能保存在每个shard索引上，因此，
 元数据中需要维护所有的Shard信息，而且需要确保相同时间段的shard的id相同
 ## 使用注意

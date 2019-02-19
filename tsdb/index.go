@@ -1329,7 +1329,7 @@ func (is IndexSet) MeasurementNamesByExpr(auth query.Authorizer, expr influxql.E
 
 		// Determine if there exists at least one authorised series for the
 		// measurement name.
-		if is.measurementAuthorizedSeries(auth, e) {
+		if is.measurementAuthorizedSeries(auth, e) && string(e) != "" {
 			names = append(names, e)
 		}
 	}

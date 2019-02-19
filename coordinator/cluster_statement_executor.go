@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/coreos/etcd/clientv3"
-	"github.com/influxdata/influxdb/monitor/diagnostics"
 	"github.com/influxdata/influxdb/pkg/etcd"
-	"sort"
 	"strings"
 	"time"
 
@@ -851,33 +849,7 @@ func (e *ClusterStatementExecutor) executeShowDatabasesStatement(q *influxql.Sho
 }
 
 func (e *ClusterStatementExecutor) executeShowDiagnosticsStatement(stmt *influxql.ShowDiagnosticsStatement) (models.Rows, error) {
-	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBDiagnostics)
-	if resp.Count == 0 || err != nil {
-		return nil, err
-	}
-	var diags map[string]*diagnostics.Diagnostics
-	etcd.ParseJson(resp.Kvs[0].Value, diags)
-
-	// Get a sorted list of diagnostics keys.
-	sortedKeys := make([]string, 0, len(diags))
-	for k := range diags {
-		sortedKeys = append(sortedKeys, k)
-	}
-	sort.Strings(sortedKeys)
-
-	rows := make([]*models.Row, 0, len(diags))
-	for _, k := range sortedKeys {
-		if stmt.Module != "" && k != stmt.Module {
-			continue
-		}
-
-		row := &models.Row{Name: k}
-
-		row.Columns = diags[k].Columns
-		row.Values = diags[k].Rows
-		rows = append(rows, row)
-	}
-	return rows, nil
+	return e.StatementExecutor.executeShowDiagnosticsStatement(stmt)
 }
 
 func (e *ClusterStatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGrantsForUserStatement) (models.Rows, error) {
@@ -972,35 +944,31 @@ func (e *ClusterStatementExecutor) executeShowRetentionPoliciesStatement(q *infl
 }
 
 func (e *ClusterStatementExecutor) executeShowShardsStatement(stmt *influxql.ShowShardsStatement) (models.Rows, error) {
-	dis := e.MetaClient.Databases()
-
 	rows := []*models.Row{}
-	for _, di := range dis {
-		row := &models.Row{Columns: []string{"id", "database", "retention_policy", "shard_group", "start_time", "end_time", "expiry_time"}, Name: di.Name}
-		resp, err := e.EtcdService.cli.Get(context.Background(), meta.TSDBShardGroup+di.Name, clientv3.WithPrefix())
-		if err != nil {
-			return nil, err
+	resp, err := e.EtcdService.cli.Get(context.Background(), meta.TSDBShardGroup, clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+	if resp.Count == 0 {
+		return nil, nil
+	}
+	var shardGroup meta.ShardGroupInfo
+	for _, kv := range resp.Kvs {
+		row := &models.Row{Columns: []string{"id", "database", "retention_policy", "shard_group", "start_time", "end_time", "expiry_time"}, Name: shardGroup.DB}
+		etcd.ParseJson(kv.Value, &shardGroup)
+		if shardGroup.Deleted() {
+			continue
 		}
-		if resp.Count == 0 {
-			return nil, nil
-		}
-		var shardGroup meta.ShardGroupInfo
-		for _, kv := range resp.Kvs {
-			etcd.ParseJson(kv.Value, &shardGroup)
-			if shardGroup.Deleted() {
-				continue
-			}
-			for _, si := range shardGroup.Shards {
-				row.Values = append(row.Values, []interface{}{
-					si.ID,
-					di.Name,
-					shardGroup.RP,
-					shardGroup.ID,
-					shardGroup.StartTime.UTC().Format(time.RFC3339),
-					shardGroup.EndTime.UTC().Format(time.RFC3339),
-					shardGroup.EndTime.Add(e.EtcdService.databases[di.Name][shardGroup.RP].Duration).UTC().Format(time.RFC3339),
-				})
-			}
+		for _, si := range shardGroup.Shards {
+			row.Values = append(row.Values, []interface{}{
+				si.ID,
+				shardGroup.DB,
+				shardGroup.RP,
+				shardGroup.ID,
+				shardGroup.StartTime.UTC().Format(time.RFC3339),
+				shardGroup.EndTime.UTC().Format(time.RFC3339),
+				shardGroup.EndTime.Add(e.EtcdService.databases[shardGroup.DB][shardGroup.RP].Duration).UTC().Format(time.RFC3339),
+			})
 		}
 		rows = append(rows, row)
 	}
