@@ -849,7 +849,7 @@ func (s *Service) checkClassesMetaData(classesP *[]Class) {
 		for j := 0; j < len(classes[i].ClusterIds); j++ {
 			resp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(classes[i].ClusterIds[j],
 				10)+"-", clientv3.WithPrefix())
-			if resp.Count > 1 && err == nil {
+			if resp.Count >= 1 && err == nil {
 				clusterIds = append(clusterIds, classes[i].ClusterIds[j])
 			}
 		}
