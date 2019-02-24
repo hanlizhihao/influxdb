@@ -16,7 +16,6 @@ import (
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxql"
 	"go.uber.org/zap"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -434,7 +433,7 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 		s.CheckErrorExit("Join Cluster Success, but master node dont't exist", err)
 		if masterNodeResp.Count == 0 {
 			s.Logger.Error("Join Cluster Success, but the cluster master node crash")
-			os.Exit(1)
+			return false
 		}
 		// change master node
 		var masterNode Node
@@ -447,7 +446,7 @@ func (s *Service) putClusterNode(node Node, cluster WorkClusterInfo, clusterKey 
 }
 func (s *Service) joinClusterOrCreateCluster() error {
 	s.Logger.Info("System will join origin Cluster or create new Cluster")
-RetryJoinOriginalCluster:
+	joinOriginalSuccess := false
 	// Try to connect the original Cluster.
 	originClusterKey := TSDBWorkKey + strconv.FormatUint(s.MetaClient.Data().ClusterID, 10)
 	workClusterResp, err := s.cli.Get(context.Background(), originClusterKey)
@@ -471,12 +470,10 @@ RetryJoinOriginalCluster:
 				Ip:      s.ip,
 			}
 			cmpWorkCluster := clientv3.Compare(clientv3.Value(originClusterKey), "=", string(workClusterResp.Kvs[0].Value))
-			joinSuccess := s.putClusterNode(node, originWorkCluster, originClusterKey, &cmpWorkCluster)
-			if !joinSuccess {
-				goto RetryJoinOriginalCluster
-			}
+			joinOriginalSuccess = s.putClusterNode(node, originWorkCluster, originClusterKey, &cmpWorkCluster)
 		}
-	} else {
+	}
+	if !joinOriginalSuccess {
 	RetryJoin:
 		recruitResp, err := s.cli.Get(context.Background(), TSDBRecruitClustersKey)
 		if err != nil {
