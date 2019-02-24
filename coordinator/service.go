@@ -1219,7 +1219,7 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 				s.otherMeasurement[db] = measurementMap
 			}
 		}
-		for db, ms := range class.DBMeasurements {
+		for db, ms := range class.DBDelMeasurements {
 			for _, m := range ms {
 				delete(s.otherMeasurement[db], m)
 			}
