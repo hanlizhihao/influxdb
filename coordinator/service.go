@@ -547,12 +547,14 @@ Retry:
 		liveClusterMap := make(map[uint64]interface{})
 		liveCluster := make([]WorkClusterInfo, 0)
 		for _, c := range cluster.Clusters {
-			masterResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(c.ClusterId,
-				10)+"-master", clientv3.WithPrefix())
+			clusterKey := TSDBWorkKey + strconv.FormatUint(c.ClusterId, 10)
+			masterResp, err := s.cli.Get(context.Background(), clusterKey+"-master", clientv3.WithPrefix())
 			if masterResp.Count > 0 && err == nil {
 				if value := liveClusterMap[c.ClusterId]; value == nil {
 					liveCluster = append(liveCluster, c)
 				}
+			} else {
+				s.cli.Delete(context.Background(), clusterKey)
 			}
 		}
 		cluster.Clusters = liveCluster
@@ -693,6 +695,7 @@ func (s *Service) appendNewWorkCluster(workClusterInfo []WorkClusterInfo) (error
 	nodes := []Node{{
 		Id:      s.MetaClient.Data().NodeID,
 		Host:    s.ip + s.httpConfig.BindAddress,
+		Ip:      s.ip,
 		UdpHost: s.ip + s.udpConfig.BindAddress,
 	}}
 	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
