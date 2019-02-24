@@ -490,17 +490,17 @@ RetryJoinOriginalCluster:
 			return nil
 		}
 		ParseJson(recruitResp.Kvs[0].Value, &recruitCluster)
+		joinSuccess := false
 		if recruitCluster.Number > 0 {
-			recruitChanged := false
 			for i := 0; i < len(recruitCluster.ClusterIds); {
 				if err := s.joinRecruitClusterByClusterId(recruitCluster.ClusterIds[i]); err == nil {
 					break
 				} else {
-					recruitChanged = true
+					joinSuccess = true
 					recruitCluster.ClusterIds = append(recruitCluster.ClusterIds[0:i], recruitCluster.ClusterIds[i+1:]...)
 				}
 			}
-			if recruitChanged {
+			if joinSuccess {
 				cmp := clientv3.Compare(clientv3.Value(TSDBRecruitClustersKey), "=", string(recruitResp.Kvs[0].Value))
 				opPut := clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster))
 				resp, _ := s.cli.Txn(context.Background()).If(cmp).Then(opPut).Commit()
@@ -508,7 +508,8 @@ RetryJoinOriginalCluster:
 					goto RetryJoin
 				}
 			}
-		} else {
+		}
+		if !joinSuccess {
 			err = s.createCluster()
 		}
 	}
@@ -589,7 +590,7 @@ RetryCreate:
 		return err
 	}
 	latestClusterInfo := allClustersInfo.Clusters[len(allClustersInfo.Clusters)-1]
-	if !s.containCluster(latestClusterInfo.ClusterId, recruitCluster.ClusterIds) {
+	if !s.containCluster(latestClusterInfo.ClusterId, recruitCluster.ClusterIds) && latestClusterInfo.Limit > latestClusterInfo.Number {
 		recruitCluster.ClusterIds = append(recruitCluster.ClusterIds, latestClusterInfo.ClusterId)
 		recruitCluster.Number++
 		ops = append(ops, clientv3.OpPut(TSDBRecruitClustersKey, ToJson(recruitCluster)))
@@ -694,7 +695,7 @@ func (s *Service) appendNewWorkCluster(workClusterInfo []WorkClusterInfo) (error
 	workClusterInfo = append(workClusterInfo, WorkClusterInfo{
 		Series:       make([]string, 0),
 		ClusterId:    clusterId,
-		Limit:        3,
+		Limit:        DefaultClusterLimit,
 		Number:       len(nodes),
 		MasterId:     nodes[0].Id,
 		MasterHost:   nodes[0].Host,

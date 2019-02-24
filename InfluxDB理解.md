@@ -113,7 +113,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 确定timeRange来源
 * 元数据密码
 * Statement Executor monitor data report
-* index索引只支持全内存
+* index索引只支持全内存 一个tag block表示一个表的所有tag key和tag value，partition 是根据series key分片后的，partition->filedSet->file->logfile(内存)或index_file(硬盘)
 * inmem index 的fieldMap可能与Iterator返回值的值的类型有关
 * 同步shard信息应早与Store Open信息
 
@@ -137,3 +137,4 @@ listen client url 不能用公网ip?
 * 在初始化、新增和删除表时，应该确保newMeasurement和deleteMeasurement至少不为空
 * 新建measurement 写入失败
 * with lease key disappear
+接下来测试同class不同集群

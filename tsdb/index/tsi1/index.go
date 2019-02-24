@@ -40,8 +40,9 @@ func init() {
 		DefaultPartitionN = uint64(i)
 	}
 
-	tsdb.RegisterIndex(IndexName, func(_ uint64, db, path string, _ *tsdb.SeriesIDSet, sfile *tsdb.SeriesFile, opt tsdb.EngineOptions) tsdb.Index {
+	tsdb.RegisterIndex(IndexName, func(id uint64, db, path string, _ *tsdb.SeriesIDSet, sfile *tsdb.SeriesFile, opt tsdb.EngineOptions) tsdb.Index {
 		idx := NewIndex(sfile, db, opt, WithPath(path), WithMaximumLogFileSize(int64(opt.Config.MaxIndexLogFileSize)))
+		idx.id = id
 		return idx
 	})
 }
@@ -112,6 +113,7 @@ var WithLogFileBufferSize = func(sz int) IndexOption {
 
 // Index represents a collection of layered index files and WAL.
 type Index struct {
+	id         uint64 // shard id
 	mu         sync.RWMutex
 	partitions []*Partition
 	opened     bool
@@ -139,6 +141,8 @@ type Index struct {
 	PartitionN uint64
 
 	opt tsdb.EngineOptions
+
+	seriesKey map[string]struct{}
 }
 
 func (i *Index) UniqueReferenceID() uintptr {
@@ -159,6 +163,7 @@ func NewIndex(sfile *tsdb.SeriesFile, database string, opt tsdb.EngineOptions, o
 		sTSketch:       hll.NewDefaultPlus(),
 		PartitionN:     DefaultPartitionN,
 		opt:            opt,
+		seriesKey:      make(map[string]struct{}),
 	}
 
 	for _, option := range options {
@@ -684,6 +689,7 @@ func (i *Index) CreateSeriesIfNotExists(key, name []byte, tags models.Tags) erro
 
 	i.mu.Lock()
 	i.sSketch.Add(key)
+	i.seriesKey[string(key)] = struct{}{}
 	i.mSketch.Add(name)
 	i.mu.Unlock()
 	return nil
