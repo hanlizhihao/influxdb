@@ -1041,7 +1041,7 @@ func (s *Service) watchClassCluster() {
 			// New Cluster join
 			s.classDetail[node.Ip] = node
 			s.ch.Add(consistent.NewNode(node.Id, node.Ip, port, "host_"+strconv.FormatUint(node.ClusterId,
-				10), 1.5))
+				10), 2))
 			s.Logger.Info("Get New cluster join the class")
 		}
 	}
