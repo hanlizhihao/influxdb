@@ -250,10 +250,16 @@ func (s *Service) processNewMeasurement() {
 						// update measurement index
 						if s.MetaClient.Data().ClassID == class.ClassId {
 							measurementIndex := s.measurement[newMeasurementPoint.DB]
+							if measurementIndex == nil {
+								measurementIndex = make(map[string]interface{})
+							}
 							measurementIndex[measurement] = ""
 							s.measurement[newMeasurementPoint.DB] = measurementIndex
 						} else {
 							measurementIndex := s.otherMeasurement[newMeasurementPoint.DB]
+							if measurementIndex == nil {
+								measurementIndex = make(map[string]uint64)
+							}
 							measurementIndex[measurement] = class.ClassId
 							s.otherMeasurement[newMeasurementPoint.DB] = measurementIndex
 						}
