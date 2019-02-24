@@ -1165,11 +1165,11 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 		// process local class
 		if class.ClassId == s.MetaClient.Data().ClassID {
 			for db, ms := range class.DBMeasurements {
+				measurementMap := make(map[string]interface{})
 				for _, m := range ms {
-					measurementMap := make(map[string]interface{})
 					measurementMap[m] = ""
-					s.measurement[db] = measurementMap
 				}
+				s.measurement[db] = measurementMap
 			}
 			if class.DBDelMeasurements != nil && len(class.DBDelMeasurements) != 0 {
 				for db, ms := range class.DBDelMeasurements {
