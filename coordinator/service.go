@@ -971,6 +971,9 @@ func (s *Service) watchClassCluster() {
 			var node Node
 			ParseJson(v.Value, &node)
 			s.classDetail[node.Ip] = node
+			if node.Id != s.masterNode.Id {
+
+			}
 		}
 	}
 	s.buildConsistentHash()
@@ -979,15 +982,16 @@ func (s *Service) watchClassCluster() {
 	for classNodeInfo := range classNodeEventChan {
 		for _, event := range classNodeInfo.Events {
 			// every node need update consistent hash
-			var changedNode Node
-			ParseJson(event.Kv.Value, &changedNode)
+			var node Node
+			ParseJson(event.Kv.Value, &node)
 			s.Logger.Info("Get " + clusterOfClassKey + "change event, cluster id" +
-				strconv.FormatUint(changedNode.ClusterId, 10))
+				strconv.FormatUint(node.ClusterId, 10))
+			port, _ := strconv.Atoi(string([]rune(s.httpConfig.BindAddress)[1:len(s.httpConfig.BindAddress)]))
 			if event.Type == mvccpb.DELETE {
 				if event.Kv.Value == nil {
 					continue
 				}
-				delete(s.classDetail, changedNode.Ip)
+				delete(s.classDetail, node.Ip)
 				metaData := s.MetaClient.Data()
 				if s.masterNode.Id == metaData.NodeID {
 					etcd.ExecuteNeedRetryAction(func() error {
@@ -1003,7 +1007,7 @@ func (s *Service) watchClassCluster() {
 						for ci, c := range classes {
 							if c.ClassId == metaData.ClassID {
 								for i, cluster := range c.ClusterIds {
-									if cluster == changedNode.ClusterId {
+									if cluster == node.ClusterId {
 										clusterIndex = i
 										classIndex = ci
 										break Class
@@ -1030,10 +1034,14 @@ func (s *Service) watchClassCluster() {
 
 					}, s.Logger)
 				}
+				s.ch.Remove(consistent.NewNode(node.Id, node.Ip, port, "host_"+strconv.FormatUint(node.ClusterId,
+					10), 1))
 				continue
 			}
 			// New Cluster join
-			s.classDetail[changedNode.Ip] = changedNode
+			s.classDetail[node.Ip] = node
+			s.ch.Add(consistent.NewNode(node.Id, node.Ip, port, "host_"+strconv.FormatUint(node.ClusterId,
+				10), 1.5))
 			s.Logger.Info("Get New cluster join the class")
 		}
 	}
@@ -1200,7 +1208,7 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 
 func (s *Service) buildConsistentHash() {
 	for _, node := range s.classDetail {
-		port, _ := strconv.Atoi(string([]rune(s.httpConfig.BindAddress)[1 : len(s.httpConfig.BindAddress)-1]))
+		port, _ := strconv.Atoi(string([]rune(s.httpConfig.BindAddress)[1:len(s.httpConfig.BindAddress)]))
 		weight := 1
 		s.ch.Add(consistent.NewNode(node.Id, node.Ip, port, "host_"+strconv.FormatUint(node.ClusterId, 10), weight))
 	}
