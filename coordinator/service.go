@@ -1226,6 +1226,9 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 		}
 		// process ip map index
 		if classIp := s.classIpMap[class.ClassId]; classIp == nil || len(classIp) <= 1 {
+			if len(class.ClusterIds) == 0 {
+				continue
+			}
 			clusterNodeResp, err := s.cli.Get(context.Background(), TSDBWorkKey+strconv.FormatUint(class.ClusterIds[0], 10)+
 				"-node", clientv3.WithPrefix())
 			s.CheckErrPrintLog("Build Measurement Index failed", err)
