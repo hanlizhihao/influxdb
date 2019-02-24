@@ -59,7 +59,7 @@ const (
 	TSDBSubscriptionDel = "tsdb-subscription-del"
 	TSDBSubscriptionNew = "tsdb-subscription-new"
 	// default class limit
-	DefaultClassLimit   = 3
+	DefaultClassLimit   = 1
 	DefaultClusterLimit = 1
 
 	// diagnostics

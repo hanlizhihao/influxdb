@@ -1185,8 +1185,10 @@ func (s *Service) buildMeasurementIndex(data []byte) {
 		}
 		// process other class
 		for db, ms := range class.DBMeasurements {
+			measurementMap := make(map[string]uint64)
 			for _, m := range ms {
-				s.otherMeasurement[db][m] = class.ClassId
+				measurementMap[m] = class.ClassId
+				s.otherMeasurement[db] = measurementMap
 			}
 		}
 		for db, ms := range class.DBMeasurements {
