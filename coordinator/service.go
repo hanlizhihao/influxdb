@@ -228,7 +228,7 @@ func (s *Service) processNewMeasurement() {
 					ParseJson(resp.Kvs[0].Value, s.classes)
 					var classes = *s.classes
 					// balance measurement algorithm
-					class := classes[0]
+					class := s.randomGetClass(classes)
 					ms := class.DBMeasurements[newMeasurementPoint.DB]
 					if ms == nil {
 						ms := []string{measurement}
@@ -241,10 +241,6 @@ func (s *Service) processNewMeasurement() {
 						class.DBNewMeasurements = make(map[string][]string)
 					}
 					class.DBNewMeasurements[newMeasurementPoint.DB] = []string{measurement}
-					if len(classes) > 1 {
-						classes = classes[1:]
-						classes = append(classes, class)
-					}
 					cmpClasses := clientv3.Compare(clientv3.Value(TSDBClassesInfo), "=", string(resp.Kvs[0].Value))
 					putClasses := clientv3.OpPut(TSDBClassesInfo, ToJson(*s.classes))
 					resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
@@ -272,6 +268,16 @@ func (s *Service) processNewMeasurement() {
 			s.distributeWritePoint(point, classId, newMeasurementPoint)
 		}
 	}
+}
+
+func (s *Service) randomGetClass(class []Class) *Class {
+	minClass := class[0]
+	for i := 0; i < len(class); i++ {
+		if len(minClass.ClusterIds) > len(class[i].ClusterIds) {
+			minClass = class[i]
+		}
+	}
+	return &minClass
 }
 
 func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMeasurementPoint *httpd.NewMeasurementPoint) {
