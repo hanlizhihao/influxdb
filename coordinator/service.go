@@ -251,7 +251,17 @@ func (s *Service) processNewMeasurement() {
 					resp, err := s.cli.Txn(context.Background()).If(cmpClasses).Then(putClasses).Commit()
 					if resp != nil && resp.Succeeded && err == nil {
 						// dispatcher point to target class node
-						s.distributeWritePoint(point, classes[0].ClassId, newMeasurementPoint)
+						s.distributeWritePoint(point, class.ClassId, newMeasurementPoint)
+						// update measurement index
+						if s.MetaClient.Data().ClassID == class.ClassId {
+							measurementIndex := s.measurement[newMeasurementPoint.DB]
+							measurementIndex[measurement] = ""
+							s.measurement[newMeasurementPoint.DB] = measurementIndex
+						} else {
+							measurementIndex := s.otherMeasurement[newMeasurementPoint.DB]
+							measurementIndex[measurement] = class.ClassId
+							s.otherMeasurement[newMeasurementPoint.DB] = measurementIndex
+						}
 						continue
 					}
 				}
@@ -266,7 +276,6 @@ func (s *Service) processNewMeasurement() {
 }
 
 func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMeasurementPoint *httpd.NewMeasurementPoint) {
-	go s.UpdateTag(point)
 	if classId == s.MetaClient.Data().ClassID {
 		targetClusterMasterNode := s.ch.Get(string(point.Key()))
 		// if target node is self node
@@ -306,9 +315,6 @@ func (s *Service) distributeWritePoint(point models.Point, classId uint64, newMe
 	}, func(err error) {
 
 	}, s.Logger)
-}
-func (s *Service) UpdateTag(point models.Point) {
-
 }
 
 // watch classes info, update index
