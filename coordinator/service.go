@@ -272,8 +272,24 @@ func (s *Service) processNewMeasurement() {
 
 func (s *Service) randomGetClass(class []Class) *Class {
 	minClass := class[0]
-	for i := 0; i < len(class); i++ {
-		if len(minClass.ClusterIds) > len(class[i].ClusterIds) {
+	for i := 1; i < len(class); i++ {
+		minL := 0
+		if minClass.DBMeasurements == nil {
+			minClass.DBMeasurements = make(map[string][]string)
+			return &minClass
+		}
+		if class[i].DBMeasurements == nil {
+			class[i].DBMeasurements = make(map[string][]string)
+			return &class[i]
+		}
+		for _, ms := range minClass.DBDelMeasurements {
+			minL += len(ms)
+		}
+		tempL := 0
+		for _, ms := range class[i].DBMeasurements {
+			tempL += len(ms)
+		}
+		if minL > tempL {
 			minClass = class[i]
 		}
 	}
