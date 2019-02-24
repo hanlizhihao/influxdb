@@ -149,10 +149,10 @@ func (qb *HttpBalance) queryBalance(w *http.ResponseWriter, r *http.Request, q s
 	if err != nil {
 		return false, err
 	}
-	if qb.measurement[key] != nil {
+	if qb.measurement[db][key] != nil {
 		return false, nil
 	}
-	go qb.forwardRequest(db, key, w, r)
+	qb.forwardRequest(db, key, w, r)
 	return true, nil
 }
 func (qb *HttpBalance) forwardRequest(db string, measurement string, response *http.ResponseWriter, r *http.Request) {
