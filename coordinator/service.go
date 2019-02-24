@@ -1073,6 +1073,7 @@ RegisterNode:
 		Id:      metaData.NodeID,
 		Host:    s.ip + s.httpConfig.BindAddress,
 		UdpHost: s.ip + s.udpConfig.BindAddress,
+		Ip:      s.ip,
 	}
 	cmp := clientv3.Compare(clientv3.CreateRevision(nodeKey), "=", 0)
 	opPut := clientv3.OpPut(nodeKey, ToJson(node), clientv3.WithLease(s.lease.ID))
