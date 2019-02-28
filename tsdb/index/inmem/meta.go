@@ -1215,8 +1215,14 @@ func (t *tagKeyValue) Load(value string) seriesIDs {
 
 	t.mu.RLock()
 	entry := t.entries[value]
-	ids := entry.ids()
+	ids, changed := entry.ids()
 	t.mu.RUnlock()
+
+	if changed {
+		t.mu.Lock()
+		entry.setIDs(ids)
+		t.mu.Unlock()
+	}
 	return ids
 }
 
@@ -1229,10 +1235,18 @@ func (t *tagKeyValue) Range(f func(tagValue string, a seriesIDs) bool) {
 	}
 
 	t.mu.RLock()
-	defer t.mu.RUnlock()
 	for tagValue, entry := range t.entries {
-		ids := entry.ids()
+		ids, changed := entry.ids()
+		if changed {
+			t.mu.RUnlock()
+			t.mu.Lock()
+			entry.setIDs(ids)
+			t.mu.Unlock()
+			t.mu.RLock()
+		}
+
 		if !f(tagValue, ids) {
+			t.mu.RUnlock()
 			return
 		}
 	}
@@ -1256,13 +1270,11 @@ func newTagKeyValueEntry() *tagKeyValueEntry {
 	return &tagKeyValueEntry{m: make(map[uint64]struct{})}
 }
 
-func (e *tagKeyValueEntry) ids() seriesIDs {
+func (e *tagKeyValueEntry) ids() (_ seriesIDs, changed bool) {
 	if e == nil {
-		return nil
-	}
-
-	if len(e.a) == len(e.m) {
-		return e.a
+		return nil, false
+	} else if len(e.a) == len(e.m) {
+		return e.a, false
 	}
 
 	a := make(seriesIDs, 0, len(e.m))
@@ -1271,10 +1283,10 @@ func (e *tagKeyValueEntry) ids() seriesIDs {
 	}
 	radix.SortUint64s(a)
 
-	e.a = a
-	return e.a
-
+	return a, true
 }
+
+func (e *tagKeyValueEntry) setIDs(a seriesIDs) { e.a = a }
 
 // SeriesIDs is a convenience type for sorting, checking equality, and doing
 // union and intersection of collections of series ids.
