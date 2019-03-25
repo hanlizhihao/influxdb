@@ -115,7 +115,8 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * Statement Executor monitor data report
 * index索引只支持全内存 一个tag block表示一个表的所有tag key和tag value，partition 是根据series key分片后的，partition->filedSet->file->logfile(内存)或index_file(硬盘)
 * inmem index 的fieldMap可能与Iterator返回值的值的类型有关
-* 同步shard信息应早与Store Open信息
+* 数据库已经运行一段时间了，后加入的节点如何保证数据一致
+
 
 ### 没有实现集群化的SQL
 * executeShowDiagnosticsStatement  集群诊断再议
