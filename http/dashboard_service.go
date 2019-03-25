@@ -8,13 +8,36 @@ import (
 	"io/ioutil"
 	"net/http"
 	"path"
-	"strconv"
 
 	platform "github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/kit/errors"
 	"github.com/julienschmidt/httprouter"
 	"go.uber.org/zap"
 )
+
+// DashboardBackend is all services and associated parameters required to construct
+// the DashboardHandler.
+type DashboardBackend struct {
+	Logger *zap.Logger
+
+	DashboardService             platform.DashboardService
+	DashboardOperationLogService platform.DashboardOperationLogService
+	UserResourceMappingService   platform.UserResourceMappingService
+	LabelService                 platform.LabelService
+	UserService                  platform.UserService
+}
+
+// NewDashboardBackend creates a backend used by the dashboard handler.
+func NewDashboardBackend(b *APIBackend) *DashboardBackend {
+	return &DashboardBackend{
+		Logger: b.Logger.With(zap.String("handler", "dashboard")),
+
+		DashboardService:             b.DashboardService,
+		DashboardOperationLogService: b.DashboardOperationLogService,
+		UserResourceMappingService:   b.UserResourceMappingService,
+		LabelService:                 b.LabelService,
+		UserService:                  b.UserService,
+	}
+}
 
 // DashboardHandler is the handler for the dashboard service
 type DashboardHandler struct {
@@ -36,7 +59,7 @@ const (
 	dashboardsIDCellsIDPath     = "/api/v2/dashboards/:id/cells/:cellID"
 	dashboardsIDCellsIDViewPath = "/api/v2/dashboards/:id/cells/:cellID/view"
 	dashboardsIDMembersPath     = "/api/v2/dashboards/:id/members"
-	dashboardsIDLogPath         = "/api/v2/dashboards/:id/log"
+	dashboardsIDLogPath         = "/api/v2/dashboards/:id/logs"
 	dashboardsIDMembersIDPath   = "/api/v2/dashboards/:id/members/:userID"
 	dashboardsIDOwnersPath      = "/api/v2/dashboards/:id/owners"
 	dashboardsIDOwnersIDPath    = "/api/v2/dashboards/:id/owners/:userID"
@@ -45,14 +68,16 @@ const (
 )
 
 // NewDashboardHandler returns a new instance of DashboardHandler.
-func NewDashboardHandler(mappingService platform.UserResourceMappingService, labelService platform.LabelService, userService platform.UserService) *DashboardHandler {
+func NewDashboardHandler(b *DashboardBackend) *DashboardHandler {
 	h := &DashboardHandler{
 		Router: NewRouter(),
-		Logger: zap.NewNop(),
+		Logger: b.Logger,
 
-		UserResourceMappingService: mappingService,
-		LabelService:               labelService,
-		UserService:                userService,
+		DashboardService:             b.DashboardService,
+		DashboardOperationLogService: b.DashboardOperationLogService,
+		UserResourceMappingService:   b.UserResourceMappingService,
+		LabelService:                 b.LabelService,
+		UserService:                  b.UserService,
 	}
 
 	h.HandlerFunc("POST", dashboardsPath, h.handlePostDashboard)
@@ -70,17 +95,37 @@ func NewDashboardHandler(mappingService platform.UserResourceMappingService, lab
 	h.HandlerFunc("GET", dashboardsIDCellsIDViewPath, h.handleGetDashboardCellView)
 	h.HandlerFunc("PATCH", dashboardsIDCellsIDViewPath, h.handlePatchDashboardCellView)
 
-	h.HandlerFunc("POST", dashboardsIDMembersPath, newPostMemberHandler(h.UserResourceMappingService, h.UserService, platform.DashboardsResourceType, platform.Member))
-	h.HandlerFunc("GET", dashboardsIDMembersPath, newGetMembersHandler(h.UserResourceMappingService, h.UserService, platform.DashboardsResourceType, platform.Member))
-	h.HandlerFunc("DELETE", dashboardsIDMembersIDPath, newDeleteMemberHandler(h.UserResourceMappingService, platform.Member))
+	memberBackend := MemberBackend{
+		Logger:                     b.Logger.With(zap.String("handler", "member")),
+		ResourceType:               platform.DashboardsResourceType,
+		UserType:                   platform.Member,
+		UserResourceMappingService: b.UserResourceMappingService,
+		UserService:                b.UserService,
+	}
+	h.HandlerFunc("POST", dashboardsIDMembersPath, newPostMemberHandler(memberBackend))
+	h.HandlerFunc("GET", dashboardsIDMembersPath, newGetMembersHandler(memberBackend))
+	h.HandlerFunc("DELETE", dashboardsIDMembersIDPath, newDeleteMemberHandler(memberBackend))
 
-	h.HandlerFunc("POST", dashboardsIDOwnersPath, newPostMemberHandler(h.UserResourceMappingService, h.UserService, platform.DashboardsResourceType, platform.Owner))
-	h.HandlerFunc("GET", dashboardsIDOwnersPath, newGetMembersHandler(h.UserResourceMappingService, h.UserService, platform.DashboardsResourceType, platform.Owner))
-	h.HandlerFunc("DELETE", dashboardsIDOwnersIDPath, newDeleteMemberHandler(h.UserResourceMappingService, platform.Owner))
+	ownerBackend := MemberBackend{
+		Logger:                     b.Logger.With(zap.String("handler", "member")),
+		ResourceType:               platform.DashboardsResourceType,
+		UserType:                   platform.Owner,
+		UserResourceMappingService: b.UserResourceMappingService,
+		UserService:                b.UserService,
+	}
+	h.HandlerFunc("POST", dashboardsIDOwnersPath, newPostMemberHandler(ownerBackend))
+	h.HandlerFunc("GET", dashboardsIDOwnersPath, newGetMembersHandler(ownerBackend))
+	h.HandlerFunc("DELETE", dashboardsIDOwnersIDPath, newDeleteMemberHandler(ownerBackend))
 
-	h.HandlerFunc("GET", dashboardsIDLabelsPath, newGetLabelsHandler(h.LabelService))
-	h.HandlerFunc("POST", dashboardsIDLabelsPath, newPostLabelHandler(h.LabelService))
-	h.HandlerFunc("DELETE", dashboardsIDLabelsIDPath, newDeleteLabelHandler(h.LabelService))
+	labelBackend := &LabelBackend{
+		Logger:       b.Logger.With(zap.String("handler", "label")),
+		LabelService: b.LabelService,
+		ResourceType: platform.DashboardsResourceType,
+	}
+	h.HandlerFunc("GET", dashboardsIDLabelsPath, newGetLabelsHandler(labelBackend))
+	h.HandlerFunc("POST", dashboardsIDLabelsPath, newPostLabelHandler(labelBackend))
+	h.HandlerFunc("DELETE", dashboardsIDLabelsIDPath, newDeleteLabelHandler(labelBackend))
+	h.HandlerFunc("PATCH", dashboardsIDLabelsIDPath, newPatchLabelHandler(labelBackend))
 
 	return h
 }
@@ -90,7 +135,7 @@ type dashboardLinks struct {
 	Members      string `json:"members"`
 	Owners       string `json:"owners"`
 	Cells        string `json:"cells"`
-	Log          string `json:"log"`
+	Logs         string `json:"logs"`
 	Labels       string `json:"labels"`
 	Organization string `json:"org"`
 }
@@ -126,7 +171,7 @@ func newDashboardResponse(d *platform.Dashboard, labels []*platform.Label) dashb
 			Members:      fmt.Sprintf("/api/v2/dashboards/%s/members", d.ID),
 			Owners:       fmt.Sprintf("/api/v2/dashboards/%s/owners", d.ID),
 			Cells:        fmt.Sprintf("/api/v2/dashboards/%s/cells", d.ID),
-			Log:          fmt.Sprintf("/api/v2/dashboards/%s/log", d.ID),
+			Logs:         fmt.Sprintf("/api/v2/dashboards/%s/logs", d.ID),
 			Labels:       fmt.Sprintf("/api/v2/dashboards/%s/labels", d.ID),
 			Organization: fmt.Sprintf("/api/v2/orgs/%s", d.OrganizationID),
 		},
@@ -196,19 +241,19 @@ func newDashboardCellViewResponse(dashID, cellID platform.ID, v *platform.View) 
 
 type operationLogResponse struct {
 	Links map[string]string            `json:"links"`
-	Log   []*operationLogEntryResponse `json:"log"`
+	Logs  []*operationLogEntryResponse `json:"logs"`
 }
 
 func newDashboardLogResponse(id platform.ID, es []*platform.OperationLogEntry) *operationLogResponse {
-	log := make([]*operationLogEntryResponse, 0, len(es))
+	logs := make([]*operationLogEntryResponse, 0, len(es))
 	for _, e := range es {
-		log = append(log, newOperationLogEntryResponse(e))
+		logs = append(logs, newOperationLogEntryResponse(e))
 	}
 	return &operationLogResponse{
 		Links: map[string]string{
-			"self": fmt.Sprintf("/api/v2/dashboards/%s/log", id),
+			"self": fmt.Sprintf("/api/v2/dashboards/%s/logs", id),
 		},
-		Log: log,
+		Logs: logs,
 	}
 }
 
@@ -246,7 +291,11 @@ func (h *DashboardHandler) handleGetDashboards(w http.ResponseWriter, r *http.Re
 
 		mappings, _, err := h.UserResourceMappingService.FindUserResourceMappings(ctx, filter)
 		if err != nil {
-			EncodeError(ctx, errors.InternalErrorf("Error loading dashboard owners: %v", err), w)
+			EncodeError(ctx, &platform.Error{
+				Code: platform.EInternal,
+				Msg:  "Error loading dashboard owners",
+				Err:  err,
+			}, w)
 			return
 		}
 
@@ -349,7 +398,11 @@ func (h *DashboardHandler) handlePostDashboard(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.DashboardService.CreateDashboard(ctx, req.Dashboard); err != nil {
-		EncodeError(ctx, errors.InternalErrorf("Error loading dashboards: %v", err), w)
+		EncodeError(ctx, &platform.Error{
+			Code: platform.EInternal,
+			Msg:  "Error loading dashboards",
+			Err:  err,
+		}, w)
 		return
 	}
 
@@ -409,7 +462,10 @@ func decodeGetDashboardRequest(ctx context.Context, r *http.Request) (*getDashbo
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -453,7 +509,10 @@ func decodeGetDashboardLogRequest(ctx context.Context, r *http.Request) (*getDas
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -461,29 +520,14 @@ func decodeGetDashboardLogRequest(ctx context.Context, r *http.Request) (*getDas
 		return nil, err
 	}
 
-	opts := platform.DefaultOperationLogFindOptions
-	qp := r.URL.Query()
-	if v := qp.Get("desc"); v == "false" {
-		opts.Descending = false
-	}
-	if v := qp.Get("limit"); v != "" {
-		i, err := strconv.Atoi(v)
-		if err != nil {
-			return nil, err
-		}
-		opts.Limit = i
-	}
-	if v := qp.Get("offset"); v != "" {
-		i, err := strconv.Atoi(v)
-		if err != nil {
-			return nil, err
-		}
-		opts.Offset = i
+	opts, err := decodeFindOptions(ctx, r)
+	if err != nil {
+		return nil, err
 	}
 
 	return &getDashboardLogRequest{
 		DashboardID: i,
-		opts:        opts,
+		opts:        *opts,
 	}, nil
 }
 
@@ -513,7 +557,10 @@ func decodeDeleteDashboardRequest(ctx context.Context, r *http.Request) (*delete
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -562,14 +609,20 @@ func decodePatchDashboardRequest(ctx context.Context, r *http.Request) (*patchDa
 	req := &patchDashboardRequest{}
 	upd := platform.DashboardUpdate{}
 	if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
-		return nil, errors.MalformedDataf(err.Error())
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Err:  err,
+		}
 	}
 	req.Upd = upd
 
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 	var i platform.ID
 	if err := i.DecodeFromString(id); err != nil {
@@ -579,7 +632,10 @@ func decodePatchDashboardRequest(ctx context.Context, r *http.Request) (*patchDa
 	req.DashboardID = i
 
 	if err := req.Valid(); err != nil {
-		return nil, errors.MalformedDataf(err.Error())
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Err:  err,
+		}
 	}
 
 	return req, nil
@@ -588,7 +644,10 @@ func decodePatchDashboardRequest(ctx context.Context, r *http.Request) (*patchDa
 // Valid validates that the dashboard ID is non zero valued and update has expected values set.
 func (r *patchDashboardRequest) Valid() error {
 	if !r.DashboardID.Valid() {
-		return fmt.Errorf("missing dashboard ID")
+		return &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "missing dashboard ID",
+		}
 	}
 
 	if pe := r.Upd.Valid(); pe != nil {
@@ -609,7 +668,10 @@ func decodePostDashboardCellRequest(ctx context.Context, r *http.Request) (*post
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 	if err := req.dashboardID.DecodeFromString(id); err != nil {
 		return nil, err
@@ -662,7 +724,10 @@ func decodePutDashboardCellRequest(ctx context.Context, r *http.Request) (*putDa
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 	if err := req.dashboardID.DecodeFromString(id); err != nil {
 		return nil, err
@@ -708,7 +773,10 @@ func decodeDeleteDashboardCellRequest(ctx context.Context, r *http.Request) (*de
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 	if err := req.dashboardID.DecodeFromString(id); err != nil {
 		return nil, err
@@ -716,7 +784,10 @@ func decodeDeleteDashboardCellRequest(ctx context.Context, r *http.Request) (*de
 
 	cellID := params.ByName("cellID")
 	if cellID == "" {
-		return nil, errors.InvalidDataf("url missing cellID")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing cellID",
+		}
 	}
 	if err := req.cellID.DecodeFromString(cellID); err != nil {
 		return nil, err
@@ -943,7 +1014,7 @@ func (s *DashboardService) FindDashboardByID(ctx context.Context, id platform.ID
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -997,7 +1068,7 @@ func (s *DashboardService) FindDashboards(ctx context.Context, filter platform.D
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return dashboards, 0, err
 	}
 
@@ -1038,7 +1109,7 @@ func (s *DashboardService) CreateDashboard(ctx context.Context, d *platform.Dash
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return err
 	}
 
@@ -1079,7 +1150,7 @@ func (s *DashboardService) UpdateDashboard(ctx context.Context, id platform.ID, 
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -1114,7 +1185,7 @@ func (s *DashboardService) DeleteDashboard(ctx context.Context, id platform.ID) 
 	}
 	defer resp.Body.Close()
 
-	return CheckError(resp, true)
+	return CheckError(resp)
 }
 
 // AddDashboardCell adds a cell to a dashboard.
@@ -1145,7 +1216,7 @@ func (s *DashboardService) AddDashboardCell(ctx context.Context, id platform.ID,
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return err
 	}
 
@@ -1173,7 +1244,7 @@ func (s *DashboardService) RemoveDashboardCell(ctx context.Context, dashboardID,
 	}
 	defer resp.Body.Close()
 
-	return CheckError(resp, true)
+	return CheckError(resp)
 }
 
 // UpdateDashboardCell replaces the dashboard cell with the provided ID.
@@ -1212,7 +1283,7 @@ func (s *DashboardService) UpdateDashboardCell(ctx context.Context, dashboardID,
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -1247,7 +1318,7 @@ func (s *DashboardService) GetDashboardCellView(ctx context.Context, dashboardID
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -1287,7 +1358,7 @@ func (s *DashboardService) UpdateDashboardCellView(ctx context.Context, dashboar
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -1328,7 +1399,7 @@ func (s *DashboardService) ReplaceDashboardCells(ctx context.Context, id platfor
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return err
 	}
 

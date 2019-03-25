@@ -111,12 +111,17 @@ const (
 	TelegrafsResourceType = ResourceType("telegrafs") // 6
 	// UsersResourceType gives permissions to one or more users.
 	UsersResourceType = ResourceType("users") // 7
-	// MacrosResourceType gives permission to one or more macros.
-	MacrosResourceType = ResourceType("macros") // 8
+	// VariablesResourceType gives permission to one or more variables.
+	VariablesResourceType = ResourceType("variables") // 8
 	// ScraperResourceType gives permission to one or more scrapers.
 	ScraperResourceType = ResourceType("scrapers") // 9
 	// SecretsResourceType gives permission to one or more secrets.
 	SecretsResourceType = ResourceType("secrets") // 10
+	// LabelsResourceType gives permission to one or more labels.
+	LabelsResourceType = ResourceType("labels") // 11
+	// ViewsResourceType gives permission to one or more views.
+	ViewsResourceType     = ResourceType("views")     // 12
+	DocumentsResourceType = ResourceType("documents") // 13
 )
 
 // AllResourceTypes is the list of all known resource types.
@@ -129,9 +134,13 @@ var AllResourceTypes = []ResourceType{
 	TasksResourceType,          // 5
 	TelegrafsResourceType,      // 6
 	UsersResourceType,          // 7
-	MacrosResourceType,         // 8
+	VariablesResourceType,      // 8
 	ScraperResourceType,        // 9
 	SecretsResourceType,        // 10
+	LabelsResourceType,         // 11
+	ViewsResourceType,          // 12
+	DocumentsResourceType,      // 13
+	// NOTE: when modifying this list, please update the swagger for components.schemas.Permission resource enum.
 }
 
 // OrgResourceTypes is the list of all known resource types that belong to an organization.
@@ -142,8 +151,9 @@ var OrgResourceTypes = []ResourceType{
 	TasksResourceType,      // 5
 	TelegrafsResourceType,  // 6
 	UsersResourceType,      // 7
-	MacrosResourceType,     // 8
+	VariablesResourceType,  // 8
 	SecretsResourceType,    // 10
+	DocumentsResourceType,  //13
 }
 
 // Valid checks if the resource type is a member of the ResourceType enum.
@@ -162,9 +172,12 @@ func (t ResourceType) Valid() (err error) {
 	case TelegrafsResourceType: // 5
 	case SourcesResourceType: // 6
 	case UsersResourceType: // 7
-	case MacrosResourceType: // 8
+	case VariablesResourceType: // 8
 	case ScraperResourceType: // 9
 	case SecretsResourceType: // 10
+	case LabelsResourceType: // 11
+	case ViewsResourceType: // 12
+	case DocumentsResourceType: // 13
 	default:
 		err = ErrInvalidResourceType
 	}
@@ -318,11 +331,6 @@ func OwnerPermissions(orgID ID) []Permission {
 			ps = append(ps, Permission{Action: a, Resource: Resource{Type: r, OrgID: &orgID}})
 		}
 	}
-
-	// TODO(desa): this is likely just a thing for the alpha. We'll likely want a limited number of users about to
-	// create organizations. https://github.com/influxdata/influxdb/issues/11344
-	ps = append(ps, Permission{Action: WriteAction, Resource: Resource{Type: OrgsResourceType}}, Permission{ReadAction, Resource{Type: OrgsResourceType}})
-
 	return ps
 }
 

@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -9,10 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	platform "github.com/influxdata/influxdb"
-	"github.com/opentracing/opentracing-go"
+	"github.com/influxdata/flux"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
+
+	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/kit/tracing"
 )
 
 var (
@@ -93,6 +97,7 @@ type RunResult interface {
 	IsRetryable() bool
 
 	// TODO(mr): add more detail here like number of points written, execution time, etc.
+	Statistics() flux.Statistics
 }
 
 // Scheduler accepts tasks and handles their scheduling.
@@ -258,7 +263,6 @@ func (s *TickScheduler) Start(ctx context.Context) {
 }
 
 func (s *TickScheduler) Stop() {
-
 	s.schedulerMu.Lock()
 	defer s.schedulerMu.Unlock()
 
@@ -331,16 +335,36 @@ func (s *TickScheduler) UpdateTask(task *StoreTask, meta *StoreTaskMeta) error {
 	if !ok {
 		return ErrTaskNotClaimed
 	}
-	ts.Cancel()
+	ts.task = task
 
-	nts, err := newTaskScheduler(s.ctx, s.wg, s, task, meta, s.metrics)
+	next, err := meta.NextDueRun()
 	if err != nil {
 		return err
 	}
+	hasQueue := len(meta.ManualRuns) > 0
+	// update the queued information
+	ts.nextDueMu.Lock()
+	ts.hasQueue = hasQueue
+	ts.nextDue = next
+	ts.nextDueMu.Unlock()
 
-	s.taskSchedulers[task.ID] = nts
+	// check the concurrency
+	// todo(lh): In the near future we may not be using the scheduler to manage concurrency.
+	maxC := int(meta.MaxConcurrency)
+	if maxC != len(ts.runners) {
+		ts.runningMu.Lock()
+		if maxC < len(ts.runners) {
+			ts.runners = ts.runners[:maxC]
+		}
 
-	next, hasQueue := ts.NextDue()
+		if maxC > len(ts.runners) {
+			delta := maxC - len(ts.runners)
+			for i := 0; i < delta; i++ {
+				ts.runners = append(ts.runners, newRunner(s.ctx, ts.wg, s.logger, task, s.desiredState, s.executor, s.logWriter, ts))
+			}
+		}
+		ts.runningMu.Unlock()
+	}
 	if now := atomic.LoadInt64(&s.now); now >= next || hasQueue {
 		ts.Work()
 	}
@@ -594,7 +618,12 @@ func (r *runner) startFromWorking(now int64) {
 		atomic.StoreUint32(r.state, runnerIdle)
 		return
 	}
-	ctx, cancel := context.WithCancel(r.ctx)
+
+	span := opentracing.StartSpan("runner.startFromWorking")
+	ctx := opentracing.ContextWithSpan(r.ctx, span)
+	defer span.Finish()
+
+	ctx, cancel := context.WithCancel(ctx)
 	rc, err := r.desiredState.CreateNextRun(ctx, r.task.ID, now)
 	if err != nil {
 		r.logger.Info("Failed to create run", zap.Error(err))
@@ -627,18 +656,38 @@ func (r *runner) clearRunning(id platform.ID) {
 	r.ts.runningMu.Unlock()
 }
 
+// fail sets r's state to failed, and marks this runner as idle.
+func (r *runner) fail(qr QueuedRun, runLogger *zap.Logger, stage string, reason error) {
+	rlb := RunLogBase{
+		Task:            r.task,
+		RunID:           qr.RunID,
+		RunScheduledFor: qr.Now,
+		RequestedAt:     qr.RequestedAt,
+	}
+	if err := r.logWriter.AddRunLog(r.ctx, rlb, time.Now(), stage+": "+reason.Error()); err != nil {
+		runLogger.Info("Failed to update run log", zap.Error(err))
+	}
+
+	r.updateRunState(qr, RunFail, runLogger)
+	atomic.StoreUint32(r.state, runnerIdle)
+}
+
 func (r *runner) executeAndWait(ctx context.Context, qr QueuedRun, runLogger *zap.Logger) {
 	defer r.wg.Done()
 
-	sp, spCtx := opentracing.StartSpanFromContext(ctx, "task.run.execution")
+	sp, spCtx := tracing.StartSpanFromContext(ctx)
 	defer sp.Finish()
 
 	rp, err := r.executor.Execute(spCtx, qr)
-
 	if err != nil {
-		// TODO(mr): retry? and log error.
-		atomic.StoreUint32(r.state, runnerIdle)
-		r.updateRunState(qr, RunFail, runLogger)
+		runLogger.Info("Failed to begin run execution", zap.Error(err))
+		if err := r.desiredState.FinishRun(r.ctx, qr.TaskID, qr.RunID); err != nil {
+			// TODO(mr): Need to figure out how to reconcile this error, on the next run, if it happens.
+			runLogger.Error("Beginning run execution failed, and desired state update failed", zap.Error(err))
+		}
+
+		// TODO(mr): retry?
+		r.fail(qr, runLogger, "Run failed to begin execution", err)
 		return
 	}
 
@@ -659,8 +708,8 @@ func (r *runner) executeAndWait(ctx context.Context, qr QueuedRun, runLogger *za
 		}
 	}()
 
-	// TODO(mr): handle res.IsRetryable().
-	_, err = rp.Wait()
+	// TODO(mr): handle rr.IsRetryable().
+	rr, err := rp.Wait()
 	close(ready)
 	if err != nil {
 		if err == ErrRunCanceled {
@@ -673,9 +722,23 @@ func (r *runner) executeAndWait(ctx context.Context, qr QueuedRun, runLogger *za
 		}
 
 		runLogger.Info("Failed to wait for execution result", zap.Error(err))
+		if err := r.desiredState.FinishRun(r.ctx, qr.TaskID, qr.RunID); err != nil {
+			// TODO(mr): Need to figure out how to reconcile this error, on the next run, if it happens.
+			runLogger.Error("Waiting for execution result failed, and desired state update failed", zap.Error(err))
+		}
+
 		// TODO(mr): retry?
-		r.updateRunState(qr, RunFail, runLogger)
-		atomic.StoreUint32(r.state, runnerIdle)
+		r.fail(qr, runLogger, "Waiting for execution result", err)
+		return
+	}
+	if err := rr.Err(); err != nil {
+		runLogger.Info("Run failed to execute", zap.Error(err))
+		if err := r.desiredState.FinishRun(r.ctx, qr.TaskID, qr.RunID); err != nil {
+			// TODO(mr): Need to figure out how to reconcile this error, on the next run, if it happens.
+			runLogger.Error("Run failed to execute, and desired state update failed", zap.Error(err))
+		}
+		// TODO(mr): retry?
+		r.fail(qr, runLogger, "Run failed to execute", err)
 		return
 	}
 
@@ -686,6 +749,18 @@ func (r *runner) executeAndWait(ctx context.Context, qr QueuedRun, runLogger *za
 		atomic.StoreUint32(r.state, runnerIdle)
 		r.updateRunState(qr, RunFail, runLogger)
 		return
+	}
+	rlb := RunLogBase{
+		Task:            r.task,
+		RunID:           qr.RunID,
+		RunScheduledFor: qr.Now,
+		RequestedAt:     qr.RequestedAt,
+	}
+	stats := rr.Statistics()
+
+	b, err := json.Marshal(stats)
+	if err == nil {
+		r.logWriter.AddRunLog(r.ctx, rlb, time.Now(), string(b))
 	}
 	r.updateRunState(qr, RunSuccess, runLogger)
 	runLogger.Info("Execution succeeded")

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/influxdata/flux/values"
@@ -22,34 +21,32 @@ type QueryLogReader struct {
 	queryService query.QueryService
 }
 
+var _ LogReader = (*QueryLogReader)(nil)
+
 func NewQueryLogReader(qs query.QueryService) *QueryLogReader {
 	return &QueryLogReader{
 		queryService: qs,
 	}
 }
 
-func (qlr *QueryLogReader) ListLogs(ctx context.Context, logFilter platform.LogFilter) ([]platform.Log, error) {
-	if logFilter.Org == nil {
-		return nil, errors.New("org required")
-	}
-	if logFilter.Task == nil && logFilter.Run == nil {
-		return nil, errors.New("task or run is required")
+func (qlr *QueryLogReader) ListLogs(ctx context.Context, orgID platform.ID, logFilter platform.LogFilter) ([]platform.Log, error) {
+	if !logFilter.Task.Valid() {
+		return nil, errors.New("task ID required to list logs")
 	}
 
 	filterPart := ""
 	if logFilter.Run != nil {
-		filterPart = fmt.Sprintf(`|> filter(fn: (r) => r._measurement == "logs" and r.runID == %q)`, logFilter.Run.String())
-	} else {
-		filterPart = fmt.Sprintf(`|> filter(fn: (r) => r._measurement == "logs" and r.taskID == %q)`, logFilter.Task.String())
+		filterPart = fmt.Sprintf(`|> filter(fn: (r) => r.runID == %q)`, logFilter.Run.String())
 	}
 
 	// TODO(lh): Change the range to something more reasonable. Not sure what that range will be.
 	listScript := fmt.Sprintf(`from(bucketID: "000000000000000a")
   |> range(start: -100h)
+  |> filter(fn: (r) => r._measurement == "logs" and r.taskID == %q)
   |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
   %s
   |> group(columns: ["taskID", "runID", "_measurement"])
-  `, filterPart)
+  `, logFilter.Task.String(), filterPart)
 
 	auth, err := pctx.GetAuthorizer(ctx)
 	if err != nil {
@@ -58,7 +55,7 @@ func (qlr *QueryLogReader) ListLogs(ctx context.Context, logFilter platform.LogF
 	if auth.Kind() != "authorization" {
 		return nil, platform.ErrAuthorizerNotSupported
 	}
-	request := &query.Request{Authorization: auth.(*platform.Authorization), OrganizationID: *logFilter.Org, Compiler: lang.FluxCompiler{Query: listScript}}
+	request := &query.Request{Authorization: auth.(*platform.Authorization), OrganizationID: orgID, Compiler: lang.FluxCompiler{Query: listScript}}
 
 	ittr, err := qlr.queryService.Query(ctx, request)
 	if err != nil {
@@ -78,19 +75,17 @@ func (qlr *QueryLogReader) ListLogs(ctx context.Context, logFilter platform.LogF
 	}
 
 	runs := re.Runs()
-	logs := make([]platform.Log, len(runs))
-	for i, r := range runs {
-		logs[i] = r.Log
+
+	var logs []platform.Log
+	for _, r := range runs {
+		logs = append(logs, r.Log...)
 	}
 	return logs, nil
 }
 
-func (qlr *QueryLogReader) ListRuns(ctx context.Context, runFilter platform.RunFilter) ([]*platform.Run, error) {
-	if runFilter.Task == nil {
+func (qlr *QueryLogReader) ListRuns(ctx context.Context, orgID platform.ID, runFilter platform.RunFilter) ([]*platform.Run, error) {
+	if !runFilter.Task.Valid() {
 		return nil, errors.New("task required")
-	}
-	if runFilter.Org == nil {
-		return nil, errors.New("org required")
 	}
 
 	limit := "|> limit(n: 100)\n"
@@ -108,17 +103,26 @@ func (qlr *QueryLogReader) ListRuns(ctx context.Context, runFilter platform.RunF
 		scheduledBefore = runFilter.BeforeTime
 	}
 
-	listScript := fmt.Sprintf(`
+	// Because flux doesnt support piviting on a rowkey that might not exist we need first check if we can pivot with "requestedAt"
+	// and if that fails we can fall back to pivot without "requestedAt"
+	// TODO(lh): After we transition to a seperation of transactional and analytical stores this can be simplified.
+	pivotWithRequestedAt := `|> pivot(rowKey:["runID", "scheduledFor", "requestedAt"], columnKey: ["status"], valueColumn: "_time")`
+	pivotWithOutRequestedAt := `|> pivot(rowKey:["runID", "scheduledFor"], columnKey: ["status"], valueColumn: "_time")`
+
+	listFmtString := `
+import "influxdata/influxdb/v1"
+
 from(bucketID: "000000000000000a")
   |> range(start: -24h)
 	|> filter(fn: (r) => r._measurement == "records" and r.taskID == %q)
 	|> drop(columns: ["_start", "_stop"])
 	|> group(columns: ["_measurement", "taskID", "scheduledFor", "status", "runID"])
-	|> influxFieldsAsCols()
+	|> v1.fieldsAsCols()
 	|> filter(fn: (r) => r.scheduledFor < %q and r.scheduledFor > %q and r.runID > %q)
-	|> pivot(rowKey:["runID", "scheduledFor"], columnKey: ["status"], valueColumn: "_time")
 	%s
-	`, runFilter.Task.String(), scheduledBefore, scheduledAfter, afterID, limit)
+	%s
+	`
+	listScript := fmt.Sprintf(listFmtString, runFilter.Task.String(), scheduledBefore, scheduledAfter, afterID, pivotWithRequestedAt, limit)
 
 	auth, err := pctx.GetAuthorizer(ctx)
 	if err != nil {
@@ -127,23 +131,44 @@ from(bucketID: "000000000000000a")
 	if auth.Kind() != "authorization" {
 		return nil, platform.ErrAuthorizerNotSupported
 	}
-	request := &query.Request{Authorization: auth.(*platform.Authorization), OrganizationID: *runFilter.Org, Compiler: lang.FluxCompiler{Query: listScript}}
+	request := &query.Request{Authorization: auth.(*platform.Authorization), OrganizationID: orgID, Compiler: lang.FluxCompiler{Query: listScript}}
 
 	ittr, err := qlr.queryService.Query(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 
-	return queryIttrToRuns(ittr)
+	runs, err := queryIttrToRuns(ittr)
+	if err != nil {
+		// try re running the script without the requested at
+		listScript := fmt.Sprintf(listFmtString, runFilter.Task.String(), scheduledBefore, scheduledAfter, afterID, pivotWithOutRequestedAt, limit)
+		request := &query.Request{Authorization: auth.(*platform.Authorization), OrganizationID: orgID, Compiler: lang.FluxCompiler{Query: listScript}}
+
+		ittr, err := qlr.queryService.Query(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		runs, err = queryIttrToRuns(ittr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return runs, nil
 }
 
 func (qlr *QueryLogReader) FindRunByID(ctx context.Context, orgID, runID platform.ID) (*platform.Run, error) {
-	showScript := fmt.Sprintf(`
+	pivotWithRequestedAt := `|> pivot(rowKey:["runID", "scheduledFor", "requestedAt"], columnKey: ["status"], valueColumn: "_time")`
+	pivotWithOutRequestedAt := `|> pivot(rowKey:["runID", "scheduledFor"], columnKey: ["status"], valueColumn: "_time")`
+
+	showFmtScript := `
+import "influxdata/influxdb/v1"
+
 logs = from(bucketID: "000000000000000a")
 	|> range(start: -24h)
 	|> filter(fn: (r) => r._measurement == "logs")
 	|> drop(columns: ["_start", "_stop"])
-	|> influxFieldsAsCols()
+	|> v1.fieldsAsCols()
 	|> filter(fn: (r) => r.runID == %q)
 	|> yield(name: "logs")
 
@@ -152,11 +177,12 @@ from(bucketID: "000000000000000a")
 	|> filter(fn: (r) => r._measurement == "records")
 	|> drop(columns: ["_start", "_stop"])
 	|> group(columns: ["_measurement", "taskID", "scheduledFor", "status", "runID"])
-	|> influxFieldsAsCols()
+	|> v1.fieldsAsCols()
 	|> filter(fn: (r) => r.runID == %q)
-	|> pivot(rowKey:["runID", "scheduledFor"], columnKey: ["status"], valueColumn: "_time")
+	%s
 	|> yield(name: "result")
-  `, runID.String(), runID.String())
+  `
+	showScript := fmt.Sprintf(showFmtScript, runID.String(), runID.String(), pivotWithRequestedAt)
 
 	auth, err := pctx.GetAuthorizer(ctx)
 	if err != nil {
@@ -173,9 +199,23 @@ from(bucketID: "000000000000000a")
 	}
 	runs, err := queryIttrToRuns(ittr)
 	if err != nil {
-		return nil, err
+		showScript := fmt.Sprintf(showFmtScript, runID.String(), runID.String(), pivotWithOutRequestedAt)
+		request := &query.Request{Authorization: auth.(*platform.Authorization), OrganizationID: orgID, Compiler: lang.FluxCompiler{Query: showScript}}
+
+		ittr, err := qlr.queryService.Query(ctx, request)
+		if err != nil {
+			return nil, err
+
+		}
+		runs, err = queryIttrToRuns(ittr)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if len(runs) != 1 {
+	if len(runs) == 0 {
+		return nil, ErrRunNotFound
+	}
+	if len(runs) > 1 {
 		return nil, fmt.Errorf("expected one run, got %d", len(runs))
 	}
 
@@ -292,7 +332,7 @@ func (re *runExtractor) extractRecord(cr flux.ColReader) error {
 }
 
 func (re *runExtractor) extractLog(cr flux.ColReader) error {
-	entries := make(map[platform.ID][]string)
+	entries := make(map[platform.ID][]platform.Log)
 	for i := 0; i < cr.Len(); i++ {
 		var runID platform.ID
 		var when, line string
@@ -315,12 +355,12 @@ func (re *runExtractor) extractLog(cr flux.ColReader) error {
 			return errors.New("extractLog: did not find valid run ID in table")
 		}
 
-		entries[runID] = append(entries[runID], when+": "+line)
+		entries[runID] = append(entries[runID], platform.Log{Time: when, Message: line})
 	}
 
-	for id, lines := range entries {
+	for id, logs := range entries {
 		run := re.runs[id]
-		run.Log = platform.Log(strings.Join(lines, "\n"))
+		run.Log = append(run.Log, logs...)
 		re.runs[id] = run
 	}
 

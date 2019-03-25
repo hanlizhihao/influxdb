@@ -409,9 +409,6 @@ export const PAGE_CONTAINER_MARGIN = 30 // TODO: get this dynamically to ensure 
 export const LAYOUT_MARGIN = 4
 export const DASHBOARD_LAYOUT_ROW_HEIGHT = 83.5
 
-export const TIME_RANGE_START = 'timeRangeStart'
-export const WINDOW_PERIOD = 'windowPeriod'
-
 export const DYGRAPH_CONTAINER_H_MARGIN = 16
 export const DYGRAPH_CONTAINER_V_MARGIN = 8
 export const DYGRAPH_CONTAINER_XLABEL_MARGIN = 20
@@ -434,3 +431,9 @@ export const HANDLE_PIXELS = 20
 export const MIN_HANDLE_PIXELS = 20
 export const MAX_SIZE = 1
 export const MIN_SIZE = 0
+
+export const VERSION = process.env.npm_package_version
+export const GIT_SHA = process.env.GIT_SHA
+
+export const CLOUD = process.env.CLOUD && process.env.CLOUD === 'true'
+export const CLOUD_SIGNIN_PATHNAME = '/api/v2/signin'

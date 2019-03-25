@@ -1,20 +1,39 @@
-import React, {ChangeEvent, PureComponent} from 'react'
+// Libraries
+import _ from 'lodash'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {InjectedRouter} from 'react-router'
 import {connect} from 'react-redux'
-// components
+
+// Components
 import TaskForm from 'src/tasks/components/TaskForm'
 import TaskHeader from 'src/tasks/components/TaskHeader'
 import FluxEditor from 'src/shared/components/FluxEditor'
 import {Page} from 'src/pageLayout'
-// actions
-import {State as TasksState} from 'src/tasks/reducers/v2'
-import {clearTask, goToTasks, saveNewScript, setNewScript, setTaskOption,} from 'src/tasks/actions/v2'
-// types
+
+// Actions
+import {State as TasksState} from 'src/tasks/reducers'
+import {
+  setNewScript,
+  saveNewScript,
+  setTaskOption,
+  clearTask,
+  cancel,
+} from 'src/tasks/actions'
+
+// Utils
+import {
+  taskOptionsToFluxScript,
+  addDestinationToFluxScript,
+} from 'src/utils/taskOptionsToFluxScript'
+
+// Types
 import {Links} from 'src/types/v2/links'
 import {Organization} from 'src/types/v2'
-import {TaskOptionKeys, TaskOptions, TaskSchedule,} from 'src/utils/taskOptionsToFluxScript'
-// Styles
-import 'src/tasks/components/TaskForm.scss'
+import {
+  TaskOptions,
+  TaskOptionKeys,
+  TaskSchedule,
+} from 'src/utils/taskOptionsToFluxScript'
 
 interface PassedInProps {
   router: InjectedRouter
@@ -30,9 +49,9 @@ interface ConnectStateProps {
 interface ConnectDispatchProps {
   setNewScript: typeof setNewScript
   saveNewScript: typeof saveNewScript
-  goToTasks: typeof goToTasks
   setTaskOption: typeof setTaskOption
   clearTask: typeof clearTask
+  cancel: typeof cancel
 }
 
 class TaskPage extends PureComponent<
@@ -81,7 +100,6 @@ class TaskPage extends PureComponent<
                 script={newScript}
                 onChangeScript={this.handleChangeScript}
                 visibility="visible"
-                status={{text: '', type: ''}}
                 suggestions={[]}
               />
             </div>
@@ -112,11 +130,19 @@ class TaskPage extends PureComponent<
   private handleSave = () => {
     const {newScript, taskOptions} = this.props
 
-    this.props.saveNewScript(newScript, taskOptions)
+    const taskOption: string = taskOptionsToFluxScript(taskOptions)
+    const script: string = addDestinationToFluxScript(newScript, taskOptions)
+    const preamble = `${taskOption}`
+
+    this.props.saveNewScript(script, preamble, this.orgName)
+  }
+
+  private get orgName(): string {
+    return this.props.orgs[0].name
   }
 
   private handleCancel = () => {
-    this.props.goToTasks()
+    this.props.cancel()
   }
 
   private handleChangeInput = (e: ChangeEvent<HTMLInputElement>) => {
@@ -151,9 +177,9 @@ const mstp = ({
 const mdtp: ConnectDispatchProps = {
   setNewScript,
   saveNewScript,
-  goToTasks,
   setTaskOption,
   clearTask,
+  cancel,
 }
 
 export default connect<ConnectStateProps, ConnectDispatchProps, {}>(

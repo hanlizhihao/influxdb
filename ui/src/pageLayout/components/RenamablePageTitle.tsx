@@ -1,13 +1,13 @@
 // Libraries
-import React, {ChangeEvent, Component, KeyboardEvent} from 'react'
+import React, {Component, KeyboardEvent, ChangeEvent} from 'react'
 import classnames from 'classnames'
+
 // Components
 import {Input} from 'src/clockface'
 import {ClickOutside} from 'src/shared/components/ClickOutside'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
-// Styles
-import 'src/pageLayout/components/RenamablePageTitle.scss'
 
 interface Props {
   onRename: (name: string) => void

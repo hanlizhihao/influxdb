@@ -1,13 +1,22 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
 import GaugeChart from 'src/shared/components/GaugeChart'
 import SingleStat from 'src/shared/components/SingleStat'
 import SingleStatTransform from 'src/shared/components/SingleStatTransform'
 import TableGraphs from 'src/shared/components/tables/TableGraphs'
 import DygraphContainer from 'src/shared/components/DygraphContainer'
+import Histogram from 'src/shared/components/Histogram'
+
 // Types
-import {QueryViewProperties, SingleStatView, ViewType, XYView, XYViewGeom,} from 'src/types/v2/dashboards'
+import {
+  QueryViewProperties,
+  ViewType,
+  SingleStatView,
+  XYView,
+  XYViewGeom,
+} from 'src/types/v2/dashboards'
 import {FluxTable, RemoteDataState, TimeRange} from 'src/types'
 
 interface Props {
@@ -75,6 +84,8 @@ export default class QueryViewSwitcher extends PureComponent<Props> {
             </SingleStatTransform>
           </DygraphContainer>
         )
+      case ViewType.Histogram:
+        return <Histogram tables={tables} properties={properties} />
       default:
         return <div />
     }

@@ -1,26 +1,41 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import ResourceFetcher from 'src/shared/components/resource_fetcher'
 import CompletionAdvancedButton from 'src/onboarding/components/CompletionAdvancedButton'
 import CompletionQuickStartButton from 'src/onboarding/components/CompletionQuickStartButton'
 import FancyScrollbar from 'src/shared/components/fancy_scrollbar/FancyScrollbar'
+
 // Constants
-import {QuickstartScraperCreationError, QuickstartScraperCreationSuccess,} from 'src/shared/copy/notifications'
+import {
+  QuickstartScraperCreationSuccess,
+  QuickstartScraperCreationError,
+} from 'src/shared/copy/notifications'
+
 // APIs
-import {getDashboards, getOrganizations} from 'src/organizations/apis'
-import {createScraperTarget} from 'src/onboarding/apis'
+import {getDashboards} from 'src/organizations/apis'
+import {client} from 'src/utils/api'
+
 // Types
-import {Button, Columns, ComponentColor, ComponentSize, Grid,} from 'src/clockface'
-import {Dashboard, Organization} from 'src/api'
+import {
+  Button,
+  ComponentColor,
+  ComponentSize,
+  Columns,
+} from '@influxdata/clockface'
+import {Grid} from 'src/clockface'
+import {Organization, Dashboard, ScraperTargetRequest} from '@influxdata/influx'
 import {OnboardingStepProps} from 'src/onboarding/containers/OnboardingWizard'
-import {QUICKSTART_SCRAPER_TARGET_URL} from 'src/onboarding/constants/pluginConfigs'
+import {QUICKSTART_SCRAPER_TARGET_URL} from 'src/dataLoaders/constants/pluginConfigs'
 
 interface Props extends OnboardingStepProps {
   orgID: string
   bucketID: string
 }
+
+const getOrganizations = () => client.organizations.getAll()
 
 @ErrorHandling
 class CompletionStep extends PureComponent<Props> {
@@ -36,7 +51,7 @@ class CompletionStep extends PureComponent<Props> {
     const {onExit} = this.props
 
     return (
-      <div className="onboarding-step buttonless">
+      <div className="onboarding-step">
         <div className="wizard-step--scroll-area">
           <FancyScrollbar autoHide={false}>
             <div className="wizard-step--scroll-content">
@@ -106,7 +121,7 @@ class CompletionStep extends PureComponent<Props> {
                         />
                         <dt>I've got this...</dt>
                         <dd>
-                          Jump into Influx 2.0 and set up data collection when
+                          Jump into InfluxDB 2.0 and set up data collection when
                           you’re ready.
                         </dd>
                       </div>
@@ -124,11 +139,13 @@ class CompletionStep extends PureComponent<Props> {
 
   private handleQuickStart = async () => {
     try {
-      await createScraperTarget(
-        QUICKSTART_SCRAPER_TARGET_URL,
-        this.props.orgID,
-        this.props.bucketID
-      )
+      await client.scrapers.create({
+        name: 'new target',
+        type: ScraperTargetRequest.TypeEnum.Prometheus,
+        url: QUICKSTART_SCRAPER_TARGET_URL,
+        bucketID: this.props.bucketID,
+        orgID: this.props.orgID,
+      })
       this.props.notify(QuickstartScraperCreationSuccess)
     } catch (err) {
       this.props.notify(QuickstartScraperCreationError)

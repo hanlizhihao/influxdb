@@ -11,10 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/influxdata/flux/ast"
-	"github.com/influxdata/flux/ast/edit"
-	"github.com/influxdata/flux/parser"
-	"github.com/influxdata/flux/values"
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/task/options"
 )
@@ -23,17 +19,17 @@ var (
 	// ErrTaskNotFound indicates no task could be found for given parameters.
 	ErrTaskNotFound = errors.New("task not found")
 
-	// ErrUserNotFound is an error for when we can't find a user
-	ErrUserNotFound = errors.New("user not found")
-
 	// ErrOrgNotFound is an error for when we can't find an org
 	ErrOrgNotFound = errors.New("org not found")
 
 	// ErrManualQueueFull is returned when a manual run request cannot be completed.
 	ErrManualQueueFull = errors.New("manual queue at capacity")
 
-	// ErrRunNotFound is returned when searching for a run that doesn't exist.
+	// ErrRunNotFound is returned when searching for a single run that doesn't exist.
 	ErrRunNotFound = errors.New("run not found")
+
+	// ErrNoRunsFound is returned when searching for a range of runs, but none are found.
+	ErrNoRunsFound = errors.New("no matching runs found")
 
 	// ErrRunNotFinished is returned when a retry is invalid due to the run not being finished yet.
 	ErrRunNotFinished = errors.New("run is still in progress")
@@ -148,15 +144,20 @@ type RunCreation struct {
 
 // CreateTaskRequest encapsulates state of a new task to be created.
 type CreateTaskRequest struct {
-	// Owners.
-	Org, User platform.ID
+	// Owner.
+	Org platform.ID
+
+	// Authorization ID to use when executing the task later.
+	// This is stored directly in the storage layer,
+	// so it is the caller's responsibility to ensure the user is permitted to access the authorization.
+	AuthorizationID platform.ID
 
 	// Script content of the task.
 	Script string
 
 	// Unix timestamp (seconds elapsed since January 1, 1970 UTC).
 	// The first run of the task will be run according to the earliest time after ScheduleAfter,
-	// matching the task's schedul via its cron or every option.
+	// matching the task's schedule via its cron or every option.
 	ScheduleAfter int64
 
 	// The initial task status.
@@ -177,56 +178,29 @@ type UpdateTaskRequest struct {
 	// If empty, do not modify the existing status.
 	Status TaskStatus
 
+	// The new authorization ID.
+	// If zero, do not modify the existing authorization ID.
+	AuthorizationID platform.ID
+
 	// These options are for editing options via request.  Zeroed options will be ignored.
 	options.Options
 }
 
-// UpdateFlux updates the taskupdate to go from updating options to updating a flux string, that now has those updated options in it
+// UpdateFlux updates the TaskUpdate to go from updating options to updating a flux string, that now has those updated options in it
 // It zeros the options in the TaskUpdate.
 func (t *UpdateTaskRequest) UpdateFlux(oldFlux string) error {
-	if t.Script != "" {
-		oldFlux = t.Script
-	}
-	parsedPKG := parser.ParseSource(oldFlux)
-	if ast.Check(parsedPKG) > 0 {
-		return ast.GetError(parsedPKG)
-	}
-	parsed := parsedPKG.Files[0] //TODO: remove this line when flux 0.14 is upgraded into platform
-	// so we don't allocate if we are just changing the status
-	if t.Every != 0 && t.Cron != "" {
-		return errors.New("cannot specify both every and cron")
-	}
-	if t.Name != "" || !t.IsZero() {
-		op := make(map[string]values.Value, 5)
-		if t.Name != "" {
-			op["name"] = values.NewString(t.Name)
-		}
-		if t.Every != 0 {
-			op["every"] = values.NewDuration(values.Duration(t.Every))
-		}
-		if t.Cron != "" {
-			op["cron"] = values.NewString(t.Cron)
-		}
-		if t.Offset != 0 {
-			op["offset"] = values.NewDuration(values.Duration(t.Offset))
-		}
-		if t.Concurrency != 0 {
-			op["concurrency"] = values.NewInt(t.Concurrency)
-		}
-		if t.Retry != 0 {
-			op["retry"] = values.NewInt(t.Retry)
-		}
-		ok, err := edit.Option(parsed, "task", edit.OptionObjectFn(op))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errors.New("unable to edit option")
-		}
-		t.Options.Clear()
-		t.Script = ast.Format(parsed)
+	if t.Options.IsZero() {
 		return nil
 	}
+	tu := platform.TaskUpdate{
+		Options: t.Options,
+		Flux:    &t.Script,
+	}
+	if err := tu.UpdateFlux(oldFlux); err != nil {
+		return err
+	}
+	t.Script = *tu.Flux
+	t.Options.Clear()
 	return nil
 }
 
@@ -287,9 +261,6 @@ type Store interface {
 	// DeleteOrg deletes the org.
 	DeleteOrg(ctx context.Context, orgID platform.ID) error
 
-	// DeleteUser deletes a user with userID.
-	DeleteUser(ctx context.Context, userID platform.ID) error
-
 	// Close closes the store for usage and cleans up running processes.
 	Close() error
 }
@@ -322,6 +293,8 @@ type LogWriter interface {
 // This is useful for test, but not much else.
 type NopLogWriter struct{}
 
+var _ LogWriter = NopLogWriter{}
+
 func (NopLogWriter) UpdateRunState(context.Context, RunLogBase, time.Time, RunStatus) error {
 	return nil
 }
@@ -333,21 +306,25 @@ func (NopLogWriter) AddRunLog(context.Context, RunLogBase, time.Time, string) er
 // LogReader reads log information and log data from a store.
 type LogReader interface {
 	// ListRuns returns a list of runs belonging to a task.
-	ListRuns(ctx context.Context, runFilter platform.RunFilter) ([]*platform.Run, error)
+	// orgID is necessary to look in the correct system bucket.
+	ListRuns(ctx context.Context, orgID platform.ID, runFilter platform.RunFilter) ([]*platform.Run, error)
 
 	// FindRunByID finds a run given a orgID and runID.
 	// orgID is necessary to look in the correct system bucket.
 	FindRunByID(ctx context.Context, orgID, runID platform.ID) (*platform.Run, error)
 
 	// ListLogs lists logs for a task or a specified run of a task.
-	ListLogs(ctx context.Context, logFilter platform.LogFilter) ([]platform.Log, error)
+	// orgID is necessary to look in the correct system bucket.
+	ListLogs(ctx context.Context, orgID platform.ID, logFilter platform.LogFilter) ([]platform.Log, error)
 }
 
-// NopLogWriter is a LogWriter that doesn't do anything when its methods are called.
+// NopLogReader is a LogReader that doesn't do anything when its methods are called.
 // This is useful for test, but not much else.
 type NopLogReader struct{}
 
-func (NopLogReader) ListRuns(ctx context.Context, runFilter platform.RunFilter) ([]*platform.Run, error) {
+var _ LogReader = NopLogReader{}
+
+func (NopLogReader) ListRuns(ctx context.Context, orgID platform.ID, runFilter platform.RunFilter) ([]*platform.Run, error) {
 	return nil, nil
 }
 
@@ -355,7 +332,7 @@ func (NopLogReader) FindRunByID(ctx context.Context, orgID, runID platform.ID) (
 	return nil, nil
 }
 
-func (NopLogReader) ListLogs(ctx context.Context, logFilter platform.LogFilter) ([]platform.Log, error) {
+func (NopLogReader) ListLogs(ctx context.Context, orgID platform.ID, logFilter platform.LogFilter) ([]platform.Log, error) {
 	return nil, nil
 }
 
@@ -363,9 +340,6 @@ func (NopLogReader) ListLogs(ctx context.Context, logFilter platform.LogFilter) 
 type TaskSearchParams struct {
 	// Return tasks belonging to this exact organization ID. May be nil.
 	Org platform.ID
-
-	// Return tasks belonging to this exact user ID. May be nil.
-	User platform.ID
 
 	// Return tasks starting after this ID.
 	After platform.ID
@@ -381,7 +355,7 @@ type StoreTask struct {
 	ID platform.ID
 
 	// IDs for the owning organization and user.
-	Org, User platform.ID
+	Org platform.ID
 
 	// The user-supplied name of the Task.
 	Name string
@@ -422,8 +396,8 @@ func (StoreValidation) CreateArgs(req CreateTaskRequest) (options.Options, error
 	if !req.Org.Valid() {
 		missing = append(missing, "organization ID")
 	}
-	if !req.User.Valid() {
-		missing = append(missing, "user ID")
+	if !req.AuthorizationID.Valid() {
+		missing = append(missing, "authorization ID")
 	}
 
 	if len(missing) > 0 {
@@ -443,9 +417,10 @@ func (StoreValidation) CreateArgs(req CreateTaskRequest) (options.Options, error
 func (StoreValidation) UpdateArgs(req UpdateTaskRequest) (options.Options, error) {
 	var missing []string
 	o := req.Options
-	if req.Script == "" && req.Status == "" && req.Options.IsZero() {
-		missing = append(missing, "script or status or options")
+	if req.Script == "" && req.Status == "" && req.Options.IsZero() && !req.AuthorizationID.Valid() {
+		missing = append(missing, "script or status or options or authorizationID")
 	}
+
 	if req.Script != "" {
 		err := req.UpdateFlux(req.Script)
 		if err != nil {
@@ -468,6 +443,5 @@ func (StoreValidation) UpdateArgs(req UpdateTaskRequest) (options.Options, error
 	if len(missing) > 0 {
 		return o, fmt.Errorf("missing required fields to modify task: %s", strings.Join(missing, ", "))
 	}
-
 	return o, nil
 }

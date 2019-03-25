@@ -2,11 +2,14 @@
 import React, {SFC} from 'react'
 import {Link} from 'react-router'
 import classnames from 'classnames'
-import _ from 'lodash'
+import {get} from 'lodash'
+
 // Components
 import NavMenuSubItem from 'src/pageLayout/components/NavMenuSubItem'
+import {Select} from 'src/clockface'
+
 // Types
-import {IconFont, Select} from 'src/clockface'
+import {IconFont} from 'src/clockface'
 
 interface Props {
   icon: IconFont
@@ -14,7 +17,7 @@ interface Props {
   link: string
   children?: JSX.Element | JSX.Element[]
   location: string
-  highlightWhen: string[]
+  highlightPaths: string[]
 }
 
 const NavMenuItem: SFC<Props> = ({
@@ -23,13 +26,16 @@ const NavMenuItem: SFC<Props> = ({
   link,
   children,
   location,
-  highlightWhen,
+  highlightPaths,
 }) => {
-  const {length} = _.intersection(_.split(location, '/'), highlightWhen)
-  const isActive = !!length
+  const parentPath = get(location.split('/'), '1', '')
+  const isActive = highlightPaths.some(path => path === parentPath)
 
   return (
-    <div className={classnames('nav--item', {active: isActive})}>
+    <div
+      className={classnames('nav--item', {active: isActive})}
+      data-testid={`nav-menu-item ${icon}`}
+    >
       <Link className="nav--item-icon" to={link}>
         <span className={`icon sidebar--icon ${icon}`} />
       </Link>

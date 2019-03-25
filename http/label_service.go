@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"path"
 
-	platform "github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/kit/errors"
-	kerrors "github.com/influxdata/influxdb/kit/errors"
-	"github.com/julienschmidt/httprouter"
 	"go.uber.org/zap"
+
+	platform "github.com/influxdata/influxdb"
+	"github.com/julienschmidt/httprouter"
 )
 
 // LabelHandler represents an HTTP API handler for labels
@@ -30,10 +29,11 @@ const (
 )
 
 // NewLabelHandler returns a new instance of LabelHandler
-func NewLabelHandler() *LabelHandler {
+func NewLabelHandler(s platform.LabelService) *LabelHandler {
 	h := &LabelHandler{
-		Router: NewRouter(),
-		Logger: zap.NewNop(),
+		Router:       NewRouter(),
+		Logger:       zap.NewNop(),
+		LabelService: s,
 	}
 
 	h.HandlerFunc("POST", labelsPath, h.handlePostLabel)
@@ -78,9 +78,16 @@ func (b postLabelRequest) Validate() error {
 			Msg:  "label requires a name",
 		}
 	}
+	if !b.Label.OrganizationID.Valid() {
+		return &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "label requires a valid orgID",
+		}
+	}
 	return nil
 }
 
+// TODO(jm): ensure that the specified org actually exists
 func decodePostLabelRequest(ctx context.Context, r *http.Request) (*postLabelRequest, error) {
 	l := &platform.Label{}
 	if err := json.NewDecoder(r.Body).Decode(l); err != nil {
@@ -188,7 +195,10 @@ func decodeDeleteLabelRequest(ctx context.Context, r *http.Request) (*deleteLabe
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -233,7 +243,10 @@ func decodePatchLabelRequest(ctx context.Context, r *http.Request) (*patchLabelR
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, errors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -289,28 +302,33 @@ func newLabelsResponse(ls []*platform.Label) *labelsResponse {
 	}
 }
 
+// LabelBackend is all services and associated parameters required to construct
+// label handlers.
+type LabelBackend struct {
+	Logger       *zap.Logger
+	LabelService platform.LabelService
+	ResourceType platform.ResourceType
+}
+
 // newGetLabelsHandler returns a handler func for a GET to /labels endpoints
-func newGetLabelsHandler(s platform.LabelService) http.HandlerFunc {
+func newGetLabelsHandler(b *LabelBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
-		req, err := decodeGetLabelsRequest(ctx, r)
+		req, err := decodeGetLabelsRequest(ctx, r, b.ResourceType)
 		if err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
 
-		labels, err := s.FindResourceLabels(ctx, req.filter)
+		labels, err := b.LabelService.FindResourceLabels(ctx, req.filter)
 		if err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
 
 		if err := encodeResponse(ctx, w, http.StatusOK, newLabelsResponse(labels)); err != nil {
-			// TODO: this can potentially result in calling w.WriteHeader multiple times, we need to pass a logger in here
-			// some how. This isn't as simple as simply passing in a logger to this function since the time that this function
-			// is called is distinct from the time that a potential logger is set.
-			EncodeError(ctx, err, w)
+			logEncodingError(b.Logger, r, err)
 			return
 		}
 	}
@@ -320,13 +338,16 @@ type getLabelsRequest struct {
 	filter platform.LabelMappingFilter
 }
 
-func decodeGetLabelsRequest(ctx context.Context, r *http.Request) (*getLabelsRequest, error) {
+func decodeGetLabelsRequest(ctx context.Context, r *http.Request, rt platform.ResourceType) (*getLabelsRequest, error) {
 	req := &getLabelsRequest{}
 
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -334,16 +355,17 @@ func decodeGetLabelsRequest(ctx context.Context, r *http.Request) (*getLabelsReq
 		return nil, err
 	}
 	req.filter.ResourceID = i
+	req.filter.ResourceType = rt
 
 	return req, nil
 }
 
 // newPostLabelHandler returns a handler func for a POST to /labels endpoints
-func newPostLabelHandler(s platform.LabelService) http.HandlerFunc {
+func newPostLabelHandler(b *LabelBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
-		req, err := decodePostLabelMappingRequest(ctx, r)
+		req, err := decodePostLabelMappingRequest(ctx, r, b.ResourceType)
 		if err != nil {
 			EncodeError(ctx, err, w)
 			return
@@ -354,22 +376,19 @@ func newPostLabelHandler(s platform.LabelService) http.HandlerFunc {
 			return
 		}
 
-		if err := s.CreateLabelMapping(ctx, &req.Mapping); err != nil {
+		if err := b.LabelService.CreateLabelMapping(ctx, &req.Mapping); err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
 
-		label, err := s.FindLabelByID(ctx, *req.Mapping.LabelID)
+		label, err := b.LabelService.FindLabelByID(ctx, req.Mapping.LabelID)
 		if err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
 
 		if err := encodeResponse(ctx, w, http.StatusCreated, newLabelResponse(label)); err != nil {
-			// TODO: this can potentially result in calling w.WriteHeader multiple times, we need to pass a logger in here
-			// some how. This isn't as simple as simply passing in a logger to this function since the time that this function
-			// is called is distinct from the time that a potential logger is set.
-			EncodeError(ctx, err, w)
+			logEncodingError(b.Logger, r, err)
 			return
 		}
 	}
@@ -379,11 +398,14 @@ type postLabelMappingRequest struct {
 	Mapping platform.LabelMapping
 }
 
-func decodePostLabelMappingRequest(ctx context.Context, r *http.Request) (*postLabelMappingRequest, error) {
+func decodePostLabelMappingRequest(ctx context.Context, r *http.Request, rt platform.ResourceType) (*postLabelMappingRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var rid platform.ID
@@ -396,7 +418,8 @@ func decodePostLabelMappingRequest(ctx context.Context, r *http.Request) (*postL
 		return nil, err
 	}
 
-	mapping.ResourceID = &rid
+	mapping.ResourceID = rid
+	mapping.ResourceType = rt
 
 	if err := mapping.Validate(); err != nil {
 		return nil, err
@@ -409,8 +432,32 @@ func decodePostLabelMappingRequest(ctx context.Context, r *http.Request) (*postL
 	return req, nil
 }
 
+// newPatchLabelHandler returns a handler func for a PATCH to /labels endpoints
+func newPatchLabelHandler(b *LabelBackend) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		req, err := decodePatchLabelRequest(ctx, r)
+		if err != nil {
+			EncodeError(ctx, err, w)
+			return
+		}
+
+		label, err := b.LabelService.UpdateLabel(ctx, req.LabelID, req.Update)
+		if err != nil {
+			EncodeError(ctx, err, w)
+			return
+		}
+
+		if err := encodeResponse(ctx, w, http.StatusOK, newLabelResponse(label)); err != nil {
+			logEncodingError(b.Logger, r, err)
+			return
+		}
+	}
+}
+
 // newDeleteLabelHandler returns a handler func for a DELETE to /labels endpoints
-func newDeleteLabelHandler(s platform.LabelService) http.HandlerFunc {
+func newDeleteLabelHandler(b *LabelBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -421,11 +468,12 @@ func newDeleteLabelHandler(s platform.LabelService) http.HandlerFunc {
 		}
 
 		mapping := &platform.LabelMapping{
-			LabelID:    &req.LabelID,
-			ResourceID: &req.ResourceID,
+			LabelID:      req.LabelID,
+			ResourceID:   req.ResourceID,
+			ResourceType: b.ResourceType,
 		}
 
-		if err := s.DeleteLabelMapping(ctx, mapping); err != nil {
+		if err := b.LabelService.DeleteLabelMapping(ctx, mapping); err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
@@ -497,7 +545,7 @@ func (s *LabelService) FindLabelByID(ctx context.Context, id platform.ID) (*plat
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -575,7 +623,7 @@ func (s *LabelService) CreateLabel(ctx context.Context, l *platform.Label) error
 	defer resp.Body.Close()
 
 	// TODO(jsternberg): Should this check for a 201 explicitly?
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return err
 	}
 
@@ -592,7 +640,7 @@ func (s *LabelService) CreateLabelMapping(ctx context.Context, m *platform.Label
 		return err
 	}
 
-	url, err := newURL(s.Addr, resourceIDPath(s.BasePath, *m.ResourceID))
+	url, err := newURL(s.Addr, resourceIDPath(s.BasePath, m.ResourceID))
 	if err != nil {
 		return err
 	}
@@ -657,7 +705,7 @@ func (s *LabelService) UpdateLabel(ctx context.Context, id platform.ID, upd plat
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
+	if err := CheckError(resp); err != nil {
 		return nil, err
 	}
 
@@ -688,11 +736,11 @@ func (s *LabelService) DeleteLabel(ctx context.Context, id platform.ID) error {
 	}
 	defer resp.Body.Close()
 
-	return CheckError(resp, true)
+	return CheckError(resp)
 }
 
 func (s *LabelService) DeleteLabelMapping(ctx context.Context, m *platform.LabelMapping) error {
-	url, err := newURL(s.Addr, labelNamePath(s.BasePath, *m.ResourceID, *m.LabelID))
+	url, err := newURL(s.Addr, labelNamePath(s.BasePath, m.ResourceID, m.LabelID))
 	if err != nil {
 		return err
 	}

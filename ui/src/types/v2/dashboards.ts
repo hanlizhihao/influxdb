@@ -1,6 +1,11 @@
+import {HistogramPosition} from 'src/minard'
 import {Color} from 'src/types/colors'
-import {Label} from 'src/types/v2/labels'
-import {Cell as CellAPI, Dashboard as DashboardAPI, View as ViewAPI,} from 'src/api'
+
+import {
+  IDashboard as DashboardAPI,
+  View as ViewAPI,
+  Cell as CellAPI,
+} from '@influxdata/influx'
 
 export interface Axis {
   label: string
@@ -37,11 +42,6 @@ export interface Axes {
   y2?: Axis
 }
 
-export enum InfluxLanguage {
-  InfluxQL = 'influxql',
-  Flux = 'flux',
-}
-
 export enum QueryEditMode {
   Builder = 'builder',
   Advanced = 'advanced',
@@ -55,16 +55,15 @@ export interface BuilderConfig {
 
 export interface DashboardQuery {
   text: string
-  type: InfluxLanguage
   editMode: QueryEditMode
   builderConfig: BuilderConfig
-  sourceID: string // Which source to use when running the query; may be empty, which means “use the dynamic source”
-  name?: string
+  name: string
 }
 
 export interface DashboardDraftQuery extends DashboardQuery {
   hidden: boolean
 }
+
 export interface Legend {
   type?: string
   orientation?: string
@@ -91,9 +90,8 @@ export interface Cell extends CellAPI {
   dashboardID: string
 }
 
-export interface Dashboard extends Omit<DashboardAPI, 'cells' | 'labels'> {
+export interface Dashboard extends Omit<DashboardAPI, 'cells'> {
   cells: Cell[]
-  labels: Label[]
 }
 
 type Omit<K, V> = Pick<K, Exclude<keyof K, V>>
@@ -117,7 +115,7 @@ export type ViewProperties =
   | GaugeView
   | MarkdownView
   | EmptyView
-  | LogViewerView
+  | HistogramView
 
 export type QueryViewProperties = Extract<
   ViewProperties,
@@ -214,28 +212,25 @@ export interface TableView {
   showNoteWhenEmpty: boolean
 }
 
+export interface HistogramView {
+  type: ViewType.Histogram
+  shape: ViewShape.ChronografV2
+  queries: DashboardQuery[]
+  xColumn: string
+  fillColumns: string[]
+  xDomain: [number, number]
+  xAxisLabel: string
+  position: HistogramPosition
+  binCount: number
+  colors: Color[]
+  note: string
+  showNoteWhenEmpty: boolean
+}
+
 export interface MarkdownView {
   type: ViewType.Markdown
   shape: ViewShape.ChronografV2
   note: string
-}
-
-export interface LogViewerView {
-  type: ViewType.LogViewer
-  shape: ViewShape.ChronografV2
-  columns: LogViewerColumn[]
-}
-
-export interface LogViewerColumn {
-  name: string
-  position: number
-  settings: LogViewerColumnSetting[]
-}
-
-export interface LogViewerColumnSetting {
-  type: string
-  value: string
-  name?: string
 }
 
 export enum ViewShape {
@@ -251,6 +246,7 @@ export enum ViewType {
   Table = 'table',
   Markdown = 'markdown',
   LogViewer = 'log-viewer',
+  Histogram = 'histogram',
 }
 
 export interface DashboardFile {

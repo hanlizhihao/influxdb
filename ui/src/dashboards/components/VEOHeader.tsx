@@ -1,13 +1,24 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
 import RenamablePageTitle from 'src/pageLayout/components/RenamablePageTitle'
-import {Button, ButtonShape, ComponentColor, ComponentSize, IconFont,} from 'src/clockface'
+import {
+  ButtonShape,
+  Button,
+  ComponentColor,
+  ComponentSize,
+  IconFont,
+} from '@influxdata/clockface'
 import {Page} from 'src/pageLayout'
-import VisOptionsButton from 'src/shared/components/VisOptionsButton'
-import ViewTypeDropdown from 'src/shared/components/view_options/ViewTypeDropdown'
+import VisOptionsButton from 'src/timeMachine/components/VisOptionsButton'
+import ViewTypeDropdown from 'src/timeMachine/components/view_options/ViewTypeDropdown'
+
 // Constants
-import {CELL_NAME_MAX_LENGTH, DEFAULT_CELL_NAME,} from 'src/dashboards/constants/index'
+import {
+  DEFAULT_CELL_NAME,
+  CELL_NAME_MAX_LENGTH,
+} from 'src/dashboards/constants/index'
 
 interface Props {
   name: string
@@ -46,6 +57,7 @@ class VEOHeader extends PureComponent<Props> {
               color={ComponentColor.Success}
               size={ComponentSize.Small}
               onClick={onSave}
+              testID="save-cell--button"
             />
           </Page.Header.Right>
         </Page.Header>

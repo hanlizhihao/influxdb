@@ -10,11 +10,14 @@ import (
 	"time"
 
 	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/storage/wal"
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxdb/tsdb/tsi1"
 	"github.com/influxdata/influxdb/tsdb/tsm1"
+	"github.com/influxdata/influxdb/tsdb/value"
 	"github.com/influxdata/influxql"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -38,7 +41,7 @@ type Engine struct {
 	index             *tsi1.Index
 	sfile             *tsdb.SeriesFile
 	engine            *tsm1.Engine
-	wal               *tsm1.WAL
+	wal               *wal.WAL
 	retentionEnforcer *retentionEnforcer
 
 	defaultMetricLabels prometheus.Labels
@@ -119,27 +122,26 @@ func NewEngine(path string, c Config, options ...Option) *Engine {
 		tsi1.WithPath(c.GetIndexPath(path)))
 
 	// Initialize WAL
-	var wal tsm1.Log = new(tsm1.NopWAL)
-	if c.WAL.Enabled {
-		e.wal = tsm1.NewWAL(c.GetWALPath(path))
-		e.wal.WithFsyncDelay(time.Duration(c.WAL.FsyncDelay))
-		e.wal.EnableTraceLogging(c.TraceLoggingEnabled)
-		wal = e.wal
-	}
+	e.wal = wal.NewWAL(c.GetWALPath(path))
+	e.wal.WithFsyncDelay(time.Duration(c.WAL.FsyncDelay))
+	e.wal.SetEnabled(c.WAL.Enabled)
 
 	// Initialise Engine
 	e.engine = tsm1.NewEngine(c.GetEnginePath(path), e.index, c.Engine,
-		tsm1.WithWAL(wal),
-		tsm1.WithTraceLogging(c.TraceLoggingEnabled))
+		tsm1.WithSnapshotter(e))
 
 	// Apply options.
 	for _, option := range options {
 		option(e)
 	}
+
 	// Set default metrics labels.
 	e.engine.SetDefaultMetricLabels(e.defaultMetricLabels)
 	e.sfile.SetDefaultMetricLabels(e.defaultMetricLabels)
 	e.index.SetDefaultMetricLabels(e.defaultMetricLabels)
+	if e.wal != nil {
+		e.wal.SetDefaultMetricLabels(e.defaultMetricLabels)
+	}
 
 	return e
 }
@@ -160,6 +162,7 @@ func (e *Engine) WithLogger(log *zap.Logger) {
 	e.sfile.WithLogger(e.logger)
 	e.index.WithLogger(e.logger)
 	e.engine.WithLogger(e.logger)
+	e.wal.WithLogger(e.logger)
 	e.retentionEnforcer.WithLogger(e.logger)
 }
 
@@ -170,13 +173,14 @@ func (e *Engine) PrometheusCollectors() []prometheus.Collector {
 	metrics = append(metrics, tsdb.PrometheusCollectors()...)
 	metrics = append(metrics, tsi1.PrometheusCollectors()...)
 	metrics = append(metrics, tsm1.PrometheusCollectors()...)
+	metrics = append(metrics, wal.PrometheusCollectors()...)
 	metrics = append(metrics, e.retentionEnforcer.PrometheusCollectors()...)
 	return metrics
 }
 
 // Open opens the store and all underlying resources. It returns an error if
 // any of the underlying systems fail to open.
-func (e *Engine) Open() error {
+func (e *Engine) Open(ctx context.Context) (err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -184,18 +188,22 @@ func (e *Engine) Open() error {
 		return nil // Already open
 	}
 
-	if err := e.sfile.Open(); err != nil {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	// Open the services in order and clean up if any fail.
+	var oh openHelper
+	oh.Open(ctx, e.sfile)
+	oh.Open(ctx, e.index)
+	oh.Open(ctx, e.wal)
+	oh.Open(ctx, e.engine)
+	if err := oh.Done(); err != nil {
 		return err
 	}
 
-	if err := e.index.Open(); err != nil {
+	if err := e.replayWAL(); err != nil {
 		return err
 	}
-
-	if err := e.engine.Open(); err != nil {
-		return err
-	}
-	e.engine.SetCompactionsEnabled(true) // TODO(edd):is this needed?
 
 	e.closing = make(chan struct{})
 
@@ -205,6 +213,54 @@ func (e *Engine) Open() error {
 	e.runRetentionEnforcer()
 
 	return nil
+}
+
+// replayWAL reads the WAL segment files and replays them.
+func (e *Engine) replayWAL() error {
+	if !e.config.WAL.Enabled {
+		return nil
+	}
+	now := time.Now()
+
+	walPaths, err := wal.SegmentFileNames(e.wal.Path())
+	if err != nil {
+		return err
+	}
+
+	// TODO(jeff): we should just do snapshots and wait for them so that we don't hit
+	// OOM situations when reloading huge WALs.
+
+	// Disable the max size during loading
+	limit := e.engine.Cache.MaxSize()
+	defer func() { e.engine.Cache.SetMaxSize(limit) }()
+	e.engine.Cache.SetMaxSize(0)
+
+	// Execute all the entries in the WAL again
+	reader := wal.NewWALReader(walPaths)
+	reader.WithLogger(e.logger)
+	err = reader.Read(func(entry wal.WALEntry) error {
+		switch en := entry.(type) {
+		case *wal.WriteWALEntry:
+			points := tsm1.ValuesToPoints(en.Values)
+			err := e.writePointsLocked(context.Background(), tsdb.NewSeriesCollection(points), en.Values)
+			if _, ok := err.(tsdb.PartialWriteError); ok {
+				err = nil
+			}
+			return err
+
+		case *wal.DeleteBucketRangeWALEntry:
+			return e.deleteBucketRangeLocked(en.OrgID, en.BucketID, en.Min, en.Max)
+		}
+
+		return nil
+	})
+
+	e.logger.Info("Reloaded WAL",
+		zap.String("path", e.wal.Path()),
+		zap.Duration("duration", time.Since(now)),
+		zap.Error(err))
+
+	return err
 }
 
 // runRetentionEnforcer runs the retention enforcer in a separate goroutine.
@@ -267,26 +323,26 @@ func (e *Engine) Close() error {
 	defer e.mu.Unlock()
 	e.closing = nil
 
-	if err := e.sfile.Close(); err != nil {
-		return err
-	}
-
-	if err := e.index.Close(); err != nil {
-		return err
-	}
-
-	return e.engine.Close()
+	var ch closeHelper
+	ch.Close(e.engine)
+	ch.Close(e.wal)
+	ch.Close(e.index)
+	ch.Close(e.sfile)
+	return ch.Done()
 }
 
+// CreateSeriesCursor creates a SeriesCursor for usage with the read service.
 func (e *Engine) CreateSeriesCursor(ctx context.Context, req SeriesCursorRequest, cond influxql.Expr) (SeriesCursor, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if e.closing == nil {
 		return nil, ErrEngineClosed
 	}
-	return newSeriesCursor(req, e.index, cond)
+
+	return newSeriesCursor(req, e.index, e.sfile, cond)
 }
 
+// CreateCursorIterator creates a CursorIterator for usage with the read service.
 func (e *Engine) CreateCursorIterator(ctx context.Context) (tsdb.CursorIterator, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -299,42 +355,65 @@ func (e *Engine) CreateCursorIterator(ctx context.Context) (tsdb.CursorIterator,
 // WritePoints writes the provided points to the engine.
 //
 // The Engine expects all points to have been correctly validated by the caller.
-// WritePoints will however determine if there are any field type conflicts, and
-// return an appropriate error in that case.
-func (e *Engine) WritePoints(points []models.Point) error {
-	collection := tsdb.NewSeriesCollection(points)
+// However, WritePoints will determine if any tag key-pairs are missing, or if
+// there are any field type conflicts.
+//
+// Appropriate errors are returned in those cases.
+func (e *Engine) WritePoints(ctx context.Context, points []models.Point) error {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
 
-	j := 0
+	collection, j := tsdb.NewSeriesCollection(points), 0
+
+	// dropPoint should be called whenever there is reason to drop a point from
+	// the batch.
+	dropPoint := func(key []byte, reason string) {
+		if collection.Reason == "" {
+			collection.Reason = reason
+		}
+		collection.Dropped++
+		collection.DroppedKeys = append(collection.DroppedKeys, key)
+	}
+
 	for iter := collection.Iterator(); iter.Next(); {
 		tags := iter.Tags()
 
-		if tags.Len() > 0 && bytes.Equal(tags[0].Key, tsdb.FieldKeyTagKeyBytes) && bytes.Equal(tags[0].Value, timeBytes) {
-			// Field key "time" is invalid
-			if collection.Reason == "" {
-				collection.Reason = fmt.Sprintf("invalid field key: input field %q is invalid", timeBytes)
-			}
-			collection.Dropped++
-			collection.DroppedKeys = append(collection.DroppedKeys, iter.Key())
+		// Not enough tags present.
+		if tags.Len() < 2 {
+			dropPoint(iter.Key(), fmt.Sprintf("missing required tags: parsed tags: %q", tags))
+			continue
+		}
+
+		// First tag key is not measurement tag.
+		if !bytes.Equal(tags[0].Key, models.MeasurementTagKeyBytes) {
+			dropPoint(iter.Key(), fmt.Sprintf("missing required measurement tag as first tag, got: %q", tags[0].Key))
+			continue
+		}
+
+		fkey, fval := tags[len(tags)-1].Key, tags[len(tags)-1].Value
+
+		// Last tag key is not field tag.
+		if !bytes.Equal(fkey, models.FieldKeyTagKeyBytes) {
+			dropPoint(iter.Key(), fmt.Sprintf("missing required field key tag as last tag, got: %q", tags[0].Key))
+			continue
+		}
+
+		// The value representing the underlying field key is invalid if it's "time".
+		if bytes.Equal(fval, timeBytes) {
+			dropPoint(iter.Key(), fmt.Sprintf("invalid field key: input field %q is invalid", timeBytes))
 			continue
 		}
 
 		// Filter out any tags with key equal to "time": they are invalid.
 		if tags.Get(timeBytes) != nil {
-			if collection.Reason == "" {
-				collection.Reason = fmt.Sprintf("invalid tag key: input tag %q on measurement %q is invalid", timeBytes, iter.Name())
-			}
-			collection.Dropped++
-			collection.DroppedKeys = append(collection.DroppedKeys, iter.Key())
+			dropPoint(iter.Key(), fmt.Sprintf("invalid tag key: input tag %q on measurement %q is invalid", timeBytes, iter.Name()))
 			continue
 		}
 
-		// Drop any series with invalid unicode characters in the key.
-		if e.config.ValidateKeys && !models.ValidKeyTokens(string(iter.Name()), tags) {
-			if collection.Reason == "" {
-				collection.Reason = fmt.Sprintf("key contains invalid unicode: %q", iter.Key())
-			}
-			collection.Dropped++
-			collection.DroppedKeys = append(collection.DroppedKeys, iter.Key())
+		// Drop any point with invalid unicode characters in any of the tag keys or values.
+		// This will also cover validating the value used to represent the field key.
+		if !models.ValidTagTokens(tags) {
+			dropPoint(iter.Key(), fmt.Sprintf("key contains invalid unicode: %q", iter.Key()))
 			continue
 		}
 
@@ -350,47 +429,116 @@ func (e *Engine) WritePoints(points []models.Point) error {
 		return ErrEngineClosed
 	}
 
-	// Add new series to the index and series file. Check for partial writes.
+	// Convert the collection to values for adding to the WAL/Cache.
+	values, err := tsm1.CollectionToValues(collection)
+	if err != nil {
+		return err
+	}
+
+	// Add the write to the WAL to be replayed if there is a crash or shutdown.
+	if _, err := e.wal.WriteMulti(ctx, values); err != nil {
+		return err
+	}
+
+	return e.writePointsLocked(ctx, collection, values)
+}
+
+// writePointsLocked does the work of writing points and must be called under some sort of lock.
+func (e *Engine) writePointsLocked(ctx context.Context, collection *tsdb.SeriesCollection, values map[string][]value.Value) error {
+	span, _ := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	// TODO(jeff): keep track of the values in the collection so that partial write
+	// errors get tracked all the way. Right now, the engine doesn't drop any values
+	// but if it ever did, the errors could end up missing some data.
+
+	// Add new series to the index and series file.
 	if err := e.index.CreateSeriesListIfNotExists(collection); err != nil {
-		// ignore PartialWriteErrors. The collection captures it.
-		// TODO(edd/jeff): should we just remove PartialWriteError from the index then?
-		if _, ok := err.(tsdb.PartialWriteError); !ok {
+		return err
+	}
+
+	// If there was a PartialWriteError, that means the passed in values may contain
+	// more than the points so we need to recreate them.
+	if collection.PartialWriteError() != nil {
+		var err error
+		values, err = tsm1.CollectionToValues(collection)
+		if err != nil {
 			return err
 		}
 	}
 
-	// Write the points to the cache and WAL.
-	if err := e.engine.WritePoints(collection.Points); err != nil {
+	// Write the values to the engine.
+	if err := e.engine.WriteValues(values); err != nil {
 		return err
 	}
+
 	return collection.PartialWriteError()
+}
+
+// AcquireSegments closes the current WAL segment, gets the set of all the currently closed
+// segments, and calls the callback. It does all of this under the lock on the engine.
+func (e *Engine) AcquireSegments(ctx context.Context, fn func(segs []string) error) error {
+	span, _ := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.wal.CloseSegment(); err != nil {
+		return err
+	}
+
+	segments, err := e.wal.ClosedSegments()
+	if err != nil {
+		return err
+	}
+
+	return fn(segments)
+}
+
+// CommitSegments calls the callback and if that does not return an error, removes the segment
+// files from the WAL. It does all of this under the lock on the engine.
+func (e *Engine) CommitSegments(ctx context.Context, segs []string, fn func() error) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := fn(); err != nil {
+		return err
+	}
+
+	return e.wal.Remove(ctx, segs)
 }
 
 // DeleteBucket deletes an entire bucket from the storage engine.
 func (e *Engine) DeleteBucket(orgID, bucketID platform.ID) error {
+	return e.DeleteBucketRange(orgID, bucketID, math.MinInt64, math.MaxInt64)
+}
+
+// DeleteBucketRange deletes an entire bucket from the storage engine.
+func (e *Engine) DeleteBucketRange(orgID, bucketID platform.ID, min, max int64) error {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if e.closing == nil {
 		return ErrEngineClosed
 	}
 
+	// Add the delete to the WAL to be replayed if there is a crash or shutdown.
+	if _, err := e.wal.DeleteBucketRange(orgID, bucketID, min, max); err != nil {
+		return err
+	}
+
+	return e.deleteBucketRangeLocked(orgID, bucketID, min, max)
+}
+
+// deleteBucketRangeLocked does the work of deleting a bucket range and must be called under
+// some sort of lock.
+func (e *Engine) deleteBucketRangeLocked(orgID, bucketID platform.ID, min, max int64) error {
 	// TODO(edd): we need to clean up how we're encoding the prefix so that we
 	// don't have to remember to get it right everywhere we need to touch TSM data.
 	encoded := tsdb.EncodeName(orgID, bucketID)
 	name := models.EscapeMeasurement(encoded[:])
 
-	return e.engine.DeleteBucket(name, math.MinInt64, math.MaxInt64)
-}
-
-// DeleteSeriesRangeWithPredicate deletes all series data iterated over if fn returns
-// true for that series.
-func (e *Engine) DeleteSeriesRangeWithPredicate(itr tsdb.SeriesIterator, fn func([]byte, models.Tags) (int64, int64, bool)) error {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	if e.closing == nil {
-		return ErrEngineClosed
-	}
-	return e.engine.DeleteSeriesRangeWithPredicate(itr, fn)
+	return e.engine.DeleteBucketRange(name, min, max)
 }
 
 // SeriesCardinality returns the number of series in the engine.

@@ -1,18 +1,37 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {connect} from 'react-redux'
 import _ from 'lodash'
+
 // Components
 import TaskForm from 'src/tasks/components/TaskForm'
+
 // Actions
-import {clearTask, saveNewScript, setNewScript, setTaskOption,} from 'src/tasks/actions/v2'
+import {
+  saveNewScript,
+  setTaskOption,
+  clearTask,
+  setNewScript,
+} from 'src/tasks/actions'
+
 // Utils
-import {timeRangeVariables} from 'src/shared/utils/queryBuilder'
-import {renderQuery} from 'src/shared/utils/renderQuery'
-import {getActiveTimeMachine} from 'src/shared/selectors/timeMachines'
+import {getActiveTimeMachine} from 'src/timeMachine/selectors'
+import {getTimeRangeVars} from 'src/variables/utils/getTimeRangeVars'
+import {getWindowVars} from 'src/variables/utils/getWindowVars'
+import {formatVarsOption} from 'src/variables/utils/formatVarsOption'
+import {getActiveOrg} from 'src/organizations/selectors'
+import {
+  taskOptionsToFluxScript,
+  addDestinationToFluxScript,
+} from 'src/utils/taskOptionsToFluxScript'
+
 // Types
-import {AppState, InfluxLanguage, Organization, TimeRange} from 'src/types/v2'
-import {TaskOptionKeys, TaskOptions, TaskSchedule,} from 'src/utils/taskOptionsToFluxScript'
+import {AppState, Organization, TimeRange} from 'src/types/v2'
+import {
+  TaskSchedule,
+  TaskOptions,
+  TaskOptionKeys,
+} from 'src/utils/taskOptionsToFluxScript'
 import {DashboardDraftQuery} from 'src/types/v2/dashboards'
 
 interface OwnProps {
@@ -28,6 +47,7 @@ interface DispatchProps {
 
 interface StateProps {
   orgs: Organization[]
+  activeOrgName: string
   taskOptions: TaskOptions
   draftQueries: DashboardDraftQuery[]
   activeQueryIndex: number
@@ -91,15 +111,34 @@ class SaveAsTaskForm extends PureComponent<Props> {
   }
 
   private handleSubmit = async () => {
-    const {saveNewScript, newScript, taskOptions, timeRange} = this.props
-
-    const script = await renderQuery(
+    const {
+      saveNewScript,
       newScript,
-      InfluxLanguage.Flux,
-      timeRangeVariables(timeRange)
+      taskOptions,
+      timeRange,
+      activeOrgName,
+    } = this.props
+
+    // When a task runs, it does not have access to variables that we typically
+    // inject into the script via the front end. So any variables that are used
+    // in the script need to be embedded in the script text itself before
+    // saving it as a task
+    //
+    // TODO(chnn): Embed user-defined variables in the script as well
+    const timeRangeVars = getTimeRangeVars(timeRange)
+    const windowPeriodVars = await getWindowVars(newScript, timeRangeVars)
+
+    // Don't embed variables that are not used in the script
+    const vars = [...timeRangeVars, ...windowPeriodVars].filter(assignment =>
+      newScript.includes(assignment.id.name)
     )
 
-    saveNewScript(script, taskOptions)
+    const varOption: string = formatVarsOption(vars) // option v = { ... }
+    const taskOption: string = taskOptionsToFluxScript(taskOptions) // option task = { ... }
+    const preamble = `${varOption}\n\n${taskOption}`
+    const script = addDestinationToFluxScript(newScript, taskOptions)
+
+    saveNewScript(script, preamble, activeOrgName)
   }
 
   private handleChangeTaskOrgID = (orgID: string) => {
@@ -146,8 +185,11 @@ const mstp = (state: AppState): StateProps => {
     state
   )
 
+  const activeOrgName = getActiveOrg(state).name
+
   return {
     orgs,
+    activeOrgName,
     newScript,
     taskOptions,
     timeRange,

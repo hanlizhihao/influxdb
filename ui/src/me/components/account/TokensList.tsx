@@ -1,11 +1,14 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
-import {ComponentSize, EmptyState, IndexList, OverlayTechnology,} from 'src/clockface'
+import {IndexList, EmptyState, ComponentSize, Overlay} from 'src/clockface'
 import TokenRow from 'src/me/components/account/TokenRow'
+
 // Types
-import {Authorization} from 'src/api'
+import {Authorization} from '@influxdata/influx'
 import ViewTokenOverlay from './ViewTokenOverlay'
+
 // Actions
 import {NotificationAction} from 'src/types'
 
@@ -52,13 +55,13 @@ export default class TokenList extends PureComponent<Props, State> {
             })}
           </IndexList.Body>
         </IndexList>
-        <OverlayTechnology visible={isTokenOverlayVisible}>
+        <Overlay visible={isTokenOverlayVisible}>
           <ViewTokenOverlay
             onNotify={onNotify}
             auth={authInView}
             onDismissOverlay={this.handleDismissOverlay}
           />
-        </OverlayTechnology>
+        </Overlay>
       </>
     )
   }

@@ -1,9 +1,12 @@
 // Libraries
 import {combineReducers} from 'redux'
+
 // Reducers
-import dataLoadersReducer from 'src/onboarding/reducers/dataLoaders'
+import dataLoadersReducer from 'src/dataLoaders/reducers/dataLoaders'
 import {DataLoadersState} from 'src/types/v2/dataLoaders'
-import stepsReducer, {DataLoadersStepsState,} from 'src/onboarding/reducers/steps'
+import stepsReducer, {
+  DataLoadersStepsState,
+} from 'src/dataLoaders/reducers/steps'
 
 export interface DataLoadingState {
   steps: DataLoadersStepsState

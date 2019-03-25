@@ -1,11 +1,15 @@
 // Libraries
-import React, {CSSProperties, SFC} from 'react'
+import React, {SFC, CSSProperties} from 'react'
+
 // Components
 import {Dropdown, DropdownMenuColors} from 'src/clockface'
+
 // Constants
-import {DEFAULT_LINE_COLORS, LINE_COLOR_SCALES,} from 'src/shared/constants/graphColorPalettes'
-// Styles
-import 'src/shared/components/ColorSchemeDropdown.scss'
+import {
+  LINE_COLOR_SCALES,
+  DEFAULT_LINE_COLORS,
+} from 'src/shared/constants/graphColorPalettes'
+
 // Types
 import {Color} from 'src/types/colors'
 

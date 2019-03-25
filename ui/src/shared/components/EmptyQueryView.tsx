@@ -10,7 +10,7 @@ import {FluxTable, RemoteDataState} from 'src/types'
 import {DashboardQuery} from 'src/types/v2'
 
 interface Props {
-  error: Error
+  errorMessage: string
   isInitialFetch: boolean
   loading: RemoteDataState
   tables: FluxTable[]
@@ -21,7 +21,7 @@ interface Props {
 export default class EmptyQueryView extends PureComponent<Props> {
   public render() {
     const {
-      error,
+      errorMessage,
       isInitialFetch,
       loading,
       tables,
@@ -29,16 +29,22 @@ export default class EmptyQueryView extends PureComponent<Props> {
       fallbackNote,
     } = this.props
 
-    if (loading === RemoteDataState.NotStarted) {
-      return <EmptyGraphMessage message={emptyGraphCopy} />
+    if (loading === RemoteDataState.NotStarted || !queries.length) {
+      return (
+        <EmptyGraphMessage
+          message={emptyGraphCopy}
+          testID="empty-graph--no-queries"
+        />
+      )
     }
 
-    if (!queries.length) {
-      return <EmptyGraphMessage message={emptyGraphCopy} />
-    }
-
-    if (error) {
-      return <EmptyGraphMessage message={`Error: ${error.message}`} />
+    if (errorMessage) {
+      return (
+        <EmptyGraphMessage
+          message={`Error: ${errorMessage}`}
+          testID="empty-graph--error"
+        />
+      )
     }
 
     const hasNoResults = tables.every(d => !d.data.length)
@@ -55,7 +61,12 @@ export default class EmptyQueryView extends PureComponent<Props> {
     }
 
     if (hasNoResults) {
-      return <EmptyGraphMessage message="No Results" />
+      return (
+        <EmptyGraphMessage
+          message="No Results"
+          testID="empty-graph--no-results"
+        />
+      )
     }
 
     return this.props.children

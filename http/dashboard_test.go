@@ -11,12 +11,27 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/inmem"
 	"github.com/influxdata/influxdb/mock"
 	platformtesting "github.com/influxdata/influxdb/testing"
 	"github.com/julienschmidt/httprouter"
 )
+
+// NewMockDashboardBackend returns a DashboardBackend with mock services.
+func NewMockDashboardBackend() *DashboardBackend {
+	return &DashboardBackend{
+		Logger: zap.NewNop().With(zap.String("handler", "dashboard")),
+
+		DashboardService:             mock.NewDashboardService(),
+		DashboardOperationLogService: mock.NewDashboardOperationLogService(),
+		UserResourceMappingService:   mock.NewUserResourceMappingService(),
+		LabelService:                 mock.NewLabelService(),
+		UserService:                  mock.NewUserService(),
+	}
+}
 
 func TestService_handleGetDashboards(t *testing.T) {
 	type fields struct {
@@ -137,7 +152,7 @@ func TestService_handleGetDashboards(t *testing.T) {
         "members": "/api/v2/dashboards/da7aba5e5d81e550/members",
         "owners": "/api/v2/dashboards/da7aba5e5d81e550/owners",
         "cells": "/api/v2/dashboards/da7aba5e5d81e550/cells",
-        "log": "/api/v2/dashboards/da7aba5e5d81e550/log",
+        "logs": "/api/v2/dashboards/da7aba5e5d81e550/logs",
         "labels": "/api/v2/dashboards/da7aba5e5d81e550/labels"
       }
     },
@@ -165,7 +180,7 @@ func TestService_handleGetDashboards(t *testing.T) {
         "org": "/api/v2/orgs/0000000000000001",
         "members": "/api/v2/dashboards/0ca2204eca2204e0/members",
         "owners": "/api/v2/dashboards/0ca2204eca2204e0/owners",
-        "log": "/api/v2/dashboards/0ca2204eca2204e0/log",
+        "logs": "/api/v2/dashboards/0ca2204eca2204e0/logs",
         "cells": "/api/v2/dashboards/0ca2204eca2204e0/cells",
         "labels": "/api/v2/dashboards/0ca2204eca2204e0/labels"
       }
@@ -247,7 +262,7 @@ func TestService_handleGetDashboards(t *testing.T) {
 			},
 			args: args{
 				map[string][]string{
-					"orgID": []string{"0000000000000001"},
+					"orgID": {"0000000000000001"},
 				},
 			},
 			wants: wants{
@@ -296,7 +311,7 @@ func TestService_handleGetDashboards(t *testing.T) {
         "members": "/api/v2/dashboards/da7aba5e5d81e550/members",
         "owners": "/api/v2/dashboards/da7aba5e5d81e550/owners",
         "cells": "/api/v2/dashboards/da7aba5e5d81e550/cells",
-        "log": "/api/v2/dashboards/da7aba5e5d81e550/log",
+        "logs": "/api/v2/dashboards/da7aba5e5d81e550/logs",
         "labels": "/api/v2/dashboards/da7aba5e5d81e550/labels"
       }
     }
@@ -309,11 +324,10 @@ func TestService_handleGetDashboards(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := tt.fields.LabelService
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.LabelService = tt.fields.LabelService
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -430,7 +444,7 @@ func TestService_handleGetDashboard(t *testing.T) {
     "org": "/api/v2/orgs/0000000000000001",
     "members": "/api/v2/dashboards/020f755c3c082000/members",
     "owners": "/api/v2/dashboards/020f755c3c082000/owners",
-    "log": "/api/v2/dashboards/020f755c3c082000/log",
+    "logs": "/api/v2/dashboards/020f755c3c082000/logs",
     "cells": "/api/v2/dashboards/020f755c3c082000/cells",
     "labels": "/api/v2/dashboards/020f755c3c082000/labels"
   }
@@ -461,11 +475,9 @@ func TestService_handleGetDashboard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -582,7 +594,7 @@ func TestService_handlePostDashboard(t *testing.T) {
     "org": "/api/v2/orgs/0000000000000001",
     "members": "/api/v2/dashboards/020f755c3c082000/members",
     "owners": "/api/v2/dashboards/020f755c3c082000/owners",
-    "log": "/api/v2/dashboards/020f755c3c082000/log",
+    "logs": "/api/v2/dashboards/020f755c3c082000/logs",
     "cells": "/api/v2/dashboards/020f755c3c082000/cells",
     "labels": "/api/v2/dashboards/020f755c3c082000/labels"
   }
@@ -594,11 +606,9 @@ func TestService_handlePostDashboard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			b, err := json.Marshal(tt.args.dashboard)
 			if err != nil {
@@ -689,11 +699,9 @@ func TestService_handleDeleteDashboard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -792,40 +800,40 @@ func TestService_handlePatchDashboard(t *testing.T) {
 				statusCode:  http.StatusOK,
 				contentType: "application/json; charset=utf-8",
 				body: `
-{
-  "id": "020f755c3c082000",
-  "orgID": "0000000000000001",
-  "name": "example",
-  "description": "",
-  "labels": [],
-  "meta": {
-    "createdAt": "2012-11-10T23:00:00Z",
-    "updatedAt": "2012-11-11T01:00:00Z"
-  },
-  "cells": [
-    {
-      "id": "da7aba5e5d81e550",
-      "x": 1,
-      "y": 2,
-      "w": 3,
-      "h": 4,
-      "links": {
-        "self": "/api/v2/dashboards/020f755c3c082000/cells/da7aba5e5d81e550",
-        "view": "/api/v2/dashboards/020f755c3c082000/cells/da7aba5e5d81e550/view"
-      }
-    }
-  ],
-  "links": {
-    "self": "/api/v2/dashboards/020f755c3c082000",
-    "org": "/api/v2/orgs/0000000000000001",
-    "members": "/api/v2/dashboards/020f755c3c082000/members",
-    "owners": "/api/v2/dashboards/020f755c3c082000/owners",
-    "log": "/api/v2/dashboards/020f755c3c082000/log",
-    "cells": "/api/v2/dashboards/020f755c3c082000/cells",
-    "labels": "/api/v2/dashboards/020f755c3c082000/labels"
-  }
-}
-`,
+		{
+		  "id": "020f755c3c082000",
+		  "orgID": "0000000000000001",
+		  "name": "example",
+		  "description": "",
+		  "labels": [],
+		  "meta": {
+		    "createdAt": "2012-11-10T23:00:00Z",
+		    "updatedAt": "2012-11-11T01:00:00Z"
+		  },
+		  "cells": [
+		    {
+		      "id": "da7aba5e5d81e550",
+		      "x": 1,
+		      "y": 2,
+		      "w": 3,
+		      "h": 4,
+		      "links": {
+		        "self": "/api/v2/dashboards/020f755c3c082000/cells/da7aba5e5d81e550",
+		        "view": "/api/v2/dashboards/020f755c3c082000/cells/da7aba5e5d81e550/view"
+		      }
+		    }
+		  ],
+		  "links": {
+		    "self": "/api/v2/dashboards/020f755c3c082000",
+		    "org": "/api/v2/orgs/0000000000000001",
+		    "members": "/api/v2/dashboards/020f755c3c082000/members",
+		    "owners": "/api/v2/dashboards/020f755c3c082000/owners",
+		    "logs": "/api/v2/dashboards/020f755c3c082000/logs",
+		    "cells": "/api/v2/dashboards/020f755c3c082000/cells",
+		    "labels": "/api/v2/dashboards/020f755c3c082000/labels"
+		  }
+		}
+		`,
 			},
 		},
 		{
@@ -868,11 +876,9 @@ func TestService_handlePatchDashboard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			upd := platform.DashboardUpdate{}
 			if tt.args.name != "" {
@@ -977,11 +983,9 @@ func TestService_handlePostDashboardCell(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			b, err := json.Marshal(tt.args.cell)
 			if err != nil {
@@ -1062,11 +1066,9 @@ func TestService_handleDeleteDashboardCell(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -1174,11 +1176,9 @@ func TestService_handlePatchDashboardCell(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewDashboardHandler(mappingService, labelService, userService)
-			h.DashboardService = tt.fields.DashboardService
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.DashboardService = tt.fields.DashboardService
+			h := NewDashboardHandler(dashboardBackend)
 
 			upd := platform.CellUpdate{}
 			if tt.args.x != 0 {
@@ -1271,11 +1271,9 @@ func initDashboardService(f platformtesting.DashboardFields, t *testing.T) (plat
 		}
 	}
 
-	mappingService := mock.NewUserResourceMappingService()
-	labelService := mock.NewLabelService()
-	userService := mock.NewUserService()
-	h := NewDashboardHandler(mappingService, labelService, userService)
-	h.DashboardService = svc
+	dashboardBackend := NewMockDashboardBackend()
+	dashboardBackend.DashboardService = svc
+	h := NewDashboardHandler(dashboardBackend)
 	server := httptest.NewServer(h)
 	client := DashboardService{
 		Addr:     server.URL,
@@ -1289,4 +1287,102 @@ func initDashboardService(f platformtesting.DashboardFields, t *testing.T) (plat
 func TestDashboardService(t *testing.T) {
 	t.Parallel()
 	platformtesting.DashboardService(initDashboardService, t)
+}
+
+func TestService_handlePostDashboardLabel(t *testing.T) {
+	type fields struct {
+		LabelService platform.LabelService
+	}
+	type args struct {
+		labelMapping *platform.LabelMapping
+		dashboardID  platform.ID
+	}
+	type wants struct {
+		statusCode  int
+		contentType string
+		body        string
+	}
+
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		wants  wants
+	}{
+		{
+			name: "add label to dashboard",
+			fields: fields{
+				LabelService: &mock.LabelService{
+					FindLabelByIDFn: func(ctx context.Context, id platform.ID) (*platform.Label, error) {
+						return &platform.Label{
+							ID:   1,
+							Name: "label",
+							Properties: map[string]string{
+								"color": "fff000",
+							},
+						}, nil
+					},
+					CreateLabelMappingFn: func(ctx context.Context, m *platform.LabelMapping) error { return nil },
+				},
+			},
+			args: args{
+				labelMapping: &platform.LabelMapping{
+					ResourceID: 100,
+					LabelID:    1,
+				},
+				dashboardID: 100,
+			},
+			wants: wants{
+				statusCode:  http.StatusCreated,
+				contentType: "application/json; charset=utf-8",
+				body: `
+{
+  "label": {
+    "id": "0000000000000001",
+    "name": "label",
+    "properties": {
+      "color": "fff000"
+    }
+  },
+  "links": {
+    "self": "/api/v2/labels/0000000000000001"
+  }
+}
+`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dashboardBackend := NewMockDashboardBackend()
+			dashboardBackend.LabelService = tt.fields.LabelService
+			h := NewDashboardHandler(dashboardBackend)
+
+			b, err := json.Marshal(tt.args.labelMapping)
+			if err != nil {
+				t.Fatalf("failed to unmarshal label mapping: %v", err)
+			}
+
+			url := fmt.Sprintf("http://localhost:9999/api/v2/dashboards/%s/labels", tt.args.dashboardID)
+			r := httptest.NewRequest("POST", url, bytes.NewReader(b))
+			w := httptest.NewRecorder()
+
+			h.ServeHTTP(w, r)
+
+			res := w.Result()
+			content := res.Header.Get("Content-Type")
+			body, _ := ioutil.ReadAll(res.Body)
+
+			if res.StatusCode != tt.wants.statusCode {
+				t.Errorf("got %v, want %v", res.StatusCode, tt.wants.statusCode)
+			}
+			if tt.wants.contentType != "" && content != tt.wants.contentType {
+				t.Errorf("got %v, want %v", content, tt.wants.contentType)
+			}
+			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
+				t.Errorf("Diff\n%s", diff)
+			}
+		})
+	}
 }

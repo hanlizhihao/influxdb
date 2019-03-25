@@ -1,70 +1,99 @@
 // Libraries
-import React, {ChangeEvent, Component} from 'react'
+import React, {Component, ChangeEvent} from 'react'
+import {connect} from 'react-redux'
+import _ from 'lodash'
+
 // Components
 import LabelOverlayForm from 'src/configuration/components/LabelOverlayForm'
+import {Overlay, ComponentStatus} from 'src/clockface'
+
 // Types
-import {LabelType, OverlayBody, OverlayContainer, OverlayHeading, OverlayTechnology,} from 'src/clockface'
-// Utils
-import {validateHexCode} from 'src/configuration/utils/labels'
+import {ILabel} from '@influxdata/influx'
+
 // Constants
 import {EMPTY_LABEL} from 'src/configuration/constants/LabelColors'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
+import {AppState} from 'src/types/v2'
 
-interface Props {
+interface OwnProps {
   isVisible: boolean
   onDismiss: () => void
-  onCreateLabel: (label: LabelType) => void
+  onCreateLabel: (label: ILabel) => void
   onNameValidation: (name: string) => string | null
+  overrideDefaultName?: string
 }
 
+interface StateProps {
+  orgID: string
+}
+
+type Props = OwnProps & StateProps
+
 interface State {
-  label: LabelType
-  useCustomColorHex: boolean
+  label: ILabel
+  colorStatus: ComponentStatus
 }
 
 @ErrorHandling
 class CreateLabelOverlay extends Component<Props, State> {
-  public state: State = {
-    label: EMPTY_LABEL,
-    useCustomColorHex: false,
+  constructor(props: Props) {
+    super(props)
+
+    this.state = {
+      label: {...EMPTY_LABEL, name: this.props.overrideDefaultName},
+      colorStatus: ComponentStatus.Default,
+    }
+  }
+
+  componentDidUpdate(prevProps) {
+    if (
+      prevProps.overrideDefaultName !== this.props.overrideDefaultName &&
+      this.props.isVisible === false
+    ) {
+      const name = this.props.overrideDefaultName
+      const label = {...this.state.label, name}
+
+      this.setState({label})
+    }
   }
 
   public render() {
     const {isVisible, onDismiss, onNameValidation} = this.props
-    const {label, useCustomColorHex} = this.state
+    const {label} = this.state
 
     return (
-      <OverlayTechnology visible={isVisible}>
-        <OverlayContainer maxWidth={600}>
-          <OverlayHeading title="Create Label" onDismiss={onDismiss} />
-          <OverlayBody>
+      <Overlay visible={isVisible}>
+        <Overlay.Container maxWidth={400}>
+          <Overlay.Heading title="Create Label" onDismiss={onDismiss} />
+          <Overlay.Body>
             <LabelOverlayForm
               id={label.id}
               name={label.name}
-              description={label.description}
-              colorHex={label.colorHex}
-              onColorHexChange={this.handleColorHexChange}
-              onToggleCustomColorHex={this.handleToggleCustomColorHex}
-              useCustomColorHex={useCustomColorHex}
-              onSubmit={this.handleSubmit}
               onCloseModal={onDismiss}
-              onInputChange={this.handleInputChange}
               buttonText="Create Label"
+              onSubmit={this.handleSubmit}
               isFormValid={this.isFormValid}
+              color={label.properties.color}
               onNameValidation={onNameValidation}
+              onInputChange={this.handleInputChange}
+              onColorChange={this.handleColorChange}
+              description={label.properties.description}
             />
-          </OverlayBody>
-        </OverlayContainer>
-      </OverlayTechnology>
+          </Overlay.Body>
+        </Overlay.Container>
+      </Overlay>
     )
   }
 
   private get isFormValid(): boolean {
-    const {label} = this.state
+    const {label, colorStatus} = this.state
 
     const nameIsValid = this.props.onNameValidation(label.name) === null
-    const colorIsValid = validateHexCode(label.colorHex) === null
+    const colorIsValid =
+      colorStatus === ComponentStatus.Default ||
+      colorStatus === ComponentStatus.Valid
 
     return nameIsValid && colorIsValid
   }
@@ -73,7 +102,7 @@ class CreateLabelOverlay extends Component<Props, State> {
     const {onCreateLabel, onDismiss} = this.props
 
     try {
-      onCreateLabel(this.state.label)
+      onCreateLabel({...this.state.label, orgID: this.props.orgID})
       // clear form on successful submit
       this.resetForm()
     } finally {
@@ -84,7 +113,6 @@ class CreateLabelOverlay extends Component<Props, State> {
   private resetForm() {
     this.setState({
       label: EMPTY_LABEL,
-      useCustomColorHex: false,
     })
   }
 
@@ -92,7 +120,14 @@ class CreateLabelOverlay extends Component<Props, State> {
     const value = e.target.value
     const key = e.target.name
 
-    if (key in this.state.label) {
+    if (key === 'description' || key === 'color') {
+      const properties = {...this.state.label.properties, [key]: value}
+      const label = {...this.state.label, properties}
+
+      this.setState({
+        label,
+      })
+    } else {
       const label = {...this.state.label, [key]: value}
 
       this.setState({
@@ -101,15 +136,21 @@ class CreateLabelOverlay extends Component<Props, State> {
     }
   }
 
-  private handleColorHexChange = (colorHex: string): void => {
-    const label = {...this.state.label, colorHex}
+  private handleColorChange = (
+    color: string,
+    colorStatus: ComponentStatus
+  ): void => {
+    const properties = {...this.state.label.properties, color}
+    const label = {...this.state.label, properties}
 
-    this.setState({label})
-  }
-
-  private handleToggleCustomColorHex = (useCustomColorHex: boolean): void => {
-    this.setState({useCustomColorHex})
+    this.setState({label, colorStatus})
   }
 }
 
-export default CreateLabelOverlay
+const mstp = (state: AppState) => {
+  const {orgs} = state
+
+  return {orgID: _.get(orgs, '0.id', '')}
+}
+
+export default connect<StateProps, {}, OwnProps>(mstp)(CreateLabelOverlay)

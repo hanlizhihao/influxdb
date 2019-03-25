@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go.uber.org/zap"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	platform "github.com/influxdata/influxdb"
+	platcontext "github.com/influxdata/influxdb/context"
+	httpMock "github.com/influxdata/influxdb/http/mock"
 	"github.com/influxdata/influxdb/inmem"
 	"github.com/influxdata/influxdb/mock"
 	platformtesting "github.com/influxdata/influxdb/testing"
@@ -26,6 +29,20 @@ var (
 	targetOneID = platformtesting.MustIDBase16(targetOneIDString)
 	targetTwoID = platformtesting.MustIDBase16(targetTwoIDString)
 )
+
+// NewMockScraperBackend returns a ScraperBackend with mock services.
+func NewMockScraperBackend() *ScraperBackend {
+	return &ScraperBackend{
+		Logger: zap.NewNop().With(zap.String("handler", "scraper")),
+
+		ScraperStorageService:      &mock.ScraperTargetStoreService{},
+		BucketService:              mock.NewBucketService(),
+		OrganizationService:        mock.NewOrganizationService(),
+		UserService:                mock.NewUserService(),
+		UserResourceMappingService: &mock.UserResourceMappingService{},
+		LabelService:               mock.NewLabelService(),
+	}
+}
 
 func TestService_handleGetScraperTargets(t *testing.T) {
 	type fields struct {
@@ -115,7 +132,9 @@ func TestService_handleGetScraperTargets(t *testing.T) {
 						  "links": {
 						    "bucket": "/api/v2/buckets/0000000000000212",
 						    "organization": "/api/v2/orgs/0000000000000211",
-						    "self": "/api/v2/scrapers/0000000000000111"
+						    "self": "/api/v2/scrapers/0000000000000111",
+						    "members": "/api/v2/scrapers/0000000000000111/members",
+						    "owners": "/api/v2/scrapers/0000000000000111/owners"
 						  }
 						},
 						{
@@ -130,7 +149,9 @@ func TestService_handleGetScraperTargets(t *testing.T) {
 						  "links": {
 						    "bucket": "/api/v2/buckets/0000000000000212",
 						    "organization": "/api/v2/orgs/0000000000000211",
-						    "self": "/api/v2/scrapers/0000000000000222"
+						    "self": "/api/v2/scrapers/0000000000000222",
+						    "members": "/api/v2/scrapers/0000000000000222/members",
+						    "owners": "/api/v2/scrapers/0000000000000222/owners"
 						  }
                         }
 					  ]
@@ -184,10 +205,11 @@ func TestService_handleGetScraperTargets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewScraperHandler()
-			h.ScraperStorageService = tt.fields.ScraperTargetStoreService
-			h.OrganizationService = tt.fields.OrganizationService
-			h.BucketService = tt.fields.BucketService
+			scraperBackend := NewMockScraperBackend()
+			scraperBackend.ScraperStorageService = tt.fields.ScraperTargetStoreService
+			scraperBackend.OrganizationService = tt.fields.OrganizationService
+			scraperBackend.BucketService = tt.fields.BucketService
+			h := NewScraperHandler(scraperBackend)
 
 			r := httptest.NewRequest("GET", "http://any.tld", nil)
 
@@ -290,7 +312,7 @@ func TestService_handleGetScraperTarget(t *testing.T) {
 				body: fmt.Sprintf(
 					`
                     {
-                      "id": "%[1]s",
+                      "id": "%s",
                       "name": "target-1",
                       "type": "prometheus",
 					  "url": "www.some.url",
@@ -301,11 +323,13 @@ func TestService_handleGetScraperTarget(t *testing.T) {
                       "links": {
                         "bucket": "/api/v2/buckets/0000000000000212",
                         "organization": "/api/v2/orgs/0000000000000211",
-                        "self": "/api/v2/scrapers/%[1]s"
+                        "self": "/api/v2/scrapers/%s",
+                        "members": "/api/v2/scrapers/%s/members",
+                        "owners": "/api/v2/scrapers/%s/owners"
                       }
                     }
                     `,
-					targetOneIDString,
+					targetOneIDString, targetOneIDString, targetOneIDString, targetOneIDString,
 				),
 			},
 		},
@@ -313,10 +337,11 @@ func TestService_handleGetScraperTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewScraperHandler()
-			h.ScraperStorageService = tt.fields.ScraperTargetStoreService
-			h.OrganizationService = tt.fields.OrganizationService
-			h.BucketService = tt.fields.BucketService
+			scraperBackend := NewMockScraperBackend()
+			scraperBackend.ScraperStorageService = tt.fields.ScraperTargetStoreService
+			scraperBackend.OrganizationService = tt.fields.OrganizationService
+			scraperBackend.BucketService = tt.fields.BucketService
+			h := NewScraperHandler(scraperBackend)
 
 			r := httptest.NewRequest("GET", "http://any.tld", nil)
 
@@ -415,8 +440,9 @@ func TestService_handleDeleteScraperTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewScraperHandler()
-			h.ScraperStorageService = tt.fields.Service
+			scraperBackend := NewMockScraperBackend()
+			scraperBackend.ScraperStorageService = tt.fields.Service
+			h := NewScraperHandler(scraperBackend)
 
 			r := httptest.NewRequest("GET", "http://any.tld", nil)
 
@@ -494,7 +520,7 @@ func TestService_handlePostScraperTarget(t *testing.T) {
 					},
 				},
 				ScraperTargetStoreService: &mock.ScraperTargetStoreService{
-					AddTargetF: func(ctx context.Context, st *platform.ScraperTarget) error {
+					AddTargetF: func(ctx context.Context, st *platform.ScraperTarget, userID platform.ID) error {
 						st.ID = targetOneID
 						return nil
 					},
@@ -515,7 +541,7 @@ func TestService_handlePostScraperTarget(t *testing.T) {
 				body: fmt.Sprintf(
 					`
                     {
-                      "id": "%[1]s",
+                      "id": "%s",
                       "name": "hello",
                       "type": "prometheus",
                       "url": "www.some.url",
@@ -526,11 +552,13 @@ func TestService_handlePostScraperTarget(t *testing.T) {
                       "links": {
                         "bucket": "/api/v2/buckets/0000000000000212",
                         "organization": "/api/v2/orgs/0000000000000211",
-                        "self": "/api/v2/scrapers/%[1]s"
+                        "self": "/api/v2/scrapers/%s",
+                        "members": "/api/v2/scrapers/%s/members",
+                        "owners": "/api/v2/scrapers/%s/owners"
                       }
                     }
                     `,
-					targetOneIDString,
+					targetOneIDString, targetOneIDString, targetOneIDString, targetOneIDString,
 				),
 			},
 		},
@@ -538,10 +566,11 @@ func TestService_handlePostScraperTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewScraperHandler()
-			h.ScraperStorageService = tt.fields.ScraperTargetStoreService
-			h.OrganizationService = tt.fields.OrganizationService
-			h.BucketService = tt.fields.BucketService
+			scraperBackend := NewMockScraperBackend()
+			scraperBackend.ScraperStorageService = tt.fields.ScraperTargetStoreService
+			scraperBackend.OrganizationService = tt.fields.OrganizationService
+			scraperBackend.BucketService = tt.fields.BucketService
+			h := NewScraperHandler(scraperBackend)
 
 			st, err := json.Marshal(tt.args.target)
 			if err != nil {
@@ -549,6 +578,7 @@ func TestService_handlePostScraperTarget(t *testing.T) {
 			}
 
 			r := httptest.NewRequest("GET", "http://any.tld", bytes.NewReader(st))
+			r = r.WithContext(platcontext.SetAuthorizer(r.Context(), &platform.Authorization{}))
 			w := httptest.NewRecorder()
 
 			h.handlePostScraperTarget(w, r)
@@ -614,7 +644,7 @@ func TestService_handlePatchScraperTarget(t *testing.T) {
 					},
 				},
 				ScraperTargetStoreService: &mock.ScraperTargetStoreService{
-					UpdateTargetF: func(ctx context.Context, t *platform.ScraperTarget) (*platform.ScraperTarget, error) {
+					UpdateTargetF: func(ctx context.Context, t *platform.ScraperTarget, userID platform.ID) (*platform.ScraperTarget, error) {
 						if t.ID == targetOneID {
 							return t, nil
 						}
@@ -642,7 +672,7 @@ func TestService_handlePatchScraperTarget(t *testing.T) {
 				contentType: "application/json; charset=utf-8",
 				body: fmt.Sprintf(
 					`{
-		              "id":"%[1]s",
+		              "id":"%s",
 		              "name":"name",
 		              "type":"prometheus",
 					  "url":"www.example.url",
@@ -653,10 +683,12 @@ func TestService_handlePatchScraperTarget(t *testing.T) {
 		              "links":{
 		                "bucket": "/api/v2/buckets/0000000000000212",
 		                "organization": "/api/v2/orgs/0000000000000211",
-		                "self":"/api/v2/scrapers/%[1]s"
+		                "self":"/api/v2/scrapers/%s",
+		                "members":"/api/v2/scrapers/%s/members",
+		                "owners":"/api/v2/scrapers/%s/owners"
 		              }
 		            }`,
-					targetOneIDString,
+					targetOneIDString, targetOneIDString, targetOneIDString, targetOneIDString,
 				),
 			},
 		},
@@ -680,7 +712,7 @@ func TestService_handlePatchScraperTarget(t *testing.T) {
 					},
 				},
 				ScraperTargetStoreService: &mock.ScraperTargetStoreService{
-					UpdateTargetF: func(ctx context.Context, upd *platform.ScraperTarget) (*platform.ScraperTarget, error) {
+					UpdateTargetF: func(ctx context.Context, upd *platform.ScraperTarget, userID platform.ID) (*platform.ScraperTarget, error) {
 						return nil, &platform.Error{
 							Code: platform.ENotFound,
 							Msg:  platform.ErrScraperTargetNotFound,
@@ -707,10 +739,11 @@ func TestService_handlePatchScraperTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewScraperHandler()
-			h.ScraperStorageService = tt.fields.ScraperTargetStoreService
-			h.OrganizationService = tt.fields.OrganizationService
-			h.BucketService = tt.fields.BucketService
+			scraperBackend := NewMockScraperBackend()
+			scraperBackend.ScraperStorageService = tt.fields.ScraperTargetStoreService
+			scraperBackend.OrganizationService = tt.fields.OrganizationService
+			scraperBackend.BucketService = tt.fields.BucketService
+			h := NewScraperHandler(scraperBackend)
 
 			var err error
 			st := make([]byte, 0)
@@ -732,7 +765,7 @@ func TestService_handlePatchScraperTarget(t *testing.T) {
 						Value: tt.args.id,
 					},
 				}))
-
+			r = r.WithContext(platcontext.SetAuthorizer(r.Context(), &platform.Authorization{}))
 			w := httptest.NewRecorder()
 
 			h.handlePatchScraperTarget(w, r)
@@ -765,10 +798,15 @@ func initScraperService(f platformtesting.TargetFields, t *testing.T) (platform.
 			t.Fatalf("failed to populate scraper targets")
 		}
 	}
+	for _, m := range f.UserResourceMappings {
+		if err := svc.PutUserResourceMapping(ctx, m); err != nil {
+			t.Fatalf("failed to populate user resource mapping")
+		}
+	}
 
-	handler := NewScraperHandler()
-	handler.ScraperStorageService = svc
-	handler.OrganizationService = &mock.OrganizationService{
+	scraperBackend := NewMockScraperBackend()
+	scraperBackend.ScraperStorageService = svc
+	scraperBackend.OrganizationService = &mock.OrganizationService{
 		FindOrganizationByIDF: func(ctx context.Context, id platform.ID) (*platform.Organization, error) {
 			return &platform.Organization{
 				ID:   id,
@@ -776,7 +814,7 @@ func initScraperService(f platformtesting.TargetFields, t *testing.T) (platform.
 			}, nil
 		},
 	}
-	handler.BucketService = &mock.BucketService{
+	scraperBackend.BucketService = &mock.BucketService{
 		FindBucketByIDFn: func(ctx context.Context, id platform.ID) (*platform.Bucket, error) {
 			return &platform.Bucket{
 				ID:   id,
@@ -784,10 +822,25 @@ func initScraperService(f platformtesting.TargetFields, t *testing.T) (platform.
 			}, nil
 		},
 	}
-	server := httptest.NewServer(handler)
-	client := ScraperService{
-		Addr:     server.URL,
-		OpPrefix: inmem.OpPrefix,
+
+	handler := NewScraperHandler(scraperBackend)
+	server := httptest.NewServer(httpMock.NewAuthMiddlewareHandler(
+		handler,
+		&platform.Authorization{
+			UserID: platformtesting.MustIDBase16("020f755c3c082002"),
+			Token:  "tok",
+		},
+	))
+	client := struct {
+		platform.UserResourceMappingService
+		ScraperService
+	}{
+		UserResourceMappingService: svc,
+		ScraperService: ScraperService{
+			Token:    "tok",
+			Addr:     server.URL,
+			OpPrefix: inmem.OpPrefix,
+		},
 	}
 	done := server.Close
 

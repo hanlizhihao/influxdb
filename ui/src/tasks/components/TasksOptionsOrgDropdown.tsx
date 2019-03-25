@@ -4,7 +4,7 @@ import _ from 'lodash'
 // Components
 import {Dropdown} from 'src/clockface'
 // Types
-import {Organization} from 'src/api'
+import {Organization} from '@influxdata/influx'
 
 interface Props {
   orgs: Organization[]

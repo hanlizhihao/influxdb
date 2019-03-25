@@ -56,17 +56,19 @@ exports[`Account rendering renders! 1`] = `
                             <div
                               className="component-spacer component-spacer--right component-spacer--horizontal"
                             >
-                              <Button
+                              <t
                                 active={false}
                                 color="default"
                                 shape="none"
                                 size="sm"
                                 status="default"
+                                testID="button"
                                 text="Edit About Me"
                                 type="button"
                               >
                                 <button
                                   className="button button-sm button-default"
+                                  data-testid="button"
                                   disabled={false}
                                   tabIndex={0}
                                   title="Edit About Me"
@@ -74,7 +76,7 @@ exports[`Account rendering renders! 1`] = `
                                 >
                                   Edit About Me
                                 </button>
-                              </Button>
+                              </t>
                             </div>
                           </ComponentSpacer>
                         </div>
@@ -84,9 +86,12 @@ exports[`Account rendering renders! 1`] = `
                       <div
                         className="panel-body"
                       >
-                        <Form>
+                        <Form
+                          testID="form-container"
+                        >
                           <form
                             className="form--wrapper"
+                            data-testid="form-container"
                             onSubmit={[Function]}
                           >
                             <FormElement
@@ -109,7 +114,6 @@ exports[`Account rendering renders! 1`] = `
                                 <Input
                                   autoFocus={false}
                                   autocomplete="off"
-                                  dataTest="nameInput"
                                   disabledTitleText="This input is disabled"
                                   name=""
                                   onChange={[Function]}
@@ -117,7 +121,9 @@ exports[`Account rendering renders! 1`] = `
                                   size="sm"
                                   spellCheck={false}
                                   status="disabled"
+                                  testID="nameInput"
                                   titleText="Username"
+                                  type="text"
                                   value="groot"
                                 >
                                   <div
@@ -132,13 +138,14 @@ exports[`Account rendering renders! 1`] = `
                                       autoComplete="off"
                                       autoFocus={false}
                                       className="input-field"
-                                      data-test="nameInput"
+                                      data-testid="nameInput"
                                       disabled={true}
                                       name=""
                                       onChange={[Function]}
                                       placeholder=""
                                       spellCheck={false}
                                       title="This input is disabled"
+                                      type="text"
                                       value="groot"
                                     />
                                     <div

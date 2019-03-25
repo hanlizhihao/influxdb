@@ -13,10 +13,16 @@ import (
 	"github.com/influxdata/influxdb/tsdb/cursors"
 )
 
+type streamCursor interface {
+	streamCursor()
+}
+
 type floatCursorStreamReader struct {
 	fr *frameReader
 	a  cursors.FloatArray
 }
+
+func (c *floatCursorStreamReader) streamCursor() {}
 
 func (c *floatCursorStreamReader) Close() {
 	for c.fr.state == stateReadFloatPoints {
@@ -56,12 +62,16 @@ func (c *floatCursorStreamReader) readFrame() {
 	}
 }
 
-func (c *floatCursorStreamReader) Stats() cursors.CursorStats { return cursors.CursorStats{} }
+func (c *floatCursorStreamReader) Stats() cursors.CursorStats {
+	return c.fr.stats.Stats()
+}
 
 type integerCursorStreamReader struct {
 	fr *frameReader
 	a  cursors.IntegerArray
 }
+
+func (c *integerCursorStreamReader) streamCursor() {}
 
 func (c *integerCursorStreamReader) Close() {
 	for c.fr.state == stateReadIntegerPoints {
@@ -101,12 +111,16 @@ func (c *integerCursorStreamReader) readFrame() {
 	}
 }
 
-func (c *integerCursorStreamReader) Stats() cursors.CursorStats { return cursors.CursorStats{} }
+func (c *integerCursorStreamReader) Stats() cursors.CursorStats {
+	return c.fr.stats.Stats()
+}
 
 type unsignedCursorStreamReader struct {
 	fr *frameReader
 	a  cursors.UnsignedArray
 }
+
+func (c *unsignedCursorStreamReader) streamCursor() {}
 
 func (c *unsignedCursorStreamReader) Close() {
 	for c.fr.state == stateReadUnsignedPoints {
@@ -146,12 +160,16 @@ func (c *unsignedCursorStreamReader) readFrame() {
 	}
 }
 
-func (c *unsignedCursorStreamReader) Stats() cursors.CursorStats { return cursors.CursorStats{} }
+func (c *unsignedCursorStreamReader) Stats() cursors.CursorStats {
+	return c.fr.stats.Stats()
+}
 
 type stringCursorStreamReader struct {
 	fr *frameReader
 	a  cursors.StringArray
 }
+
+func (c *stringCursorStreamReader) streamCursor() {}
 
 func (c *stringCursorStreamReader) Close() {
 	for c.fr.state == stateReadStringPoints {
@@ -191,12 +209,16 @@ func (c *stringCursorStreamReader) readFrame() {
 	}
 }
 
-func (c *stringCursorStreamReader) Stats() cursors.CursorStats { return cursors.CursorStats{} }
+func (c *stringCursorStreamReader) Stats() cursors.CursorStats {
+	return c.fr.stats.Stats()
+}
 
 type booleanCursorStreamReader struct {
 	fr *frameReader
 	a  cursors.BooleanArray
 }
+
+func (c *booleanCursorStreamReader) streamCursor() {}
 
 func (c *booleanCursorStreamReader) Close() {
 	for c.fr.state == stateReadBooleanPoints {
@@ -236,4 +258,6 @@ func (c *booleanCursorStreamReader) readFrame() {
 	}
 }
 
-func (c *booleanCursorStreamReader) Stats() cursors.CursorStats { return cursors.CursorStats{} }
+func (c *booleanCursorStreamReader) Stats() cursors.CursorStats {
+	return c.fr.stats.Stats()
+}

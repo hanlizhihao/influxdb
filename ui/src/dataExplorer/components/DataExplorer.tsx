@@ -1,16 +1,20 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
+
 // Components
-import TimeMachine from 'src/shared/components/TimeMachine'
+import TimeMachine from 'src/timeMachine/components/TimeMachine'
+import GetResources, {
+  ResourceTypes,
+} from 'src/configuration/components/GetResources'
+
 // Actions
-import {setActiveTimeMachine} from 'src/shared/actions/v2/timeMachines'
+import {setActiveTimeMachine} from 'src/timeMachine/actions'
+
 // Utils
-import {DE_TIME_MACHINE_ID} from 'src/shared/constants/timeMachine'
+import {DE_TIME_MACHINE_ID} from 'src/timeMachine/constants'
 import {HoverTimeProvider} from 'src/dashboards/utils/hoverTime'
-import {queryBuilderFetcher} from 'src/shared/apis/v2/queryBuilder'
-// Styles
-import './DataExplorer.scss'
+import {queryBuilderFetcher} from 'src/timeMachine/apis/QueryBuilderFetcher'
 
 interface DispatchProps {
   onSetActiveTimeMachine: typeof setActiveTimeMachine
@@ -28,7 +32,9 @@ class DataExplorer extends PureComponent<DispatchProps, {}> {
     return (
       <div className="data-explorer">
         <HoverTimeProvider>
-          <TimeMachine />
+          <GetResources resource={ResourceTypes.Variables}>
+            <TimeMachine />
+          </GetResources>
         </HoverTimeProvider>
       </div>
     )

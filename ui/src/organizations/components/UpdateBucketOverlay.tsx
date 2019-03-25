@@ -1,10 +1,15 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
+
 // Components
-import {ComponentStatus, OverlayBody, OverlayContainer, OverlayHeading,} from 'src/clockface'
+import {Overlay, ComponentStatus} from 'src/clockface'
 import BucketOverlayForm from 'src/organizations/components/BucketOverlayForm'
+
+// Constants
+import {DEFAULT_SECONDS} from 'src/organizations/components/Retention'
+
 // Types
-import {Bucket, BucketRetentionRules} from 'src/api'
+import {Bucket, BucketRetentionRules} from '@influxdata/influx'
 
 interface Props {
   bucket: Bucket
@@ -38,12 +43,12 @@ export default class BucketOverlay extends PureComponent<Props, State> {
     const {bucket, nameInputStatus, nameErrorMessage, ruleType} = this.state
 
     return (
-      <OverlayContainer maxWidth={500}>
-        <OverlayHeading
+      <Overlay.Container maxWidth={500}>
+        <Overlay.Heading
           title="Edit Bucket"
           onDismiss={this.props.onCloseModal}
         />
-        <OverlayBody>
+        <Overlay.Body>
           <BucketOverlayForm
             name={bucket.name}
             buttonText="Save Changes"
@@ -57,8 +62,8 @@ export default class BucketOverlay extends PureComponent<Props, State> {
             onChangeRuleType={this.handleChangeRuleType}
             onChangeRetentionRule={this.handleChangeRetentionRule}
           />
-        </OverlayBody>
-      </OverlayContainer>
+        </Overlay.Body>
+      </Overlay.Container>
     )
   }
 
@@ -68,7 +73,7 @@ export default class BucketOverlay extends PureComponent<Props, State> {
     )
 
     if (!rule) {
-      return 3600
+      return DEFAULT_SECONDS
     }
 
     return rule.everySeconds
@@ -97,7 +102,7 @@ export default class BucketOverlay extends PureComponent<Props, State> {
     this.setState({bucket})
   }
 
-  private handleChangeRuleType = ruleType => {
+  private handleChangeRuleType = (ruleType: BucketRetentionRules.TypeEnum) => {
     this.setState({ruleType})
   }
 

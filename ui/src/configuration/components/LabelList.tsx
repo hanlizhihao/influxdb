@@ -1,20 +1,26 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
-// Types
-import {IndexList, LabelType, OverlayTechnology} from 'src/clockface'
+import {IndexList, Overlay} from 'src/clockface'
 import UpdateLabelOverlay from 'src/configuration/components/UpdateLabelOverlay'
 import LabelRow from 'src/configuration/components/LabelRow'
+
 // Utils
-import {validateLabelName} from 'src/configuration/utils/labels'
-import {OverlayState} from 'src/types/v2'
+import {validateLabelUniqueness} from 'src/configuration/utils/labels'
+
+// Types
+import {ILabel} from '@influxdata/influx'
+import {OverlayState} from 'src/types'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
-  labels: LabelType[]
+  labels: ILabel[]
   emptyState: JSX.Element
-  onUpdateLabel: (label: LabelType) => Promise<void>
+  onUpdateLabel: (label: ILabel) => void
+  onDeleteLabel: (labelID: string) => void
 }
 
 interface State {
@@ -42,32 +48,35 @@ export default class LabelList extends PureComponent<Props, State> {
             {this.rows}
           </IndexList.Body>
         </IndexList>
-        <OverlayTechnology visible={this.isOverlayVisible}>
+        <Overlay visible={this.isOverlayVisible}>
           <UpdateLabelOverlay
             label={this.label}
             onDismiss={this.handleCloseModal}
             onUpdateLabel={this.handleUpdateLabel}
             onNameValidation={this.handleNameValidation}
           />
-        </OverlayTechnology>
+        </Overlay>
       </>
     )
   }
 
   private get rows(): JSX.Element[] {
+    const {onDeleteLabel} = this.props
+
     return this.props.labels.map((label, index) => (
       <LabelRow
         key={label.id || `label-${index}`}
-        label={{
-          ...label,
-          onClick: this.handleStartEdit,
-        }}
+        onDelete={onDeleteLabel}
+        onClick={this.handleStartEdit}
+        label={label}
       />
     ))
   }
 
-  private get label(): LabelType {
-    return this.props.labels.find(b => b.id === this.state.labelID)
+  private get label(): ILabel | null {
+    if (this.state.labelID) {
+      return this.props.labels.find(l => l.id === this.state.labelID)
+    }
   }
 
   private handleCloseModal = () => {
@@ -83,15 +92,16 @@ export default class LabelList extends PureComponent<Props, State> {
     return !!labelID && overlayState === OverlayState.Open
   }
 
-  private handleUpdateLabel = async (updatedLabel: LabelType) => {
+  private handleUpdateLabel = async (updatedLabel: ILabel) => {
     await this.props.onUpdateLabel(updatedLabel)
     this.setState({overlayState: OverlayState.Closed})
   }
 
   private handleNameValidation = (name: string): string | null => {
     const {labels} = this.props
-    const {labelID} = this.state
 
-    return validateLabelName(labels, name, labelID)
+    const names = labels.map(label => label.name).filter(l => l !== name)
+
+    return validateLabelUniqueness(names, name)
   }
 }

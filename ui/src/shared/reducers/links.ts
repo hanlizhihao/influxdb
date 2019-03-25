@@ -23,7 +23,7 @@ const initialState: Links = {
   tasks: '',
   users: '',
   write: '',
-  macros: '',
+  variables: '',
   views: '',
   defaultDashboard: '',
   me: '',
@@ -34,11 +34,6 @@ const linksReducer = (state = initialState, action: Action): Links => {
     case ActionTypes.LinksGetCompleted: {
       const {links} = action.payload
       return {...links, defaultDashboard: '/v2/dashboards/029d13fda9c5b000'}
-    }
-
-    case ActionTypes.SetDefaultDashboardLink: {
-      const {defaultDashboard} = action.payload
-      return {...state, defaultDashboard}
     }
   }
 

@@ -6,11 +6,9 @@
 //    bucket(/tasks/v1/task_meta) key(:task_id) -> Protocol Buffer encoded backend.StoreTaskMeta,
 //                                    so we have a consistent view of runs in progress and max concurrency.
 //    bucket(/tasks/v1/org_by_task_id) key(task_id) -> The organization ID (stored as encoded string) associated with given task.
-//    bucket(/tasks/v1/user_by_task_id) key(:task_id) -> The user ID (stored as encoded string) associated with given task.
-//    buket(/tasks/v1/name_by_task_id) key(:task_id) -> The user-supplied name of the script.
+//    bucket(/tasks/v1/name_by_task_id) key(:task_id) -> The user-supplied name of the script.
 //    bucket(/tasks/v1/run_ids) -> Counter for run IDs
 //    bucket(/tasks/v1/orgs).bucket(:org_id) key(:task_id) -> Empty content; presence of :task_id allows for lookup from org to tasks.
-//    bucket(/tasks/v1/users).bucket(:user_id) key(:task_id) -> Empty content; presence of :task_id allows for lookup from user to tasks.
 // Note that task IDs are stored big-endian uint64s for sorting purposes,
 // but presented to the users with leading 0-bytes stripped.
 // Like other components of the system, IDs presented to users may be `0f12` rather than `f12`.
@@ -20,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/coreos/bbolt"
 	platform "github.com/influxdata/influxdb"
@@ -47,6 +47,8 @@ type Store struct {
 	db     *bolt.DB
 	bucket []byte
 	idGen  platform.IDGenerator
+
+	minLatestCompleted int64
 }
 
 const basePath = "/tasks/v1/"
@@ -54,16 +56,20 @@ const basePath = "/tasks/v1/"
 var (
 	tasksPath    = []byte(basePath + "tasks")
 	orgsPath     = []byte(basePath + "orgs")
-	usersPath    = []byte(basePath + "users")
 	taskMetaPath = []byte(basePath + "task_meta")
 	orgByTaskID  = []byte(basePath + "org_by_task_id")
-	userByTaskID = []byte(basePath + "user_by_task_id")
 	nameByTaskID = []byte(basePath + "name_by_task_id")
 	runIDs       = []byte(basePath + "run_ids")
 )
 
+// Option is a optional configuration for the store.
+type Option func(*Store)
+
+// NoCatchUp allows you to skip any task that was supposed to run during down time.
+func NoCatchUp(st *Store) { st.minLatestCompleted = time.Now().Unix() }
+
 // New gives us a new Store based on "github.com/coreos/bbolt"
-func New(db *bolt.DB, rootBucket string) (*Store, error) {
+func New(db *bolt.DB, rootBucket string, opts ...Option) (*Store, error) {
 	if db.IsReadOnly() {
 		return nil, ErrDBReadOnly
 	}
@@ -77,9 +83,8 @@ func New(db *bolt.DB, rootBucket string) (*Store, error) {
 		}
 		// create the buckets inside the root
 		for _, b := range [][]byte{
-			tasksPath, orgsPath, usersPath, taskMetaPath,
-			orgByTaskID, userByTaskID,
-			nameByTaskID, runIDs,
+			tasksPath, orgsPath, taskMetaPath,
+			orgByTaskID, nameByTaskID, runIDs,
 		} {
 			_, err := root.CreateBucketIfNotExists(b)
 			if err != nil {
@@ -91,7 +96,11 @@ func New(db *bolt.DB, rootBucket string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{db: db, bucket: bucket, idGen: snowflake.NewDefaultIDGenerator()}, nil
+	st := &Store{db: db, bucket: bucket, idGen: snowflake.NewDefaultIDGenerator(), minLatestCompleted: math.MinInt64}
+	for _, opt := range opts {
+		opt(st)
+	}
+	return st, nil
 }
 
 // CreateTask creates a task in the boltdb task store.
@@ -142,28 +151,6 @@ func (s *Store) CreateTask(ctx context.Context, req backend.CreateTaskRequest) (
 		}
 
 		err = b.Bucket(orgByTaskID).Put(encodedID, encodedOrg)
-		if err != nil {
-			return err
-		}
-
-		// Encoded user ID
-		encodedUser, err := req.User.Encode()
-		if err != nil {
-			return err
-		}
-
-		// user
-		userB, err := b.Bucket(usersPath).CreateBucketIfNotExists(encodedUser)
-		if err != nil {
-			return err
-		}
-
-		err = userB.Put(encodedID, nil)
-		if err != nil {
-			return err
-		}
-
-		err = b.Bucket(userByTaskID).Put(encodedID, encodedUser)
 		if err != nil {
 			return err
 		}
@@ -235,10 +222,7 @@ func (s *Store) UpdateTask(ctx context.Context, req backend.UpdateTaskRequest) (
 			}
 		}
 
-		var userID, orgID platform.ID
-		if err := userID.Decode(b.Bucket(userByTaskID).Get(encodedID)); err != nil {
-			return err
-		}
+		var orgID platform.ID
 
 		if err := orgID.Decode(b.Bucket(orgByTaskID).Get(encodedID)); err != nil {
 			return err
@@ -252,23 +236,27 @@ func (s *Store) UpdateTask(ctx context.Context, req backend.UpdateTaskRequest) (
 		if err := stm.Unmarshal(stmBytes); err != nil {
 			return err
 		}
+		stm.UpdatedAt = time.Now().Unix()
 		res.OldStatus = backend.TaskStatus(stm.Status)
+
 		if req.Status != "" {
 			stm.Status = string(req.Status)
-			stmBytes, err = stm.Marshal()
-			if err != nil {
-				return err
-			}
-			if err := b.Bucket(taskMetaPath).Put(encodedID, stmBytes); err != nil {
-				return err
-			}
+		}
+		if req.AuthorizationID.Valid() {
+			stm.AuthorizationID = uint64(req.AuthorizationID)
+		}
+		stmBytes, err = stm.Marshal()
+		if err != nil {
+			return err
+		}
+		if err := b.Bucket(taskMetaPath).Put(encodedID, stmBytes); err != nil {
+			return err
 		}
 		res.NewMeta = stm
 
 		res.NewTask = backend.StoreTask{
 			ID:     req.ID,
 			Org:    orgID,
-			User:   userID,
 			Name:   op.Name,
 			Script: newScript,
 		}
@@ -280,10 +268,6 @@ func (s *Store) UpdateTask(ctx context.Context, req backend.UpdateTaskRequest) (
 
 // ListTasks lists the tasks based on a filter.
 func (s *Store) ListTasks(ctx context.Context, params backend.TaskSearchParams) ([]backend.StoreTaskWithMeta, error) {
-	if params.Org.Valid() && params.User.Valid() {
-		return nil, errors.New("ListTasks: org and user filters are mutually exclusive")
-	}
-
 	if params.PageSize < 0 {
 		return nil, errors.New("ListTasks: PageSize must be positive")
 	}
@@ -310,16 +294,6 @@ func (s *Store) ListTasks(ctx context.Context, params backend.TaskSearchParams) 
 				return ErrNotFound
 			}
 			c = orgB.Cursor()
-		} else if params.User.Valid() {
-			encodedUser, err := params.User.Encode()
-			if err != nil {
-				return err
-			}
-			userB := b.Bucket(usersPath).Bucket(encodedUser)
-			if userB == nil {
-				return ErrNotFound
-			}
-			c = userB.Cursor()
 		} else {
 			c = b.Bucket(tasksPath).Cursor()
 		}
@@ -369,36 +343,7 @@ func (s *Store) ListTasks(ctx context.Context, params backend.TaskSearchParams) 
 				case <-ctx.Done():
 					return ctx.Err()
 				default:
-					encodedID, err := taskIDs[i].Encode()
-					if err != nil {
-						return err
-					}
 					tasks[i].Task.Org = params.Org
-					var userID platform.ID
-					if err := userID.Decode(b.Bucket(userByTaskID).Get(encodedID)); err != nil {
-						return err
-					}
-					tasks[i].Task.User = userID
-				}
-			}
-			goto POPULATE_META
-		}
-		if params.User.Valid() {
-			for i := range taskIDs {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-					encodedID, err := taskIDs[i].Encode()
-					if err != nil {
-						return err
-					}
-					tasks[i].Task.User = params.User
-					var orgID platform.ID
-					if err := orgID.Decode(b.Bucket(orgByTaskID).Get(encodedID)); err != nil {
-						return err
-					}
-					tasks[i].Task.Org = orgID
 				}
 			}
 			goto POPULATE_META
@@ -412,12 +357,6 @@ func (s *Store) ListTasks(ctx context.Context, params backend.TaskSearchParams) 
 				if err != nil {
 					return err
 				}
-
-				var userID platform.ID
-				if err := userID.Decode(b.Bucket(userByTaskID).Get(encodedID)); err != nil {
-					return err
-				}
-				tasks[i].Task.User = userID
 
 				var orgID platform.ID
 				if err := orgID.Decode(b.Bucket(orgByTaskID).Get(encodedID)); err != nil {
@@ -442,6 +381,12 @@ func (s *Store) ListTasks(ctx context.Context, params backend.TaskSearchParams) 
 				if err := stm.Unmarshal(b.Bucket(taskMetaPath).Get(encodedID)); err != nil {
 					return err
 				}
+
+				if stm.LatestCompleted < s.minLatestCompleted {
+					stm.LatestCompleted = s.minLatestCompleted
+					stm.AlignLatestCompleted()
+				}
+
 				tasks[i].Meta = stm
 			}
 		}
@@ -457,7 +402,7 @@ func (s *Store) ListTasks(ctx context.Context, params backend.TaskSearchParams) 
 
 // FindTaskByID finds a task with a given an ID.  It will return nil if the task does not exist.
 func (s *Store) FindTaskByID(ctx context.Context, id platform.ID) (*backend.StoreTask, error) {
-	var userID, orgID platform.ID
+	var orgID platform.ID
 	var script, name string
 	encodedID, err := id.Encode()
 	if err != nil {
@@ -470,10 +415,6 @@ func (s *Store) FindTaskByID(ctx context.Context, id platform.ID) (*backend.Stor
 			return backend.ErrTaskNotFound
 		}
 		script = string(scriptBytes)
-
-		if err := userID.Decode(b.Bucket(userByTaskID).Get(encodedID)); err != nil {
-			return err
-		}
 
 		if err := orgID.Decode(b.Bucket(orgByTaskID).Get(encodedID)); err != nil {
 			return err
@@ -489,7 +430,6 @@ func (s *Store) FindTaskByID(ctx context.Context, id platform.ID) (*backend.Stor
 	return &backend.StoreTask{
 		ID:     id,
 		Org:    orgID,
-		User:   userID,
 		Name:   name,
 		Script: script,
 	}, err
@@ -513,12 +453,17 @@ func (s *Store) FindTaskMetaByID(ctx context.Context, id platform.ID) (*backend.
 		return nil, err
 	}
 
+	if stm.LatestCompleted < s.minLatestCompleted {
+		stm.LatestCompleted = s.minLatestCompleted
+		stm.AlignLatestCompleted()
+	}
+
 	return &stm, nil
 }
 
 func (s *Store) FindTaskByIDWithMeta(ctx context.Context, id platform.ID) (*backend.StoreTask, *backend.StoreTaskMeta, error) {
 	var stmBytes []byte
-	var userID, orgID platform.ID
+	var orgID platform.ID
 	var script, name string
 	encodedID, err := id.Encode()
 	if err != nil {
@@ -534,10 +479,6 @@ func (s *Store) FindTaskByIDWithMeta(ctx context.Context, id platform.ID) (*back
 
 		// Assign copies of everything so we don't hold a stale reference to a bolt-maintained byte slice.
 		stmBytes = append(stmBytes, b.Bucket(taskMetaPath).Get(encodedID)...)
-
-		if err := userID.Decode(b.Bucket(userByTaskID).Get(encodedID)); err != nil {
-			return err
-		}
 
 		if err := orgID.Decode(b.Bucket(orgByTaskID).Get(encodedID)); err != nil {
 			return err
@@ -555,10 +496,14 @@ func (s *Store) FindTaskByIDWithMeta(ctx context.Context, id platform.ID) (*back
 		return nil, nil, err
 	}
 
+	if stm.LatestCompleted < s.minLatestCompleted {
+		stm.LatestCompleted = s.minLatestCompleted
+		stm.AlignLatestCompleted()
+	}
+
 	return &backend.StoreTask{
 		ID:     id,
 		Org:    orgID,
-		User:   userID,
 		Name:   name,
 		Script: script,
 	}, &stm, nil
@@ -579,15 +524,6 @@ func (s *Store) DeleteTask(ctx context.Context, id platform.ID) (deleted bool, e
 			return err
 		}
 		if err := b.Bucket(tasksPath).Delete(encodedID); err != nil {
-			return err
-		}
-		user := b.Bucket(userByTaskID).Get(encodedID)
-		if len(user) > 0 {
-			if err := b.Bucket(usersPath).Bucket(user).Delete(encodedID); err != nil {
-				return err
-			}
-		}
-		if err := b.Bucket(userByTaskID).Delete(encodedID); err != nil {
 			return err
 		}
 		if err := b.Bucket(nameByTaskID).Delete(encodedID); err != nil {
@@ -630,6 +566,11 @@ func (s *Store) CreateNextRun(ctx context.Context, taskID platform.ID, now int64
 		err := stm.Unmarshal(stmBytes)
 		if err != nil {
 			return err
+		}
+
+		if stm.LatestCompleted < s.minLatestCompleted {
+			stm.LatestCompleted = s.minLatestCompleted
+			stm.AlignLatestCompleted()
 		}
 
 		rc, err = stm.CreateNextRun(now, func() (platform.ID, error) {
@@ -716,70 +657,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// DeleteUser syncronously deletes a user and all their tasks from a bolt store.
-func (s *Store) DeleteUser(ctx context.Context, id platform.ID) error {
-	userID, err := id.Encode()
-	if err != nil {
-		return err
-	}
-
-	err = s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(s.bucket)
-		ub := b.Bucket(usersPath).Bucket(userID)
-		if ub == nil {
-			return backend.ErrUserNotFound
-		}
-		c := ub.Cursor()
-		i := 0
-		for k, _ := c.First(); k != nil; k, _ = c.Next() {
-			i++
-			// check for cancelation every 256 tasks deleted
-			if i&0xFF == 0 {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-			}
-			if err := b.Bucket(tasksPath).Delete(k); err != nil {
-				return err
-			}
-			if err := b.Bucket(taskMetaPath).Delete(k); err != nil {
-				return err
-			}
-			if err := b.Bucket(orgByTaskID).Delete(k); err != nil {
-				return err
-			}
-			if err := b.Bucket(userByTaskID).Delete(k); err != nil {
-				return err
-			}
-			if err := b.Bucket(nameByTaskID).Delete(k); err != nil {
-				return err
-			}
-
-			org := b.Bucket(orgByTaskID).Get(k)
-			if len(org) > 0 {
-				ob := b.Bucket(orgsPath).Bucket(org)
-				if ob != nil {
-					if err := ob.Delete(k); err != nil {
-						return err
-					}
-				}
-			}
-		}
-
-		// check for cancelation one last time before we return
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			return b.Bucket(usersPath).DeleteBucket(userID)
-		}
-	})
-
-	return err
-}
-
 // DeleteOrg syncronously deletes an org and all their tasks from a bolt store.
 func (s *Store) DeleteOrg(ctx context.Context, id platform.ID) error {
 	orgID, err := id.Encode()
@@ -814,20 +691,8 @@ func (s *Store) DeleteOrg(ctx context.Context, id platform.ID) error {
 			if err := b.Bucket(orgByTaskID).Delete(k); err != nil {
 				return err
 			}
-			if err := b.Bucket(userByTaskID).Delete(k); err != nil {
-				return err
-			}
 			if err := b.Bucket(nameByTaskID).Delete(k); err != nil {
 				return err
-			}
-			user := b.Bucket(userByTaskID).Get(k)
-			if len(user) > 0 {
-				ub := b.Bucket(usersPath).Bucket(user)
-				if ub != nil {
-					if err := ub.Delete(k); err != nil {
-						return err
-					}
-				}
 			}
 		}
 		// check for cancelation one last time before we return

@@ -1,52 +1,26 @@
 // Library
 import {Component} from 'react'
-import {flatten, isEqual} from 'lodash'
+import {isEqual, flatten} from 'lodash'
 import {connect} from 'react-redux'
+
 // API
-import {ExecuteFluxQueryResult, executeQuery} from 'src/shared/apis/v2/query'
+import {
+  executeQueryWithVars,
+  ExecuteFluxQueryResult,
+} from 'src/shared/apis/query'
+
 // Utils
 import {parseResponse} from 'src/shared/parsing/flux/response'
-import {getActiveSource, getSources} from 'src/sources/selectors'
-import {renderQuery} from 'src/shared/utils/renderQuery'
+import {getActiveOrg} from 'src/organizations/selectors'
+
 // Types
-import {FluxTable, RemoteDataState} from 'src/types'
+import {RemoteDataState, FluxTable} from 'src/types'
 import {DashboardQuery} from 'src/types/v2/dashboards'
-import {AppState, Source} from 'src/types/v2'
-import {CancellationError, WrappedCancelablePromise} from 'src/types/promises'
+import {AppState, Organization} from 'src/types/v2'
+import {WrappedCancelablePromise, CancellationError} from 'src/types/promises'
+import {VariableAssignment} from 'src/types/ast'
 
-type URLQuery = DashboardQuery & {url: string}
-
-const executeRenderedQuery = (
-  {text, type, url}: URLQuery,
-  variables: {[key: string]: string}
-): WrappedCancelablePromise<ExecuteFluxQueryResult> => {
-  let isCancelled = false
-  let cancelExecution
-
-  const cancel = () => {
-    isCancelled = true
-
-    if (cancelExecution) {
-      cancelExecution()
-    }
-  }
-
-  const promise = renderQuery(text, type, variables).then(renderedQuery => {
-    if (isCancelled) {
-      return Promise.reject(new CancellationError())
-    }
-
-    const pendingResult = executeQuery(url, renderedQuery, type)
-
-    cancelExecution = pendingResult.cancel
-
-    return pendingResult.promise
-  })
-
-  return {promise, cancel}
-}
-
-export interface QueriesState {
+interface QueriesState {
   tables: FluxTable[]
   files: string[] | null
   loading: RemoteDataState
@@ -56,13 +30,13 @@ export interface QueriesState {
 }
 
 interface StateProps {
-  dynamicSourceURL: string
-  sources: Source[]
+  queryLink: string
+  activeOrg: Organization
 }
 
 interface OwnProps {
   queries: DashboardQuery[]
-  variables?: {[key: string]: string}
+  variables?: VariableAssignment[]
   submitToken: number
   implicitSubmit?: boolean
   inView?: boolean
@@ -124,20 +98,10 @@ class TimeSeries extends Component<Props, State> {
     })
   }
 
-  private get queries(): URLQuery[] {
-    const {sources, queries, dynamicSourceURL} = this.props
-
-    return queries.filter(query => !!query.text).map(query => {
-      const source = sources.find(source => source.id === query.sourceID)
-      const url: string = source ? source.links.query : dynamicSourceURL
-
-      return {...query, url}
-    })
-  }
-
   private reload = async () => {
-    const {inView, variables} = this.props
-    const queries = this.queries
+    const {inView, queryLink, variables} = this.props
+    const queries = this.props.queries.filter(({text}) => !!text.trim())
+    const orgID = this.props.activeOrg.id
 
     if (!inView) {
       return
@@ -162,7 +126,9 @@ class TimeSeries extends Component<Props, State> {
       this.pendingResults.forEach(({cancel}) => cancel())
 
       // Issue new queries
-      this.pendingResults = queries.map(q => executeRenderedQuery(q, variables))
+      this.pendingResults = queries.map(({text}) =>
+        executeQueryWithVars(queryLink, orgID, text, variables)
+      )
 
       // Wait for new queries to complete
       const results = await Promise.all(this.pendingResults.map(r => r.promise))
@@ -202,7 +168,7 @@ class TimeSeries extends Component<Props, State> {
       return true
     }
 
-    if (prevProps.dynamicSourceURL !== this.props.dynamicSourceURL) {
+    if (!isEqual(prevProps.variables, this.props.variables)) {
       return true
     }
 
@@ -211,10 +177,10 @@ class TimeSeries extends Component<Props, State> {
 }
 
 const mstp = (state: AppState) => {
-  const sources = getSources(state)
-  const dynamicSourceURL = getActiveSource(state).links.query
+  const {links} = state
+  const activeOrg = getActiveOrg(state)
 
-  return {sources, dynamicSourceURL}
+  return {activeOrg, queryLink: links.query.self}
 }
 
 export default connect<StateProps, {}, OwnProps>(

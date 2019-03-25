@@ -1,31 +1,29 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import _ from 'lodash'
+import React, {PureComponent, ChangeEvent} from 'react'
+
 // APIs
-import {getBuckets} from 'src/organizations/apis'
+import {client} from 'src/utils/api'
+
 // Components
 import {
-    Button,
-    ButtonShape,
-    ButtonType,
-    Columns,
-    ComponentColor,
-    ComponentSpacer,
-    Form,
-    Grid,
-    Input,
-    Radio,
-} from 'src/clockface'
+  Columns,
+  Button,
+  ButtonShape,
+  ComponentColor,
+  ButtonType,
+} from '@influxdata/clockface'
+import {ComponentSpacer, Form, Grid, Input, Radio} from 'src/clockface'
 import TaskOptionsOrgDropdown from 'src/tasks/components/TasksOptionsOrgDropdown'
 import TaskOptionsOrgIDDropdown from 'src/tasks/components/TasksOptionsOrgIDDropdown'
 import TaskScheduleFormField from 'src/tasks/components/TaskScheduleFormField'
 import TaskOptionsBucketDropdown from 'src/tasks/components/TasksOptionsBucketDropdown'
 import GetOrgResources from 'src/organizations/components/GetOrgResources'
+
 // Types
 import {TaskOptions, TaskSchedule} from 'src/utils/taskOptionsToFluxScript'
-import {Alignment, ComponentStatus, Stack} from 'src/clockface/types'
-import {Bucket, Organization} from 'src/api'
-// Styles
-import './TaskForm.scss'
+import {Alignment, Stack, ComponentStatus} from 'src/clockface/types'
+import {Organization, Bucket} from '@influxdata/influx'
 
 interface Props {
   orgs: Organization[]
@@ -44,6 +42,8 @@ interface Props {
 interface State {
   schedule: TaskSchedule
 }
+
+const getBuckets = (org: Organization) => client.buckets.getAllByOrg(org.name)
 
 export default class TaskForm extends PureComponent<Props, State> {
   public static defaultProps: Partial<Props> = {
@@ -154,7 +154,7 @@ export default class TaskForm extends PureComponent<Props, State> {
             {isInOverlay && (
               <Grid.Column widthXS={Columns.Six}>
                 <Form.Element label="Output Bucket">
-                  <GetOrgResources<Bucket[]>
+                  <GetOrgResources<Bucket>
                     organization={this.toOrganization}
                     fetcher={getBuckets}
                   >

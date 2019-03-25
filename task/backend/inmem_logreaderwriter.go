@@ -3,21 +3,26 @@ package backend
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
 	platform "github.com/influxdata/influxdb"
 )
 
+// orgtask is used as a key for storing runs by org and task ID.
+// This is only relevant for the in-memory run store.
+type orgtask struct {
+	o, t platform.ID
+}
+
 type runReaderWriter struct {
-	mu       sync.RWMutex
-	byTaskID map[string][]*platform.Run
-	byRunID  map[string]*platform.Run
+	mu        sync.RWMutex
+	byOrgTask map[orgtask][]*platform.Run
+	byRunID   map[string]*platform.Run
 }
 
 func NewInMemRunReaderWriter() *runReaderWriter {
-	return &runReaderWriter{byRunID: map[string]*platform.Run{}, byTaskID: map[string][]*platform.Run{}}
+	return &runReaderWriter{byRunID: map[string]*platform.Run{}, byOrgTask: map[orgtask][]*platform.Run{}}
 }
 
 func (r *runReaderWriter) UpdateRunState(ctx context.Context, rlb RunLogBase, when time.Time, status RunStatus) error {
@@ -48,8 +53,8 @@ func (r *runReaderWriter) UpdateRunState(ctx context.Context, rlb RunLogBase, wh
 		}
 		timeSetter(run)
 		r.byRunID[ridStr] = run
-		tidStr := rlb.Task.ID.String()
-		r.byTaskID[tidStr] = append(r.byTaskID[tidStr], run)
+		ot := orgtask{o: rlb.Task.Org, t: rlb.Task.ID}
+		r.byOrgTask[ot] = append(r.byOrgTask[ot], run)
 		return nil
 	}
 
@@ -61,31 +66,28 @@ func (r *runReaderWriter) UpdateRunState(ctx context.Context, rlb RunLogBase, wh
 func (r *runReaderWriter) AddRunLog(ctx context.Context, rlb RunLogBase, when time.Time, log string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	log = fmt.Sprintf("%s: %s", when.Format(time.RFC3339Nano), log)
+	pLog := platform.Log{Time: when.Format(time.RFC3339Nano), Message: log}
 	ridStr := rlb.RunID.String()
 	existingRun, ok := r.byRunID[ridStr]
 	if !ok {
 		return ErrRunNotFound
 	}
-	sep := ""
-	if existingRun.Log != "" {
-		sep = "\n"
-	}
-	existingRun.Log = platform.Log(string(existingRun.Log) + sep + log)
+
+	existingRun.Log = append(existingRun.Log, pLog)
 	return nil
 }
 
-func (r *runReaderWriter) ListRuns(ctx context.Context, runFilter platform.RunFilter) ([]*platform.Run, error) {
+func (r *runReaderWriter) ListRuns(ctx context.Context, orgID platform.ID, runFilter platform.RunFilter) ([]*platform.Run, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	if runFilter.Task == nil {
+	if !runFilter.Task.Valid() {
 		return nil, errors.New("task is required")
 	}
 
-	ex, ok := r.byTaskID[runFilter.Task.String()]
+	ex, ok := r.byOrgTask[orgtask{o: orgID, t: runFilter.Task}]
 	if !ok {
-		return nil, ErrRunNotFound
+		return []*platform.Run{}, nil
 	}
 
 	afterID := ""
@@ -129,12 +131,12 @@ func (r *runReaderWriter) FindRunByID(ctx context.Context, orgID, runID platform
 	return &rtnRun, nil
 }
 
-func (r *runReaderWriter) ListLogs(ctx context.Context, logFilter platform.LogFilter) ([]platform.Log, error) {
+func (r *runReaderWriter) ListLogs(ctx context.Context, orgID platform.ID, logFilter platform.LogFilter) ([]platform.Log, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	if logFilter.Task == nil && logFilter.Run == nil {
-		return nil, errors.New("task or run is required")
+	if !logFilter.Task.Valid() {
+		return nil, errors.New("task ID required")
 	}
 
 	if logFilter.Run != nil {
@@ -142,12 +144,15 @@ func (r *runReaderWriter) ListLogs(ctx context.Context, logFilter platform.LogFi
 		if !ok {
 			return nil, ErrRunNotFound
 		}
-		return []platform.Log{run.Log}, nil
+		// TODO(mr): validate that task ID matches, if task is also set. Needs test.
+		return run.Log, nil
 	}
 
-	logs := []platform.Log{}
-	for _, run := range r.byTaskID[logFilter.Task.String()] {
-		logs = append(logs, run.Log)
+	var logs []platform.Log
+	ot := orgtask{o: orgID, t: logFilter.Task}
+	for _, run := range r.byOrgTask[ot] {
+		logs = append(logs, run.Log...)
 	}
+
 	return logs, nil
 }

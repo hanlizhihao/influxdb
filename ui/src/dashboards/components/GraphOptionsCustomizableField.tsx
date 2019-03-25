@@ -49,6 +49,7 @@ const fieldTarget = {
   hover(props, monitor, component) {
     const dragIndex = monitor.getItem().index
     const hoverIndex = props.index
+    const element = findDOMNode(component) as Element
 
     // Don't replace items with themselves
     if (dragIndex === hoverIndex) {
@@ -56,7 +57,7 @@ const fieldTarget = {
     }
 
     // Determine rectangle on screen
-    const hoverBoundingRect = findDOMNode(component).getBoundingClientRect()
+    const hoverBoundingRect = element.getBoundingClientRect()
 
     // Get vertical middle
     const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2
@@ -165,7 +166,7 @@ export default class GraphOptionsCustomizableField extends Component<Props> {
             spellCheck={false}
             id="internalName"
             value={displayName}
-            data-test="custom-time-format"
+            data-testid="custom-time-format"
             onChange={this.handleFieldRename}
             placeholder={`Rename ${internalName}`}
             disabled={!visible}

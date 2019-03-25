@@ -1,28 +1,47 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
+import {connect} from 'react-redux'
 import _ from 'lodash'
+
 // Components
 import UpdateBucketOverlay from 'src/organizations/components/UpdateBucketOverlay'
 import BucketRow, {PrettyBucket} from 'src/organizations/components/BucketRow'
-import {IndexList, OverlayTechnology} from 'src/clockface'
-// Types
-import {OverlayState} from 'src/types/v2'
-import DataLoadersWizard from 'src/dataLoaders/components/DataLoadersWizard'
-import {DataLoaderStep, DataLoaderType, Substep} from 'src/types/v2/dataLoaders'
+import {Overlay, IndexList} from 'src/clockface'
+import DataLoaderSwitcher from 'src/dataLoaders/components/DataLoaderSwitcher'
 
-interface Props {
+// Actions
+import {setBucketInfo} from 'src/dataLoaders/actions/steps'
+
+// Types
+import {OverlayState} from 'src/types'
+import {DataLoaderType} from 'src/types/v2/dataLoaders'
+import {setDataLoadersType} from 'src/dataLoaders/actions/dataLoaders'
+import {AppState} from 'src/types/v2'
+
+interface OwnProps {
   buckets: PrettyBucket[]
   emptyState: JSX.Element
   onUpdateBucket: (b: PrettyBucket) => Promise<void>
   onDeleteBucket: (b: PrettyBucket) => Promise<void>
+  onFilterChange: (searchTerm: string) => void
 }
+
+interface DispatchProps {
+  onSetBucketInfo: typeof setBucketInfo
+  onSetDataLoadersType: typeof setDataLoadersType
+}
+
+interface StateProps {
+  dataLoaderType: DataLoaderType
+}
+
+type Props = OwnProps & StateProps & DispatchProps
 
 interface State {
   bucketID: string
   bucketOverlayState: OverlayState
   dataLoadersOverlayState: OverlayState
-  dataLoaderType: DataLoaderType
 }
 
 class BucketList extends PureComponent<Props & WithRouterProps, State> {
@@ -43,12 +62,18 @@ class BucketList extends PureComponent<Props & WithRouterProps, State> {
       dataLoadersOverlayState: openDataLoaderOverlay
         ? OverlayState.Open
         : OverlayState.Closed,
-      dataLoaderType: DataLoaderType.Empty,
     }
   }
 
   public render() {
-    const {buckets, emptyState, onDeleteBucket} = this.props
+    const {
+      dataLoaderType,
+      buckets,
+      emptyState,
+      onDeleteBucket,
+      onFilterChange,
+    } = this.props
+    const {bucketID} = this.state
 
     return (
       <>
@@ -66,23 +91,25 @@ class BucketList extends PureComponent<Props & WithRouterProps, State> {
                 onEditBucket={this.handleStartEdit}
                 onDeleteBucket={onDeleteBucket}
                 onAddData={this.handleStartAddData}
+                onUpdateBucket={this.handleUpdateBucket}
+                onFilterChange={onFilterChange}
               />
             ))}
           </IndexList.Body>
         </IndexList>
-        <OverlayTechnology visible={this.isBucketOverlayVisible}>
+        <Overlay visible={this.isBucketOverlayVisible}>
           <UpdateBucketOverlay
             bucket={this.bucket}
             onCloseModal={this.handleCloseModal}
             onUpdateBucket={this.handleUpdateBucket}
           />
-        </OverlayTechnology>
-        <DataLoadersWizard
+        </Overlay>
+        <DataLoaderSwitcher
+          type={dataLoaderType}
           visible={this.isDataLoadersWizardVisible}
           onCompleteSetup={this.handleDismissDataLoaders}
-          bucket={this.bucket}
           buckets={buckets}
-          {...this.startingValues}
+          overrideBucketIDSelection={bucketID}
         />
       </>
     )
@@ -90,33 +117,6 @@ class BucketList extends PureComponent<Props & WithRouterProps, State> {
 
   private get bucket(): PrettyBucket {
     return this.props.buckets.find(b => b.id === this.state.bucketID)
-  }
-
-  private get startingValues(): {
-    startingType: DataLoaderType
-    startingStep: number
-    startingSubstep?: Substep
-  } {
-    const {dataLoaderType} = this.state
-
-    switch (dataLoaderType) {
-      case DataLoaderType.Streaming:
-        return {
-          startingType: DataLoaderType.Streaming,
-          startingStep: DataLoaderStep.Select,
-          startingSubstep: 'streaming',
-        }
-      case DataLoaderType.Scraping:
-        return {
-          startingType: DataLoaderType.Scraping,
-          startingStep: DataLoaderStep.Configure,
-        }
-      case DataLoaderType.LineProtocol:
-        return {
-          startingType: DataLoaderType.LineProtocol,
-          startingStep: DataLoaderStep.Configure,
-        }
-    }
   }
 
   private handleCloseModal = () => {
@@ -131,10 +131,18 @@ class BucketList extends PureComponent<Props & WithRouterProps, State> {
     bucket: PrettyBucket,
     dataLoaderType: DataLoaderType
   ) => {
+    this.props.onSetBucketInfo(
+      bucket.organization,
+      bucket.organizationID,
+      bucket.name,
+      bucket.id
+    )
+
+    this.props.onSetDataLoadersType(dataLoaderType)
+
     this.setState({
       bucketID: bucket.id,
       dataLoadersOverlayState: OverlayState.Open,
-      dataLoaderType,
     })
   }
 
@@ -161,4 +169,20 @@ class BucketList extends PureComponent<Props & WithRouterProps, State> {
   }
 }
 
-export default withRouter<Props>(BucketList)
+const mstp = ({
+  dataLoading: {
+    dataLoaders: {type},
+  },
+}: AppState): StateProps => ({
+  dataLoaderType: type,
+})
+
+const mdtp: DispatchProps = {
+  onSetBucketInfo: setBucketInfo,
+  onSetDataLoadersType: setDataLoadersType,
+}
+
+export default connect<StateProps, DispatchProps, OwnProps>(
+  mstp,
+  mdtp
+)(withRouter<Props>(BucketList))

@@ -1,24 +1,27 @@
 // Libraries
-import React, {ChangeEvent, Component} from 'react'
+import React, {Component, ChangeEvent} from 'react'
+
 // Components
 import LabelOverlayForm from 'src/configuration/components/LabelOverlayForm'
+import {Overlay} from 'src/clockface'
+import {ComponentStatus} from '@influxdata/clockface'
+
 // Types
-import {LabelType, OverlayBody, OverlayContainer, OverlayHeading} from 'src/clockface'
-// Utils
-import {validateHexCode} from 'src/configuration/utils/labels'
+import {ILabel} from '@influxdata/influx'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
-  label: LabelType
+  label: ILabel
   onDismiss: () => void
-  onUpdateLabel: (label: LabelType) => Promise<void>
+  onUpdateLabel: (label: ILabel) => Promise<void>
   onNameValidation: (name: string) => string | null
 }
 
 interface State {
-  label: LabelType
-  useCustomColorHex: boolean
+  label: ILabel
+  colorStatus: ComponentStatus
 }
 
 @ErrorHandling
@@ -28,26 +31,24 @@ class UpdateLabelOverlay extends Component<Props, State> {
 
     this.state = {
       label: props.label,
-      useCustomColorHex: false,
+      colorStatus: ComponentStatus.Default,
     }
   }
 
   public render() {
     const {onDismiss, onNameValidation} = this.props
-    const {label, useCustomColorHex} = this.state
+    const {label} = this.state
 
     return (
-      <OverlayContainer maxWidth={600}>
-        <OverlayHeading title="Edit Label" onDismiss={onDismiss} />
-        <OverlayBody>
+      <Overlay.Container maxWidth={400}>
+        <Overlay.Heading title="Edit Label" onDismiss={onDismiss} />
+        <Overlay.Body>
           <LabelOverlayForm
             id={label.id}
             name={label.name}
-            description={label.description}
-            colorHex={label.colorHex}
-            onColorHexChange={this.handleColorHexChange}
-            onToggleCustomColorHex={this.handleToggleCustomColorHex}
-            useCustomColorHex={useCustomColorHex}
+            description={label.properties.description}
+            color={label.properties.color}
+            onColorChange={this.handleColorHexChange}
             onSubmit={this.handleSubmit}
             onCloseModal={onDismiss}
             onInputChange={this.handleInputChange}
@@ -55,16 +56,18 @@ class UpdateLabelOverlay extends Component<Props, State> {
             isFormValid={this.isFormValid}
             onNameValidation={onNameValidation}
           />
-        </OverlayBody>
-      </OverlayContainer>
+        </Overlay.Body>
+      </Overlay.Container>
     )
   }
 
   private get isFormValid(): boolean {
-    const {label} = this.state
+    const {label, colorStatus} = this.state
 
     const nameIsValid = this.props.onNameValidation(label.name) === null
-    const colorIsValid = validateHexCode(label.colorHex) === null
+    const colorIsValid =
+      colorStatus === ComponentStatus.Default ||
+      colorStatus == ComponentStatus.Valid
 
     return nameIsValid && colorIsValid
   }
@@ -80,7 +83,14 @@ class UpdateLabelOverlay extends Component<Props, State> {
     const value = e.target.value
     const key = e.target.name
 
-    if (key in this.state.label) {
+    if (key === 'description' || key === 'color') {
+      const properties = {...this.state.label.properties, [key]: value}
+      const label = {...this.state.label, properties}
+
+      this.setState({
+        label,
+      })
+    } else {
       const label = {...this.state.label, [key]: value}
 
       this.setState({
@@ -89,14 +99,14 @@ class UpdateLabelOverlay extends Component<Props, State> {
     }
   }
 
-  private handleColorHexChange = (colorHex: string): void => {
-    const label = {...this.state.label, colorHex}
+  private handleColorHexChange = (
+    color: string,
+    colorStatus: ComponentStatus
+  ): void => {
+    const properties = {...this.state.label.properties, color}
+    const label = {...this.state.label, properties}
 
-    this.setState({label})
-  }
-
-  private handleToggleCustomColorHex = (useCustomColorHex: boolean): void => {
-    this.setState({useCustomColorHex})
+    this.setState({label, colorStatus})
   }
 }
 

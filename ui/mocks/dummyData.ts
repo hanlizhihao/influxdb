@@ -1,24 +1,27 @@
-import {Source, SourceAuthenticationMethod, SourceLinks, Template, TemplateType, TemplateValueType,} from 'src/types'
-import {Cell, Dashboard, Label} from 'src/types/v2'
+import {Template, SourceLinks, TemplateType, TemplateValueType} from 'src/types'
+import {Source} from '@influxdata/influx'
+import {Cell, Dashboard, Task} from 'src/types/v2'
+import {ILabel} from '@influxdata/influx'
 import {Links} from 'src/types/v2/links'
-import {Task} from 'src/types/v2/tasks'
 import {OnboardingStepProps} from 'src/onboarding/containers/OnboardingWizard'
 import {WithRouterProps} from 'react-router'
 import {ConfigurationState} from 'src/types/v2/dataLoaders'
 import {
-    Organization,
-    Task as TaskApi,
-    TelegrafPluginInputCpu,
-    TelegrafPluginInputDisk,
-    TelegrafPluginInputDiskio,
-    TelegrafPluginInputDocker,
-    TelegrafPluginInputMem,
-    TelegrafPluginInputNet,
-    TelegrafPluginInputProcesses,
-    TelegrafPluginInputProcstat,
-    TelegrafPluginInputRedis,
-    TelegrafPluginInputSystem,
-} from 'src/api'
+  TelegrafPluginInputCpu,
+  TelegrafPluginInputRedis,
+  TelegrafPluginInputDisk,
+  TelegrafPluginInputDiskio,
+  TelegrafPluginInputMem,
+  TelegrafPluginInputSystem,
+  TelegrafPluginInputProcesses,
+  TelegrafPluginInputNet,
+  TelegrafPluginInputProcstat,
+  TelegrafPluginInputDocker,
+  TelegrafPluginInputSwap,
+  Task as TaskApi,
+  Organization,
+  Variable,
+} from '@influxdata/influx'
 
 export const links: Links = {
   authorizations: '/api/v2/authorizations',
@@ -27,7 +30,7 @@ export const links: Links = {
   external: {
     statusFeed: 'https://www.influxdata.com/feed/json',
   },
-  macros: '/api/v2/macros',
+  variables: '/api/v2/variables',
   me: '/api/v2/me',
   orgs: '/api/v2/orgs',
   query: {
@@ -116,14 +119,12 @@ export const sourceLinks: SourceLinks = {
 export const source: Source = {
   id: '16',
   name: 'ssl',
-  type: 'influx',
+  type: Source.TypeEnum.Self,
   username: 'admin',
   url: 'https://localhost:9086',
   insecureSkipVerify: true,
-  default: false,
   telegraf: 'telegraf',
   links: sourceLinks,
-  authentication: SourceAuthenticationMethod.Basic,
 }
 
 export const timeRange = {
@@ -210,7 +211,7 @@ export const dashboard: Dashboard = {
   labels: [],
 }
 
-export const labels: Label[] = [
+export const labels: ILabel[] = [
   {
     id: '0001',
     name: 'Trogdor',
@@ -277,11 +278,10 @@ export const tasks: Task[] = [
     orgID: '02ee9e2a29d73000',
     name: 'pasdlak',
     status: TaskApi.StatusEnum.Active,
-    owner: {id: '02ee9e2a19d73000', name: ''},
     flux:
       'option task = {\n  name: "pasdlak",\n  cron: "2 0 * * *"\n}\nfrom(bucket: "inbucket") \n|> range(start: -1h)',
     cron: '2 0 * * *',
-    organization: orgs[0],
+    org: 'default',
     labels: [],
   },
   {
@@ -289,21 +289,22 @@ export const tasks: Task[] = [
     orgID: '02ee9e2a29d73000',
     name: 'somename',
     status: TaskApi.StatusEnum.Active,
-    owner: {id: '02ee9e2a19d73000', name: ''},
     flux:
       'option task = {\n  name: "somename",\n  every: 1m,\n}\nfrom(bucket: "inbucket") \n|> range(start: -task.every)',
     every: '1m0s',
-    organization: {
-      links: {
-        buckets: '/api/v2/buckets?org=RadicalOrganization',
-        dashboards: '/api/v2/dashboards?org=RadicalOrganization',
-        self: '/api/v2/orgs/02ee9e2a29d73000',
-        tasks: '/api/v2/tasks?org=RadicalOrganization',
-      },
-      id: '02ee9e2a29d73000',
-      name: 'RadicalOrganization',
-    },
+    org: 'default',
     labels,
+  },
+]
+
+export const variables: Variable[] = [
+  {
+    name: 'a little variable',
+    orgID: '0',
+    arguments: {
+      type: 'query',
+      values: {query: '1 + 1 ', language: 'flux'},
+    },
   },
 ]
 
@@ -399,6 +400,12 @@ export const systemTelegrafPlugin = {
 export const redisTelegrafPlugin = {
   ...telegrafPlugin,
   name: TelegrafPluginInputRedis.NameEnum.Redis,
+}
+
+export const swapTelegrafPlugin = {
+  ...telegrafPlugin,
+  name: TelegrafPluginInputSwap.NameEnum.Swap,
+  configured: ConfigurationState.Configured,
 }
 
 export const redisPlugin = {
@@ -527,6 +534,37 @@ export const bucket = {
   labels: [],
 }
 
+export const buckets = [
+  {
+    links: {
+      labels: '/api/v2/buckets/034a10d6f7a6b000/labels',
+      log: '/api/v2/buckets/034a10d6f7a6b000/log',
+      org: '/api/v2/orgs/034a0adc49a6b000',
+      self: '/api/v2/buckets/034a10d6f7a6b000',
+    },
+    id: '034a10d6f7a6b000',
+    organizationID: '034a0adc49a6b000',
+    organization: 'default',
+    name: 'newbuck',
+    retentionRules: [],
+    labels: [],
+  },
+  {
+    links: {
+      labels: '/api/v2/buckets/034a10d6f7a6b000/labels',
+      log: '/api/v2/buckets/034a10d6f7a6b000/log',
+      org: '/api/v2/orgs/034a0adc49a6b000',
+      self: '/api/v2/buckets/034a10d6f7a6b000',
+    },
+    id: '034a10d6f7a6b001',
+    organizationID: '034a0adc49a6b000',
+    organization: 'default',
+    name: 'newbuck1',
+    retentionRules: [],
+    labels: [],
+  },
+]
+
 export const setSetupParamsResponse = {
   data: {
     user: {
@@ -576,7 +614,11 @@ export const setSetupParamsResponse = {
       userID: '033bc62520fe3000',
       user: 'iris',
       permissions: [
-        {action: 'read', resource: 'authorizations', orgID: '033bc62534be3000'},
+        {
+          action: 'read',
+          resource: 'authorizations',
+          orgID: '033bc62534be3000',
+        },
         {
           action: 'write',
           resource: 'authorizations',
@@ -632,3 +674,39 @@ export const setSetupParamsResponse = {
   },
   request: {},
 }
+
+export const telegraf = [
+  {
+    id: '03636a150fb51000',
+    name: 'Name this Configuration',
+    organizationID: '03636a0aabb51000',
+  },
+  {
+    id: '03636a150fb51001',
+    name: 'Name this Configuration',
+    organizationID: '03636a0aabb51000',
+  },
+]
+
+export const scraperTargets = [
+  {
+    bucket: 'a',
+    bucketID: '03636a0aabb51001',
+    id: '03636a0bfe351000',
+    name: 'new target',
+    orgID: '03636a0aabb51000',
+    organization: 'a',
+    type: 'prometheus',
+    url: 'http://localhost:9999/metrics',
+  },
+  {
+    bucket: 'a',
+    bucketID: '03636a0aabb51001',
+    id: '03636a0bfe351001',
+    name: 'new target',
+    orgID: '03636a0aabb51000',
+    organization: 'a',
+    type: 'prometheus',
+    url: 'http://localhost:9999/metrics',
+  },
+]

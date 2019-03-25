@@ -1,18 +1,26 @@
 // Libraries
 import React, {PureComponent} from 'react'
+import {withRouter, WithRouterProps} from 'react-router'
+import _ from 'lodash'
+
 // Components
-import {
-    Alignment,
-    ButtonShape,
-    ComponentColor,
-    ComponentSize,
-    ConfirmationButton,
-    Context,
-    IndexList,
-} from 'src/clockface'
+import {IndexList, ConfirmationButton, Context} from 'src/clockface'
+
+// Constants
+import {DEFAULT_BUCKET_NAME} from 'src/dashboards/constants'
+
 // Types
-import {Bucket} from 'src/api'
+import {
+  Alignment,
+  ButtonShape,
+  ComponentSize,
+  ComponentColor,
+  IconFont,
+} from '@influxdata/clockface'
+import {Bucket} from '@influxdata/influx'
 import {DataLoaderType} from 'src/types/v2/dataLoaders'
+import EditableName from 'src/shared/components/EditableName'
+import CloudFeatureFlag from 'src/shared/components/CloudFeatureFlag'
 
 export interface PrettyBucket extends Bucket {
   ruleString: string
@@ -23,19 +31,25 @@ interface Props {
   onEditBucket: (b: PrettyBucket) => void
   onDeleteBucket: (b: PrettyBucket) => void
   onAddData: (b: PrettyBucket, d: DataLoaderType) => void
+  onUpdateBucket: (b: PrettyBucket) => void
+  onFilterChange: (searchTerm: string) => void
 }
 
-export default class BucketRow extends PureComponent<Props> {
+class BucketRow extends PureComponent<Props & WithRouterProps> {
   public render() {
     const {bucket, onDeleteBucket} = this.props
     return (
       <>
         <IndexList.Row>
           <IndexList.Cell>
-            <a href="#" onClick={this.handleEditBucket}>
-              <span>{bucket.name}</span>
-            </a>
+            <EditableName
+              onUpdate={this.handleUpdateBucketName}
+              name={bucket.name}
+              onEditName={this.handleEditBucket}
+              noNameString={DEFAULT_BUCKET_NAME}
+            />
           </IndexList.Cell>
+          {this.organization}
           <IndexList.Cell>{bucket.ruleString}</IndexList.Cell>
           <IndexList.Cell revealOnHover={true} alignment={Alignment.Right}>
             <ConfirmationButton
@@ -49,6 +63,7 @@ export default class BucketRow extends PureComponent<Props> {
           <IndexList.Cell alignment={Alignment.Right}>
             <Context align={Alignment.Center}>
               <Context.Menu
+                icon={IconFont.Plus}
                 text="Add Data"
                 shape={ButtonShape.Default}
                 color={ComponentColor.Primary}
@@ -63,17 +78,29 @@ export default class BucketRow extends PureComponent<Props> {
                   description="Quickly load an existing line protocol file."
                   action={this.handleAddLineProtocol}
                 />
-                <Context.Item
-                  label="Scrape Metrics"
-                  description="Add a scrape target to pull data into your bucket."
-                  action={this.handleAddScraper}
-                />
+                <CloudFeatureFlag>
+                  <Context.Item
+                    label="Scrape Metrics"
+                    description="Add a scrape target to pull data into your bucket."
+                    action={this.handleAddScraper}
+                  />
+                </CloudFeatureFlag>
               </Context.Menu>
             </Context>
           </IndexList.Cell>
         </IndexList.Row>
       </>
     )
+  }
+
+  private get organization(): JSX.Element {
+    if (!_.get(this.props, 'params.orgID')) {
+      return <IndexList.Cell>{this.props.bucket.organization}</IndexList.Cell>
+    }
+  }
+
+  private handleUpdateBucketName = async (value: string) => {
+    await this.props.onUpdateBucket({...this.props.bucket, name: value})
   }
 
   private handleEditBucket = (): void => {
@@ -92,3 +119,5 @@ export default class BucketRow extends PureComponent<Props> {
     this.props.onAddData(this.props.bucket, DataLoaderType.Scraping)
   }
 }
+
+export default withRouter<Props>(BucketRow)

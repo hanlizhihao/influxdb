@@ -1,12 +1,16 @@
 // Libraries
 import React, {Component} from 'react'
 import classnames from 'classnames'
+
 // Components
 import RadioButton from 'src/clockface/components/radio_buttons/RadioButton'
+
 // Types
-import {ButtonShape, ComponentColor, ComponentSize} from 'src/clockface/types'
+import {ComponentColor, ComponentSize, ButtonShape} from '@influxdata/clockface'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
+
 // Styles
 import './RadioButtons.scss'
 

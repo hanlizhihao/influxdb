@@ -1,27 +1,49 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
+import {connect} from 'react-redux'
 import _ from 'lodash'
-// APIs
-import {deleteDashboard} from 'src/dashboards/apis'
+
 // Components
-import TabbedPageHeader from 'src/shared/components/tabbed_page/TabbedPageHeader'
-import {ComponentSize, EmptyState, IconFont, Input} from 'src/clockface'
-import FilterList from 'src/shared/components/Filter'
-import DashboardList from 'src/organizations/components/DashboardList'
+import DashboardsIndexContents from 'src/dashboards/components/dashboard_index/DashboardsIndexContents'
+import {Input, Tabs} from 'src/clockface'
+import {IconFont} from '@influxdata/clockface'
+import AddResourceDropdown from 'src/shared/components/AddResourceDropdown'
+
+// APIs
+import {createDashboard, cloneDashboard} from 'src/dashboards/apis/'
+
+// Actions
+import {
+  deleteDashboardAsync,
+  updateDashboardAsync,
+} from 'src/dashboards/actions/'
+import {notify as notifyAction} from 'src/shared/actions/notifications'
+
+// Constants
+import {dashboardCreateFailed} from 'src/shared/copy/notifications'
+import {DEFAULT_DASHBOARD_NAME} from 'src/dashboards/constants/index'
+
 // Types
+import {Notification} from 'src/types/notifications'
 import {Dashboard} from 'src/types/v2'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
-interface OwnProps {
-  dashboards: Dashboard[]
-  orgName: string
-  orgID: string
-  onChange: () => void
+interface DispatchProps {
+  handleDeleteDashboard: typeof deleteDashboardAsync
+  handleUpdateDashboard: typeof updateDashboardAsync
+  notify: (message: Notification) => void
 }
 
-type Props = OwnProps & WithRouterProps
+interface OwnProps {
+  dashboards: Dashboard[]
+  onChange: () => void
+  orgID: string
+}
+
+type Props = DispatchProps & OwnProps & WithRouterProps
 
 interface State {
   searchTerm: string
@@ -29,82 +51,110 @@ interface State {
 
 @ErrorHandling
 class Dashboards extends PureComponent<Props, State> {
-  constructor(props) {
+  constructor(props: Props) {
     super(props)
+
     this.state = {
       searchTerm: '',
     }
   }
 
   public render() {
+    const {dashboards, notify, handleUpdateDashboard} = this.props
     const {searchTerm} = this.state
-    const {dashboards, orgID, router} = this.props
 
     return (
       <>
-        <TabbedPageHeader>
+        <Tabs.TabContentsHeader>
           <Input
             icon={IconFont.Search}
+            placeholder="Filter dashboards..."
             widthPixels={290}
             value={searchTerm}
-            onBlur={this.handleFilterBlur}
             onChange={this.handleFilterChange}
-            placeholder="Filter Dashboards..."
+            onBlur={this.handleFilterBlur}
+            testID={`dashboards--filter-field ${searchTerm}`}
+            customClass="filter-dashboards"
           />
-        </TabbedPageHeader>
-        <FilterList<Dashboard>
+          <AddResourceDropdown
+            onSelectNew={this.handleCreateDashboard}
+            onSelectImport={this.summonImportOverlay}
+            resourceName="Dashboard"
+          />
+        </Tabs.TabContentsHeader>
+        <DashboardsIndexContents
+          dashboards={dashboards}
+          onDeleteDashboard={this.handleDeleteDashboard}
+          onCreateDashboard={this.handleCreateDashboard}
+          onCloneDashboard={this.handleCloneDashboard}
+          onUpdateDashboard={handleUpdateDashboard}
+          notify={notify}
           searchTerm={searchTerm}
-          searchKeys={['name']}
-          list={dashboards}
-        >
-          {ds => (
-            <DashboardList
-              dashboards={ds}
-              emptyState={this.emptyState}
-              onDeleteDashboard={this.handleDeleteDashboard}
-              orgID={orgID}
-              router={router}
-            />
-          )}
-        </FilterList>
+          showOwnerColumn={false}
+          onFilterChange={this.handleFilterUpdate}
+          onImportDashboard={this.summonImportOverlay}
+        />
       </>
     )
-  }
-
-  private handleFilterChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    this.setState({searchTerm: e.target.value})
   }
 
   private handleFilterBlur = (e: ChangeEvent<HTMLInputElement>): void => {
     this.setState({searchTerm: e.target.value})
   }
 
-  private handleDeleteDashboard = async (dashboard: Dashboard) => {
-    await deleteDashboard(dashboard)
-    this.props.onChange()
+  private handleFilterChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    this.setState({searchTerm: e.target.value})
   }
 
-  private get emptyState(): JSX.Element {
-    const {orgName} = this.props
-    const {searchTerm} = this.state
+  private handleFilterUpdate = (searchTerm: string): void => {
+    this.setState({searchTerm})
+  }
 
-    if (_.isEmpty(searchTerm)) {
-      return (
-        <EmptyState size={ComponentSize.Medium}>
-          <EmptyState.Text
-            text={`${orgName} does not own any Dashboards , why not create one?`}
-            highlightWords={['Dashboards']}
-          />
-        </EmptyState>
-      )
+  private summonImportOverlay = (): void => {
+    const {router, params} = this.props
+    router.push(`/organizations/${params.orgID}/dashboards/import`)
+  }
+
+  private handleCreateDashboard = async (): Promise<void> => {
+    const {router, notify, orgID} = this.props
+    try {
+      const newDashboard = {
+        name: DEFAULT_DASHBOARD_NAME,
+        cells: [],
+        orgID: orgID,
+      }
+      const data = await createDashboard(newDashboard)
+      router.push(`/dashboards/${data.id}`)
+    } catch (error) {
+      notify(dashboardCreateFailed())
     }
+  }
 
-    return (
-      <EmptyState size={ComponentSize.Medium}>
-        <EmptyState.Text text="No Dashboards match your query" />
-      </EmptyState>
-    )
+  private handleCloneDashboard = async (
+    dashboard: Dashboard
+  ): Promise<void> => {
+    const {router, notify, dashboards} = this.props
+    try {
+      const data = await cloneDashboard(dashboard, dashboards)
+      router.push(`/dashboards/${data.id}`)
+    } catch (error) {
+      console.error(error)
+      notify(dashboardCreateFailed())
+    }
+  }
+
+  private handleDeleteDashboard = (dashboard: Dashboard) => {
+    this.props.handleDeleteDashboard(dashboard)
   }
 }
 
-export default withRouter<OwnProps>(Dashboards)
+const mdtp: DispatchProps = {
+  notify: notifyAction,
+  handleDeleteDashboard: deleteDashboardAsync,
+  handleUpdateDashboard: updateDashboardAsync,
+}
+
+export default connect<{}, DispatchProps, OwnProps>(
+  null,
+  mdtp
+)(withRouter(Dashboards))

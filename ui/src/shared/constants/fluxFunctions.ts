@@ -1,5 +1,85 @@
 import {FluxToolbarFunction} from 'src/types/shared'
 
+export const FROM: FluxToolbarFunction = {
+  name: 'from',
+  args: [
+    {
+      name: 'bucket',
+      desc: 'The name of the bucket to query.',
+      type: 'String',
+    },
+    {
+      name: 'bucketID',
+      desc: 'The string-encoded ID of the bucket to query.',
+      type: 'String',
+    },
+  ],
+  desc:
+    'Used to retrieve data from an InfluxDB data source. It returns a stream of tables from the specified bucket. Each unique series is contained within its own table. Each record in the table represents a single point in the series.',
+  example: 'from(bucket: "telegraf/autogen")',
+  category: 'Inputs',
+  link:
+    'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/inputs/from',
+}
+
+export const RANGE: FluxToolbarFunction = {
+  name: 'range',
+  args: [
+    {
+      name: 'start',
+      desc: 'Specifies the oldest time to be included in the results.',
+      type: 'Duration',
+    },
+    {
+      name: 'stop',
+      desc:
+        'Specifies the exclusive newest time to be included in the results. Defaults to `now`.',
+      type: 'Duration',
+    },
+  ],
+  desc:
+    "Filters records based on time bounds. Each input table's records are filtered to contain only records that exist within the time bounds. Each input table's group key value is modified to fit within the time bounds. Tables where all records exists outside the time bounds are filtered entirely.",
+  example: 'range(start: -15m, stop: now)',
+  category: 'Transformations',
+  link:
+    'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/range',
+}
+
+export const MEAN: FluxToolbarFunction = {
+  name: 'mean',
+  args: [
+    {
+      name: 'columns',
+      desc:
+        'A list of columns on which to compute the mean. Defaults to `["_value"]`',
+      type: 'Array of Strings',
+    },
+  ],
+  desc: 'Computes the mean or average of non-null records in the input table.',
+  example: 'mean(columns: ["_value"])',
+  category: 'Aggregates',
+  link:
+    'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/aggregates/mean',
+}
+
+export const UNION: FluxToolbarFunction = {
+  name: 'union',
+  args: [
+    {
+      name: 'tables',
+      desc:
+        'Specifies the streams to union together. There must be at least two streams.',
+      type: 'Array of Strings',
+    },
+  ],
+  desc:
+    'Concatenates two or more input streams into a single output stream. The output schemas of the `union()` function is the union of all input schemas. A sort operation may be added if a specific sort order is needed.',
+  example: 'union(tables: [table1, table2])',
+  category: 'Transformations',
+  link:
+    'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/union',
+}
+
 export const FLUX_FUNCTIONS: FluxToolbarFunction[] = [
   {
     name: 'aggregateWindow',
@@ -379,27 +459,7 @@ export const FLUX_FUNCTIONS: FluxToolbarFunction[] = [
     link:
       'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/selectors/first',
   },
-  {
-    name: 'from',
-    args: [
-      {
-        name: 'bucket',
-        desc: 'The name of the bucket to query.',
-        type: 'String',
-      },
-      {
-        name: 'bucketID',
-        desc: 'The string-encoded ID of the bucket to query.',
-        type: 'String',
-      },
-    ],
-    desc:
-      'Used to retrieve data from an InfluxDB data source. It returns a stream of tables from the specified bucket. Each unique series is contained within its own table. Each record in the table represents a single point in the series.',
-    example: 'from(bucket: "telegraf/autogen")',
-    category: 'Inputs',
-    link:
-      'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/inputs/from',
-  },
+  FROM,
   {
     name: 'fromCSV',
     args: [
@@ -625,16 +685,6 @@ export const FLUX_FUNCTIONS: FluxToolbarFunction[] = [
     category: 'Aggregates',
     link:
       'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/aggregates/increase',
-  },
-  {
-    name: 'influxFieldsAsCols',
-    args: [],
-    desc:
-      'A special application of the `pivot()` function that automatically aligns fields within each input table that have the same timestamp.',
-    example: 'influxFieldsAsCols()',
-    category: 'Transformations',
-    link:
-      'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/influxfieldsascols',
   },
   {
     name: 'integral',
@@ -989,23 +1039,7 @@ export const FLUX_FUNCTIONS: FluxToolbarFunction[] = [
     link:
       'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/selectors/max',
   },
-  {
-    name: 'mean',
-    args: [
-      {
-        name: 'columns',
-        desc:
-          'A list of columns on which to compute the mean. Defaults to `["_value"]`',
-        type: 'Array of Strings',
-      },
-    ],
-    desc:
-      'Computes the mean or average of non-null records in the input table.',
-    example: 'mean(columns: ["_value"])',
-    category: 'Aggregates',
-    link:
-      'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/aggregates/mean',
-  },
+  MEAN,
   {
     name: 'median',
     args: [
@@ -1122,28 +1156,7 @@ export const FLUX_FUNCTIONS: FluxToolbarFunction[] = [
     link:
       'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/pivot',
   },
-  {
-    name: 'range',
-    args: [
-      {
-        name: 'start',
-        desc: 'Specifies the oldest time to be included in the results.',
-        type: 'Duration',
-      },
-      {
-        name: 'stop',
-        desc:
-          'Specifies the exclusive newest time to be included in the results. Defaults to `now`.',
-        type: 'Duration',
-      },
-    ],
-    desc:
-      "Filters records based on time bounds. Each input table's records are filtered to contain only records that exist within the time bounds. Each input table's group key value is modified to fit within the time bounds. Tables where all records exists outside the time bounds are filtered entirely.",
-    example: 'range(start: -15m, stop: now)',
-    category: 'Transformations',
-    link:
-      'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/range',
-  },
+  RANGE,
   {
     name: 'rename',
     args: [
@@ -1529,23 +1542,7 @@ export const FLUX_FUNCTIONS: FluxToolbarFunction[] = [
     link:
       'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/type-conversions/touint',
   },
-  {
-    name: 'union',
-    args: [
-      {
-        name: 'tables',
-        desc:
-          'Specifies the streams to union together. There must be at least two streams.',
-        type: 'Array of Strings',
-      },
-    ],
-    desc:
-      'Concatenates two or more input streams into a single output stream. The output schemas of the `union()` function is the union of all input schemas. A sort operation may be added if a specific sort order is needed.',
-    example: 'union(tables: ["table1", "table2"])',
-    category: 'Transformations',
-    link:
-      'https://v2.docs.influxdata.com/v2.0/reference/flux/functions/transformations/union',
-  },
+  UNION,
   {
     name: 'unique',
     args: [

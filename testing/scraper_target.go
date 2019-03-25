@@ -19,8 +19,9 @@ const (
 
 // TargetFields will include the IDGenerator, and targets
 type TargetFields struct {
-	IDGenerator platform.IDGenerator
-	Targets     []*platform.ScraperTarget
+	IDGenerator          platform.IDGenerator
+	Targets              []*platform.ScraperTarget
+	UserResourceMappings []*platform.UserResourceMapping
 }
 
 var targetCmpOptions = cmp.Options{
@@ -40,6 +41,7 @@ var targetCmpOptions = cmp.Options{
 func ScraperService(
 	init func(TargetFields, *testing.T) (platform.ScraperTargetStoreService, string, func()), t *testing.T,
 ) {
+	t.Helper()
 	tests := []struct {
 		name string
 		fn   func(init func(TargetFields, *testing.T) (platform.ScraperTargetStoreService, string, func()),
@@ -78,12 +80,15 @@ func AddTarget(
 	init func(TargetFields, *testing.T) (platform.ScraperTargetStoreService, string, func()),
 	t *testing.T,
 ) {
+	t.Helper()
 	type args struct {
+		userID platform.ID
 		target *platform.ScraperTarget
 	}
 	type wants struct {
-		err     error
-		targets []platform.ScraperTarget
+		err                  error
+		targets              []platform.ScraperTarget
+		userResourceMappings []*platform.UserResourceMapping
 	}
 	tests := []struct {
 		name   string
@@ -94,10 +99,12 @@ func AddTarget(
 		{
 			name: "create targets with empty set",
 			fields: TargetFields{
-				IDGenerator: mock.NewIDGenerator(targetOneID, t),
-				Targets:     []*platform.ScraperTarget{},
+				IDGenerator:          mock.NewIDGenerator(targetOneID, t),
+				Targets:              []*platform.ScraperTarget{},
+				UserResourceMappings: []*platform.UserResourceMapping{},
 			},
 			args: args{
+				userID: MustIDBase16(threeID),
 				target: &platform.ScraperTarget{
 					Name:     "name1",
 					Type:     platform.PrometheusScraperType,
@@ -107,6 +114,14 @@ func AddTarget(
 				},
 			},
 			wants: wants{
+				userResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(oneID),
+						ResourceType: platform.ScraperResourceType,
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Owner,
+					},
+				},
 				targets: []platform.ScraperTarget{
 					{
 						Name:     "name1",
@@ -122,7 +137,8 @@ func AddTarget(
 		{
 			name: "create target with invalid org id",
 			fields: TargetFields{
-				IDGenerator: mock.NewIDGenerator(targetTwoID, t),
+				IDGenerator:          mock.NewIDGenerator(targetTwoID, t),
+				UserResourceMappings: []*platform.UserResourceMapping{},
 				Targets: []*platform.ScraperTarget{
 					{
 						Name:     "name1",
@@ -146,9 +162,10 @@ func AddTarget(
 			wants: wants{
 				err: &platform.Error{
 					Code: platform.EInvalid,
-					Msg:  "org id is invalid",
+					Msg:  "provided organization ID has invalid format",
 					Op:   platform.OpAddTarget,
 				},
+				userResourceMappings: []*platform.UserResourceMapping{},
 				targets: []platform.ScraperTarget{
 					{
 						Name:     "name1",
@@ -164,7 +181,8 @@ func AddTarget(
 		{
 			name: "create target with invalid bucket id",
 			fields: TargetFields{
-				IDGenerator: mock.NewIDGenerator(targetTwoID, t),
+				IDGenerator:          mock.NewIDGenerator(targetTwoID, t),
+				UserResourceMappings: []*platform.UserResourceMapping{},
 				Targets: []*platform.ScraperTarget{
 					{
 						Name:     "name1",
@@ -188,9 +206,10 @@ func AddTarget(
 			wants: wants{
 				err: &platform.Error{
 					Code: platform.EInvalid,
-					Msg:  "bucket id is invalid",
+					Msg:  "provided bucket ID has invalid format",
 					Op:   platform.OpAddTarget,
 				},
+				userResourceMappings: []*platform.UserResourceMapping{},
 				targets: []platform.ScraperTarget{
 					{
 						Name:     "name1",
@@ -217,8 +236,17 @@ func AddTarget(
 						ID:       MustIDBase16(targetOneID),
 					},
 				},
+				UserResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(targetOneID),
+						ResourceType: platform.ScraperResourceType,
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Member,
+					},
+				},
 			},
 			args: args{
+				userID: MustIDBase16(threeID),
 				target: &platform.ScraperTarget{
 					ID:       MustIDBase16(targetTwoID),
 					Name:     "name2",
@@ -229,6 +257,20 @@ func AddTarget(
 				},
 			},
 			wants: wants{
+				userResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(oneID),
+						ResourceType: platform.ScraperResourceType,
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Member,
+					},
+					{
+						ResourceID:   MustIDBase16(twoID),
+						ResourceType: platform.ScraperResourceType,
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Owner,
+					},
+				},
 				targets: []platform.ScraperTarget{
 					{
 						Name:     "name1",
@@ -255,7 +297,7 @@ func AddTarget(
 			s, opPrefix, done := init(tt.fields, t)
 			defer done()
 			ctx := context.Background()
-			err := s.AddTarget(ctx, tt.args.target)
+			err := s.AddTarget(ctx, tt.args.target, tt.args.userID)
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)
 			defer s.RemoveTarget(ctx, tt.args.target.ID)
 
@@ -265,6 +307,16 @@ func AddTarget(
 			}
 			if diff := cmp.Diff(targets, tt.wants.targets, targetCmpOptions...); diff != "" {
 				t.Errorf("scraper targets are different -got/+want\ndiff %s", diff)
+			}
+			urms, _, err := s.FindUserResourceMappings(ctx, platform.UserResourceMappingFilter{
+				UserID:       tt.args.userID,
+				ResourceType: platform.ScraperResourceType,
+			})
+			if err != nil {
+				t.Fatalf("failed to retrieve user resource mappings: %v", err)
+			}
+			if diff := cmp.Diff(urms, tt.wants.userResourceMappings, userResourceMappingCmpOptions...); diff != "" {
+				t.Errorf("user resource mappings are different -got/+want\ndiff %s", diff)
 			}
 		})
 
@@ -351,6 +403,7 @@ func GetTargetByID(
 	init func(TargetFields, *testing.T) (platform.ScraperTargetStoreService, string, func()),
 	t *testing.T,
 ) {
+	t.Helper()
 	type args struct {
 		id platform.ID
 	}
@@ -446,11 +499,13 @@ func GetTargetByID(
 func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetStoreService, string, func()),
 	t *testing.T) {
 	type args struct {
-		ID platform.ID
+		ID     platform.ID
+		userID platform.ID
 	}
 	type wants struct {
-		err     error
-		targets []platform.ScraperTarget
+		err                  error
+		userResourceMappings []*platform.UserResourceMapping
+		targets              []platform.ScraperTarget
 	}
 	tests := []struct {
 		name   string
@@ -461,6 +516,20 @@ func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetSto
 		{
 			name: "delete targets using exist id",
 			fields: TargetFields{
+				UserResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(oneID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Owner,
+						ResourceType: platform.ScraperResourceType,
+					},
+					{
+						ResourceID:   MustIDBase16(twoID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Member,
+						ResourceType: platform.ScraperResourceType,
+					},
+				},
 				Targets: []*platform.ScraperTarget{
 					{
 						ID:       MustIDBase16(targetOneID),
@@ -475,9 +544,18 @@ func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetSto
 				},
 			},
 			args: args{
-				ID: MustIDBase16(targetOneID),
+				ID:     MustIDBase16(targetOneID),
+				userID: MustIDBase16(threeID),
 			},
 			wants: wants{
+				userResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(twoID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Member,
+						ResourceType: platform.ScraperResourceType,
+					},
+				},
 				targets: []platform.ScraperTarget{
 					{
 						ID:       MustIDBase16(targetTwoID),
@@ -490,6 +568,20 @@ func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetSto
 		{
 			name: "delete targets using id that does not exist",
 			fields: TargetFields{
+				UserResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(oneID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Owner,
+						ResourceType: platform.ScraperResourceType,
+					},
+					{
+						ResourceID:   MustIDBase16(twoID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Member,
+						ResourceType: platform.ScraperResourceType,
+					},
+				},
 				Targets: []*platform.ScraperTarget{
 					{
 						ID:       MustIDBase16(targetOneID),
@@ -504,7 +596,8 @@ func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetSto
 				},
 			},
 			args: args{
-				ID: MustIDBase16(targetThreeID),
+				ID:     MustIDBase16(targetThreeID),
+				userID: MustIDBase16(threeID),
 			},
 			wants: wants{
 				err: &platform.Error{
@@ -522,6 +615,20 @@ func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetSto
 						ID:       MustIDBase16(targetTwoID),
 						OrgID:    MustIDBase16(orgOneID),
 						BucketID: MustIDBase16(bucketOneID),
+					},
+				},
+				userResourceMappings: []*platform.UserResourceMapping{
+					{
+						ResourceID:   MustIDBase16(oneID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Owner,
+						ResourceType: platform.ScraperResourceType,
+					},
+					{
+						ResourceID:   MustIDBase16(twoID),
+						UserID:       MustIDBase16(threeID),
+						UserType:     platform.Member,
+						ResourceType: platform.ScraperResourceType,
 					},
 				},
 			},
@@ -542,6 +649,16 @@ func RemoveTarget(init func(TargetFields, *testing.T) (platform.ScraperTargetSto
 			if diff := cmp.Diff(targets, tt.wants.targets, targetCmpOptions...); diff != "" {
 				t.Errorf("targets are different -got/+want\ndiff %s", diff)
 			}
+			urms, _, err := s.FindUserResourceMappings(ctx, platform.UserResourceMappingFilter{
+				UserID:       tt.args.userID,
+				ResourceType: platform.ScraperResourceType,
+			})
+			if err != nil {
+				t.Fatalf("failed to retrieve user resource mappings: %v", err)
+			}
+			if diff := cmp.Diff(urms, tt.wants.userResourceMappings, userResourceMappingCmpOptions...); diff != "" {
+				t.Errorf("user resource mappings are different -got/+want\ndiff %s", diff)
+			}
 		})
 	}
 }
@@ -552,8 +669,9 @@ func UpdateTarget(
 	t *testing.T,
 ) {
 	type args struct {
-		url string
-		id  platform.ID
+		url    string
+		userID platform.ID
+		id     platform.ID
 	}
 	type wants struct {
 		err    error
@@ -591,7 +709,7 @@ func UpdateTarget(
 				err: &platform.Error{
 					Code: platform.EInvalid,
 					Op:   platform.OpUpdateTarget,
-					Msg:  "id is invalid",
+					Msg:  "provided scraper target ID has invalid format",
 				},
 			},
 		},
@@ -669,7 +787,7 @@ func UpdateTarget(
 				URL: tt.args.url,
 			}
 
-			target, err := s.UpdateTarget(ctx, upd)
+			target, err := s.UpdateTarget(ctx, upd, tt.args.userID)
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)
 
 			if diff := cmp.Diff(target, tt.wants.target, targetCmpOptions...); diff != "" {

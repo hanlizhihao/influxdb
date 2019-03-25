@@ -1,13 +1,13 @@
 // Libraries
 import React, {Component, ReactElement, ReactNode} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
+
 // Components
 import TabbedPageSection from 'src/shared/components/tabbed_page/TabbedPageSection'
 import TabbedPageTab from 'src/shared/components/tabbed_page/TabbedPageTab'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
-// Styles
-import 'src/shared/components/tabbed_page/TabbedPage.scss'
 
 interface OwnProps {
   name: string

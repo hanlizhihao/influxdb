@@ -1,33 +1,35 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import _ from 'lodash'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {InjectedRouter} from 'react-router'
 import {connect} from 'react-redux'
+
 // Components
 import TaskForm from 'src/tasks/components/TaskForm'
 import TaskHeader from 'src/tasks/components/TaskHeader'
 import {Page} from 'src/pageLayout'
 import FluxEditor from 'src/shared/components/FluxEditor'
+
 // Actions
 import {
-    cancelUpdateTask,
-    clearTask,
-    selectTaskByID,
-    setAllTaskOptions,
-    setCurrentScript,
-    setTaskOption,
-    updateScript,
-} from 'src/tasks/actions/v2'
-// Types
-import {Organization, Task as TaskAPI, User} from 'src/api'
-import {Links} from 'src/types/v2/links'
-import {State as TasksState} from 'src/tasks/reducers/v2'
-import {TaskOptionKeys, TaskOptions, TaskSchedule,} from 'src/utils/taskOptionsToFluxScript'
+  updateScript,
+  selectTaskByID,
+  setCurrentScript,
+  cancel,
+  setTaskOption,
+  clearTask,
+  setAllTaskOptions,
+} from 'src/tasks/actions'
 
-interface Task extends TaskAPI {
-  organization: Organization
-  owner?: User
-  offset?: string
-}
+// Types
+import {Organization, ITask as Task} from '@influxdata/influx'
+import {State as TasksState} from 'src/tasks/reducers'
+import {
+  TaskOptions,
+  TaskOptionKeys,
+  TaskSchedule,
+} from 'src/utils/taskOptionsToFluxScript'
+import {Links} from 'src/types/v2'
 
 interface PassedInProps {
   router: InjectedRouter
@@ -46,13 +48,13 @@ interface ConnectDispatchProps {
   setTaskOption: typeof setTaskOption
   setCurrentScript: typeof setCurrentScript
   updateScript: typeof updateScript
-  cancelUpdateTask: typeof cancelUpdateTask
+  cancel: typeof cancel
   selectTaskByID: typeof selectTaskByID
   clearTask: typeof clearTask
   setAllTaskOptions: typeof setAllTaskOptions
 }
 
-class TaskPage extends PureComponent<
+class TaskEditPage extends PureComponent<
   PassedInProps & ConnectStateProps & ConnectDispatchProps
 > {
   constructor(props) {
@@ -102,7 +104,6 @@ class TaskPage extends PureComponent<
                 script={currentScript}
                 onChangeScript={this.handleChangeScript}
                 visibility="visible"
-                status={{text: '', type: ''}}
                 suggestions={[]}
               />
             </div>
@@ -135,7 +136,7 @@ class TaskPage extends PureComponent<
   }
 
   private handleCancel = () => {
-    this.props.cancelUpdateTask()
+    this.props.cancel()
   }
 
   private handleChangeInput = (e: ChangeEvent<HTMLInputElement>) => {
@@ -172,7 +173,7 @@ const mdtp: ConnectDispatchProps = {
   setTaskOption,
   setCurrentScript,
   updateScript,
-  cancelUpdateTask,
+  cancel,
   selectTaskByID,
   setAllTaskOptions,
   clearTask,
@@ -181,4 +182,4 @@ const mdtp: ConnectDispatchProps = {
 export default connect<ConnectStateProps, ConnectDispatchProps, {}>(
   mstp,
   mdtp
-)(TaskPage)
+)(TaskEditPage)

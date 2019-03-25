@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/csv"
 	"github.com/influxdata/flux/lang"
 	platform "github.com/influxdata/influxdb"
@@ -24,7 +26,7 @@ func TestFluxService_Query(t *testing.T) {
 		ctx     context.Context
 		r       *query.ProxyRequest
 		status  int
-		want    int64
+		want    flux.Statistics
 		wantW   string
 		wantErr bool
 	}{
@@ -41,7 +43,7 @@ func TestFluxService_Query(t *testing.T) {
 				Dialect: csv.DefaultDialect(),
 			},
 			status: http.StatusOK,
-			want:   6,
+			want:   flux.Statistics{},
 			wantW:  "howdy\n",
 		},
 		{
@@ -78,8 +80,8 @@ func TestFluxService_Query(t *testing.T) {
 				t.Errorf("FluxService.Query() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.want {
-				t.Errorf("FluxService.Query() = %v, want %v", got, tt.want)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("FluxService.Query() = -want/+got: %v", diff)
 			}
 			if gotW := w.String(); gotW != tt.wantW {
 				t.Errorf("FluxService.Query() = %v, want %v", gotW, tt.wantW)
@@ -127,11 +129,11 @@ func TestFluxQueryService_Query(t *testing.T) {
 			status: http.StatusOK,
 			csv: `#datatype,string,long,dateTime:RFC3339,double,long,string,boolean,string,string,string
 #group,false,false,false,false,false,false,false,true,true,true
-#default,0,,,,,,,,,
+#default,_result,,,,,,,,,
 ,result,table,_time,usage_user,test,mystr,this,cpu,host,_measurement
 ,,0,2018-08-29T13:08:47Z,10.2,10,yay,true,cpu-total,a,cpui
 `,
-			want: toCRLF(`,,,2018-08-29T13:08:47Z,10.2,10,yay,true,cpu-total,a,cpui
+			want: toCRLF(`,_result,0,2018-08-29T13:08:47Z,10.2,10,yay,true,cpu-total,a,cpui
 
 `),
 		},
@@ -210,6 +212,7 @@ func TestFluxHandler_postFluxAST(t *testing.T) {
 			name:   "error from bad json",
 			w:      httptest.NewRecorder(),
 			r:      httptest.NewRequest("POST", "/api/v2/query/ast", bytes.NewBufferString(`error!`)),
+			want:   `{"code":"invalid","message":"invalid json","error":"invalid character 'e' looking for beginning of value"}`,
 			status: http.StatusBadRequest,
 		},
 	}
@@ -241,7 +244,7 @@ func TestFluxHandler_postFluxSpec(t *testing.T) {
 			w:    httptest.NewRecorder(),
 			r:    httptest.NewRequest("POST", "/api/v2/query/spec", bytes.NewBufferString(`{"query": "from(bucket: \"telegraf\")"}`)),
 			now:  func() time.Time { return time.Unix(0, 0).UTC() },
-			want: `{"spec":{"operations":[{"kind":"from","id":"from0","spec":{"bucket":"telegraf"}}],"edges":null,"resources":{"priority":"high","concurrency_quota":0,"memory_bytes_quota":0},"now":"1970-01-01T00:00:00Z"}}
+			want: `{"spec":{"operations":[{"kind":"influxDBFrom","id":"influxDBFrom0","spec":{"bucket":"telegraf"}}],"edges":null,"resources":{"priority":"high","concurrency_quota":0,"memory_bytes_quota":0},"now":"1970-01-01T00:00:00Z"}}
 `,
 			status: http.StatusOK,
 		},
@@ -249,6 +252,7 @@ func TestFluxHandler_postFluxSpec(t *testing.T) {
 			name:   "error from bad json",
 			w:      httptest.NewRecorder(),
 			r:      httptest.NewRequest("POST", "/api/v2/query/spec", bytes.NewBufferString(`error!`)),
+			want:   `{"code":"invalid","message":"invalid json","error":"invalid character 'e' looking for beginning of value"}`,
 			status: http.StatusBadRequest,
 		},
 		{
@@ -256,6 +260,7 @@ func TestFluxHandler_postFluxSpec(t *testing.T) {
 			w:      httptest.NewRecorder(),
 			r:      httptest.NewRequest("POST", "/api/v2/query/spec", bytes.NewBufferString(`{"query": "from()"}`)),
 			now:    func() time.Time { return time.Unix(0, 0).UTC() },
+			want:   `{"code":"unprocessable entity","message":"invalid spec","error":"error calling function \"from\": must specify one of bucket or bucketID"}`,
 			status: http.StatusUnprocessableEntity,
 		},
 		{
@@ -263,7 +268,7 @@ func TestFluxHandler_postFluxSpec(t *testing.T) {
 			w:    httptest.NewRecorder(),
 			r:    httptest.NewRequest("POST", "/api/v2/query/spec", bytes.NewBufferString(`{"query": "from(bucket:\"demo-bucket-in-1\") |> range(start:-2s) |> last()"}`)),
 			now:  func() time.Time { return time.Unix(0, 0).UTC() },
-			want: `{"spec":{"operations":[{"kind":"from","id":"from0","spec":{"bucket":"demo-bucket-in-1"}},{"kind":"range","id":"range1","spec":{"start":"-2s","stop":"now","timeColumn":"_time","startColumn":"_start","stopColumn":"_stop"}},{"kind":"last","id":"last2","spec":{"column":""}}],"edges":[{"parent":"from0","child":"range1"},{"parent":"range1","child":"last2"}],"resources":{"priority":"high","concurrency_quota":0,"memory_bytes_quota":0},"now":"1970-01-01T00:00:00Z"}}
+			want: `{"spec":{"operations":[{"kind":"influxDBFrom","id":"influxDBFrom0","spec":{"bucket":"demo-bucket-in-1"}},{"kind":"range","id":"range1","spec":{"start":"-2s","stop":"now","timeColumn":"_time","startColumn":"_start","stopColumn":"_stop"}},{"kind":"last","id":"last2","spec":{"column":""}}],"edges":[{"parent":"influxDBFrom0","child":"range1"},{"parent":"range1","child":"last2"}],"resources":{"priority":"high","concurrency_quota":0,"memory_bytes_quota":0},"now":"1970-01-01T00:00:00Z"}}
 `,
 			status: http.StatusOK,
 		},

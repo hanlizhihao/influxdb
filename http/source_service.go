@@ -36,9 +36,9 @@ func newSourceResponse(s *platform.Source) *sourceResponse {
 			Source: s,
 			Links: map[string]interface{}{
 				"self":    fmt.Sprintf("%s/%s", sourceHTTPPath, s.ID.String()),
-				"query":   "/api/v2/query",
-				"buckets": "/api/v2/buckets",
-				"health":  "/api/v2/health",
+				"query":   fmt.Sprintf("%s/%s/query", sourceHTTPPath, s.ID.String()),
+				"buckets": fmt.Sprintf("%s/%s/buckets", sourceHTTPPath, s.ID.String()),
+				"health":  fmt.Sprintf("%s/%s/health", sourceHTTPPath, s.ID.String()),
 			},
 		}
 	}
@@ -74,29 +74,52 @@ func newSourcesResponse(srcs []*platform.Source) *sourcesResponse {
 	return res
 }
 
+// SourceBackend is all services and associated parameters required to construct
+// the SourceHandler.
+type SourceBackend struct {
+	Logger *zap.Logger
+
+	SourceService   platform.SourceService
+	LabelService    platform.LabelService
+	BucketService   platform.BucketService
+	NewQueryService func(s *platform.Source) (query.ProxyQueryService, error)
+}
+
+// NewSourceBackend returns a new instance of SourceBackend.
+func NewSourceBackend(b *APIBackend) *SourceBackend {
+	return &SourceBackend{
+		Logger: b.Logger.With(zap.String("handler", "source")),
+
+		SourceService:   b.SourceService,
+		LabelService:    b.LabelService,
+		BucketService:   b.BucketService,
+		NewQueryService: b.NewQueryService,
+	}
+}
+
 // SourceHandler is a handler for sources
 type SourceHandler struct {
 	*httprouter.Router
 	Logger        *zap.Logger
 	SourceService platform.SourceService
+	LabelService  platform.LabelService
+	BucketService platform.BucketService
 
 	// TODO(desa): this was done so in order to remove an import cycle and to allow
 	// for http mocking.
-	NewBucketService func(s *platform.Source) (platform.BucketService, error)
-	NewQueryService  func(s *platform.Source) (query.ProxyQueryService, error)
+	NewQueryService func(s *platform.Source) (query.ProxyQueryService, error)
 }
 
 // NewSourceHandler returns a new instance of SourceHandler.
-func NewSourceHandler() *SourceHandler {
+func NewSourceHandler(b *SourceBackend) *SourceHandler {
 	h := &SourceHandler{
 		Router: NewRouter(),
-		Logger: zap.NewNop(),
-		NewBucketService: func(s *platform.Source) (platform.BucketService, error) {
-			return nil, fmt.Errorf("bucket service not set")
-		},
-		NewQueryService: func(s *platform.Source) (query.ProxyQueryService, error) {
-			return nil, fmt.Errorf("query service not set")
-		},
+		Logger: b.Logger,
+
+		SourceService:   b.SourceService,
+		LabelService:    b.LabelService,
+		BucketService:   b.BucketService,
+		NewQueryService: b.NewQueryService,
 	}
 
 	h.HandlerFunc("POST", "/api/v2/sources", h.handlePostSource)
@@ -203,24 +226,13 @@ func (h *SourceHandler) handleGetSourcesBuckets(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s, err := h.SourceService.FindSourceByID(ctx, req.SourceID)
+	bs, _, err := h.BucketService.FindBuckets(ctx, req.filter)
 	if err != nil {
 		EncodeError(ctx, err, w)
 		return
 	}
 
-	bucketSvc, err := h.NewBucketService(s)
-	if err != nil {
-		EncodeError(ctx, err, w)
-		return
-	}
-	bs, _, err := bucketSvc.FindBuckets(ctx, req.filter)
-	if err != nil {
-		EncodeError(ctx, err, w)
-		return
-	}
-
-	if err := encodeResponse(ctx, w, http.StatusOK, bs); err != nil {
+	if err := encodeResponse(ctx, w, http.StatusOK, newBucketsResponse(ctx, req.opts, req.filter, bs, h.LabelService)); err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
 	}
@@ -312,7 +324,7 @@ func (h *SourceHandler) handleGetSource(w http.ResponseWriter, r *http.Request) 
 func (h *SourceHandler) handleGetSourceHealth(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	msg := `{"name":"sources",message:"source is %shealthy","status":"%s","checks":[]}`
+	msg := `{"name":"sources","message":"source is %shealthy","status":"%s","checks":[]}`
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 	req, err := decodeGetSourceRequest(ctx, r)

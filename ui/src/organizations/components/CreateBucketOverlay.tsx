@@ -1,15 +1,17 @@
 // Libraries
-import React, {ChangeEvent, FormEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent, FormEvent} from 'react'
+
 // Components
-import {ComponentStatus, OverlayBody, OverlayContainer, OverlayHeading,} from 'src/clockface'
+import {Overlay, ComponentStatus} from 'src/clockface'
 import BucketOverlayForm from 'src/organizations/components/BucketOverlayForm'
+
 // Types
-import {Bucket, BucketRetentionRules, Organization} from 'src/api'
+import {Bucket, BucketRetentionRules, Organization} from '@influxdata/influx'
 
 interface Props {
   org: Organization
   onCloseModal: () => void
-  onCreateBucket: (org: Organization, bucket: Partial<Bucket>) => Promise<void>
+  onCreateBucket: (bucket: Partial<Bucket>) => Promise<void>
 }
 
 interface State {
@@ -40,12 +42,12 @@ export default class BucketOverlay extends PureComponent<Props, State> {
     const {bucket, nameInputStatus, nameErrorMessage, ruleType} = this.state
 
     return (
-      <OverlayContainer maxWidth={500}>
-        <OverlayHeading
+      <Overlay.Container maxWidth={500}>
+        <Overlay.Heading
           title="Create Bucket"
           onDismiss={this.props.onCloseModal}
         />
-        <OverlayBody>
+        <Overlay.Body>
           <BucketOverlayForm
             name={bucket.name}
             buttonText="Create"
@@ -59,8 +61,8 @@ export default class BucketOverlay extends PureComponent<Props, State> {
             onChangeRuleType={this.handleChangeRuleType}
             onChangeRetentionRule={this.handleChangeRetentionRule}
           />
-        </OverlayBody>
-      </OverlayContainer>
+        </Overlay.Body>
+      </Overlay.Container>
     )
   }
 
@@ -107,7 +109,7 @@ export default class BucketOverlay extends PureComponent<Props, State> {
       organization,
     }
 
-    onCreateBucket(org, bucket)
+    onCreateBucket(bucket)
   }
 
   private handleChangeInput = (e: ChangeEvent<HTMLInputElement>) => {

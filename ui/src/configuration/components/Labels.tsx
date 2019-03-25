@@ -1,45 +1,52 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {connect} from 'react-redux'
+
 // Components
 import CreateLabelOverlay from 'src/configuration/components/CreateLabelOverlay'
 import TabbedPageHeader from 'src/shared/components/tabbed_page/TabbedPageHeader'
-// Types
-import {Button, ComponentColor, ComponentSize, EmptyState, IconFont, Input, InputType, LabelType,} from 'src/clockface'
+import {
+  Button,
+  IconFont,
+  ComponentSize,
+  ComponentColor,
+} from '@influxdata/clockface'
+import {EmptyState, Input, InputType} from 'src/clockface'
 import LabelList from 'src/configuration/components/LabelList'
 import FilterList from 'src/shared/components/Filter'
-// API
-import {createLabel, deleteLabel, updateLabel} from 'src/configuration/apis'
+
 // Actions
-import {notify as notifyAction} from 'src/shared/actions/notifications'
+import {createLabel, updateLabel, deleteLabel} from 'src/labels/actions'
+
+// Selectors
+import {viewableLabels} from 'src/labels/selectors'
+
 // Utils
-import {validateLabelName} from 'src/configuration/utils/labels'
-// Constants
-import {labelCreateFailed, labelDeleteFailed, labelUpdateFailed,} from 'src/shared/copy/v2/notifications'
-import {Label} from 'src/types/v2'
+import {validateLabelUniqueness} from 'src/configuration/utils/labels'
+
+// Types
+import {AppState} from 'src/types/v2'
+import {ILabel} from '@influxdata/influx'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
-interface LabelProperties {
-  color: string
-  description: string
-}
-
-interface PassedProps {
-  labels: Label[]
+interface StateProps {
+  labels: AppState['labels']['list']
 }
 
 interface State {
   searchTerm: string
   isOverlayVisible: boolean
-  labelTypes: LabelType[]
 }
 
 interface DispatchProps {
-  notify: typeof notifyAction
+  createLabel: typeof createLabel
+  updateLabel: typeof updateLabel
+  deleteLabel: typeof deleteLabel
 }
 
-type Props = DispatchProps & PassedProps
+type Props = DispatchProps & StateProps
 
 @ErrorHandling
 class Labels extends PureComponent<Props, State> {
@@ -49,12 +56,12 @@ class Labels extends PureComponent<Props, State> {
     this.state = {
       searchTerm: '',
       isOverlayVisible: false,
-      labelTypes: this.labelTypes(this.props.labels),
     }
   }
 
   public render() {
-    const {searchTerm, isOverlayVisible, labelTypes} = this.state
+    const {labels} = this.props
+    const {searchTerm, isOverlayVisible} = this.state
 
     return (
       <>
@@ -75,8 +82,8 @@ class Labels extends PureComponent<Props, State> {
             onClick={this.handleShowOverlay}
           />
         </TabbedPageHeader>
-        <FilterList<LabelType>
-          list={labelTypes}
+        <FilterList<ILabel>
+          list={labels}
           searchKeys={['name', 'description']}
           searchTerm={searchTerm}
         >
@@ -85,6 +92,7 @@ class Labels extends PureComponent<Props, State> {
               labels={ls}
               emptyState={this.emptyState}
               onUpdateLabel={this.handleUpdateLabel}
+              onDeleteLabel={this.handleDelete}
             />
           )}
         </FilterList>
@@ -114,80 +122,22 @@ class Labels extends PureComponent<Props, State> {
     this.setState({searchTerm: e.target.value})
   }
 
-  private handleCreateLabel = async (labelType: LabelType) => {
-    try {
-      const newLabel = await createLabel({
-        name: labelType.name,
-        properties: this.labelProperties(labelType),
-      })
-      const labelTypes = [...this.state.labelTypes, this.labelType(newLabel)]
-      this.setState({labelTypes})
-    } catch (error) {
-      console.error(error)
-      this.props.notify(labelCreateFailed())
-    }
+  private handleCreateLabel = (label: ILabel) => {
+    this.props.createLabel(label.orgID, label.name, label.properties)
   }
 
-  private handleUpdateLabel = async (labelType: LabelType) => {
-    try {
-      const label = await updateLabel({
-        id: labelType.id,
-        name: labelType.name,
-        properties: this.labelProperties(labelType),
-      })
-
-      const labelTypes = this.state.labelTypes.map(l => {
-        if (l.id === labelType.id) {
-          return this.labelType(label)
-        }
-
-        return l
-      })
-
-      this.setState({labelTypes})
-    } catch (error) {
-      this.props.notify(labelUpdateFailed())
-    }
-  }
-
-  private handleNameValidation = (name: string): string | null => {
-    return validateLabelName(this.state.labelTypes, name)
-  }
-
-  private labelTypes(labels: Label[]): LabelType[] {
-    return labels.map(this.labelType)
-  }
-
-  private labelType = (label: Label): LabelType => {
-    const {properties} = label
-
-    return {
-      id: label.id,
-      name: label.name,
-      description: properties.description,
-      colorHex: properties.color,
-      onDelete: this.handleDelete,
-    }
+  private handleUpdateLabel = (label: ILabel) => {
+    this.props.updateLabel(label.id, label)
   }
 
   private handleDelete = async (id: string) => {
-    const labelType = this.state.labelTypes.find(label => label.id === id)
-
-    try {
-      await deleteLabel(labelType.id)
-      const labelTypes = this.state.labelTypes.filter(l => l.id !== id)
-
-      this.setState({labelTypes})
-    } catch (error) {
-      this.props.notify(labelDeleteFailed())
-    }
+    this.props.deleteLabel(id)
   }
 
-  private labelProperties(labelType: LabelType): LabelProperties {
-    return {
-      description: labelType.description,
-      color: labelType.colorHex,
-    }
+  private handleNameValidation = (name: string): string | null => {
+    const names = this.props.labels.map(label => label.name)
+
+    return validateLabelUniqueness(names, name)
   }
 
   private get emptyState(): JSX.Element {
@@ -218,11 +168,19 @@ class Labels extends PureComponent<Props, State> {
   }
 }
 
+const mstp = (state: AppState): StateProps => {
+  return {
+    labels: viewableLabels(state.labels.list),
+  }
+}
+
 const mdtp: DispatchProps = {
-  notify: notifyAction,
+  createLabel: createLabel,
+  updateLabel: updateLabel,
+  deleteLabel: deleteLabel,
 }
 
 export default connect(
-  null,
+  mstp,
   mdtp
 )(Labels)

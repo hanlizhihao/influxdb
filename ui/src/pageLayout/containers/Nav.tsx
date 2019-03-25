@@ -2,20 +2,17 @@
 import React, {PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
 import {connect} from 'react-redux'
+
 // Components
 import NavMenu from 'src/pageLayout/components/NavMenu'
-// Utils
-import {getSources} from 'src/sources/selectors'
+
 // Types
-import {AppState, MeState, Source} from 'src/types/v2'
+import {MeState, AppState} from 'src/types/v2'
 import {IconFont} from 'src/clockface'
-// Styles
-import '../PageLayout.scss'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props extends WithRouterProps {
-  sources: Source[]
   isHidden: boolean
   me: MeState
 }
@@ -40,13 +37,13 @@ class SideNav extends PureComponent<Props> {
           link="/me"
           icon={IconFont.CuboNav}
           location={location.pathname}
-          highlightWhen={['me', 'account']}
+          highlightPaths={['me', 'account']}
         >
           <NavMenu.SubItem
             title="Logout"
             link={`/logout`}
             location={location.pathname}
-            highlightWhen={[]}
+            highlightPaths={[]}
           />
         </NavMenu.Item>
         <NavMenu.Item
@@ -54,53 +51,71 @@ class SideNav extends PureComponent<Props> {
           link="/data-explorer"
           icon={IconFont.GraphLine}
           location={location.pathname}
-          highlightWhen={['data-explorer']}
+          highlightPaths={['data-explorer']}
         />
         <NavMenu.Item
           title="Dashboards"
           link="/dashboards"
           icon={IconFont.Dashboards}
           location={location.pathname}
-          highlightWhen={['dashboards']}
+          highlightPaths={['dashboards']}
         />
         <NavMenu.Item
           title="Tasks"
           link="/tasks"
           icon={IconFont.Calendar}
           location={location.pathname}
-          highlightWhen={['tasks']}
+          highlightPaths={['tasks']}
         />
         <NavMenu.Item
           title="Organizations"
           link="/organizations"
           icon={IconFont.UsersDuo}
           location={location.pathname}
-          highlightWhen={['organizations']}
+          highlightPaths={['organizations']}
         />
         <NavMenu.Item
           title="Configuration"
-          link="/configuration/labels_tab"
+          link="/configuration/buckets_tab"
           icon={IconFont.Wrench}
           location={location.pathname}
-          highlightWhen={['configuration']}
+          highlightPaths={['configuration']}
         >
           <NavMenu.SubItem
-            title="Labels"
-            link="/configuration/labels_tab"
+            title="Buckets"
+            link="/configuration/buckets_tab"
             location={location.pathname}
-            highlightWhen={['labels']}
+            highlightPaths={['buckets_tab']}
+          />
+          <NavMenu.SubItem
+            title="Telegrafs"
+            link="/configuration/telegrafs_tab"
+            location={location.pathname}
+            highlightPaths={['telegrafs_tab']}
+          />
+          <NavMenu.SubItem
+            title="Scrapers"
+            link="/configuration/scrapers_tab"
+            location={location.pathname}
+            highlightPaths={['scrapers_tab']}
+          />
+          <NavMenu.SubItem
+            title="Variables"
+            link="/configuration/variables_tab"
+            location={location.pathname}
+            highlightPaths={['variables_tab']}
           />
           <NavMenu.SubItem
             title="Profile"
             link="/configuration/settings_tab"
             location={location.pathname}
-            highlightWhen={['settings_tab']}
+            highlightPaths={['settings_tab']}
           />
           <NavMenu.SubItem
             title="Tokens"
             link="/configuration/tokens_tab"
             location={location.pathname}
-            highlightWhen={['tokens_tab']}
+            highlightPaths={['tokens_tab']}
           />
         </NavMenu.Item>
       </NavMenu>
@@ -110,10 +125,9 @@ class SideNav extends PureComponent<Props> {
 
 const mstp = (state: AppState) => {
   const isHidden = state.app.ephemeral.inPresentationMode
-  const sources = getSources(state)
   const {me} = state
 
-  return {sources, isHidden, me}
+  return {isHidden, me}
 }
 
 export default connect(mstp)(withRouter(SideNav))

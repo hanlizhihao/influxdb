@@ -3,7 +3,7 @@ import React, {ChangeEvent, PureComponent} from 'react'
 import {Columns, Form, Grid, Input, InputType} from 'src/clockface'
 // Utils
 import {secondsToDuration} from 'src/utils/formatting'
-import {BucketRetentionRules} from 'src/api'
+import {BucketRetentionRules} from '@influxdata/influx'
 
 interface Props {
   type: BucketRetentionRules.TypeEnum

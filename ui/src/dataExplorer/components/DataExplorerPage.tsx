@@ -4,12 +4,13 @@ import React, {SFC} from 'react'
 import DataExplorer from 'src/dataExplorer/components/DataExplorer'
 import {Page} from 'src/pageLayout'
 import SaveAsButton from 'src/dataExplorer/components/SaveAsButton'
-import VisOptionsButton from 'src/shared/components/VisOptionsButton'
-import ViewTypeDropdown from 'src/shared/components/view_options/ViewTypeDropdown'
+import VisOptionsButton from 'src/timeMachine/components/VisOptionsButton'
+import ViewTypeDropdown from 'src/timeMachine/components/view_options/ViewTypeDropdown'
 
-const DataExplorerPage: SFC<{}> = () => {
+const DataExplorerPage: SFC = ({children}) => {
   return (
     <Page titleTag="Data Explorer">
+      {children}
       <Page.Header fullWidth={true}>
         <Page.Header.Left>
           <Page.Title title="Data Explorer" />

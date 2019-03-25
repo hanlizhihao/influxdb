@@ -3,10 +3,10 @@ import React, {PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
 import _ from 'lodash'
 // Components
-import {Button, ComponentColor, ComponentSize} from 'src/clockface'
+import {Button, ComponentColor, ComponentSize} from '@influxdata/clockface'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 // Types
-import {Organization} from 'src/api'
+import {Organization} from '@influxdata/influx'
 
 interface OwnProps {
   orgs: Organization[]
@@ -32,7 +32,7 @@ class CompletionAdvancedButton extends PureComponent<Props> {
     const {router, orgs, onExit} = this.props
     const id = _.get(orgs, '0.id', null)
     if (id) {
-      router.push(`/organizations/${id}/buckets_tab`)
+      router.push(`/organizations/${id}/buckets`)
     } else {
       onExit()
     }

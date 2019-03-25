@@ -3,9 +3,12 @@ package task
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	platform "github.com/influxdata/influxdb"
+	icontext "github.com/influxdata/influxdb/context"
+	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/task/backend"
 	"github.com/influxdata/influxdb/task/options"
 )
@@ -16,19 +19,27 @@ type RunController interface {
 }
 
 // PlatformAdapter wraps a task.Store into the platform.TaskService interface.
-func PlatformAdapter(s backend.Store, r backend.LogReader, rc RunController) platform.TaskService {
-	return pAdapter{s: s, r: r, rc: rc}
+func PlatformAdapter(s backend.Store, r backend.LogReader, rc RunController, as platform.AuthorizationService, urm platform.UserResourceMappingService, orgSvc platform.OrganizationService) platform.TaskService {
+	return pAdapter{s: s, r: r, rc: rc, as: as, urm: urm, orgSvc: orgSvc}
 }
 
 type pAdapter struct {
 	s  backend.Store
 	rc RunController
 	r  backend.LogReader
+
+	// Needed to look up authorization ID from token during create.
+	as     platform.AuthorizationService
+	urm    platform.UserResourceMappingService
+	orgSvc platform.OrganizationService
 }
 
 var _ platform.TaskService = pAdapter{}
 
 func (p pAdapter) FindTaskByID(ctx context.Context, id platform.ID) (*platform.Task, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	t, m, err := p.s.FindTaskByIDWithMeta(ctx, id)
 	if err != nil {
 		return nil, err
@@ -38,18 +49,62 @@ func (p pAdapter) FindTaskByID(ctx context.Context, id platform.ID) (*platform.T
 	if t == nil {
 		return nil, nil
 	}
-
-	return toPlatformTask(*t, m)
+	return p.toPlatformTask(ctx, *t, m)
 }
 
 func (p pAdapter) FindTasks(ctx context.Context, filter platform.TaskFilter) ([]*platform.Task, int, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	params := backend.TaskSearchParams{PageSize: filter.Limit}
-	if filter.Organization != nil {
-		params.Org = *filter.Organization
+	org := platform.Organization{
+		Name: filter.Organization,
 	}
+	if filter.OrganizationID != nil {
+		org.ID = *filter.OrganizationID
+	}
+	if filter.Organization != "" {
+		err := p.populateOrg(ctx, &org)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	params.Org = org.ID
 	if filter.User != nil {
-		params.User = *filter.User
+		ownedTasks, _, err := p.urm.FindUserResourceMappings(
+			ctx,
+			platform.UserResourceMappingFilter{
+				UserID:       *filter.User,
+				UserType:     platform.Owner,
+				ResourceType: platform.TasksResourceType,
+			},
+		)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		tasks := make([]*platform.Task, 0, len(ownedTasks))
+		for _, ownedTask := range ownedTasks {
+			storeTask, meta, err := p.s.FindTaskByIDWithMeta(ctx, ownedTask.ResourceID)
+			if err != nil {
+				// It's possible we had an entry in the list a moment ago and it's since been deleted.
+				if err == backend.ErrTaskNotFound {
+					// If so, just move on.
+					continue
+				}
+				return nil, 0, err
+			}
+			task, err := p.toPlatformTask(ctx, *storeTask, meta)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			tasks = append(tasks, task)
+		}
+
+		return tasks, len(tasks), nil
 	}
+
 	if filter.After != nil {
 		params.After = *filter.After
 	}
@@ -60,7 +115,7 @@ func (p pAdapter) FindTasks(ctx context.Context, filter platform.TaskFilter) ([]
 
 	pts := make([]*platform.Task, len(ts))
 	for i, t := range ts {
-		pts[i], err = toPlatformTask(t.Task, &t.Meta)
+		pts[i], err = p.toPlatformTask(ctx, t.Task, &t.Meta)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -69,10 +124,18 @@ func (p pAdapter) FindTasks(ctx context.Context, filter platform.TaskFilter) ([]
 	return pts, len(pts), nil
 }
 
-func (p pAdapter) CreateTask(ctx context.Context, t *platform.Task) error {
+func (p pAdapter) CreateTask(ctx context.Context, t platform.TaskCreate) (*platform.Task, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	auth, err := icontext.GetAuthorizer(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	opts, err := options.FromScript(t.Flux)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// TODO(mr): decide whether we allow user to configure scheduleAfter. https://github.com/influxdata/influxdb/issues/10884
@@ -82,34 +145,70 @@ func (p pAdapter) CreateTask(ctx context.Context, t *platform.Task) error {
 		t.Status = string(backend.DefaultTaskStatus)
 	}
 
+	org := platform.Organization{ID: t.OrganizationID, Name: t.Organization}
+	if err := p.populateOrg(ctx, &org); err != nil {
+		return nil, err
+	}
+
 	req := backend.CreateTaskRequest{
-		Org:           t.OrganizationID,
-		User:          t.Owner.ID,
-		Script:        t.Flux,
+		Org:           org.ID,
 		ScheduleAfter: scheduleAfter,
 		Status:        backend.TaskStatus(t.Status),
+		Script:        t.Flux,
+	}
+	req.AuthorizationID, err = p.authorizationIDFromToken(ctx, t.Token)
+	if err != nil {
+		return nil, err
 	}
 
 	id, err := p.s.CreateTask(ctx, req)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	t.ID = id
-	t.Cron = opts.Cron
-	t.Name = opts.Name
+	task := &platform.Task{
+		ID:              id,
+		Flux:            t.Flux,
+		Cron:            opts.Cron,
+		Name:            opts.Name,
+		OrganizationID:  org.ID,
+		Organization:    org.Name,
+		Status:          t.Status,
+		AuthorizationID: req.AuthorizationID,
+	}
 
 	if opts.Every != 0 {
-		t.Every = opts.Every.String()
+		task.Every = opts.Every.String()
 	}
-	if opts.Offset != 0 {
-		t.Offset = opts.Offset.String()
+	if opts.Offset != nil && *opts.Offset != 0 {
+		task.Offset = opts.Offset.String()
 	}
 
-	return nil
+	mapping := &platform.UserResourceMapping{
+		UserID:       auth.GetUserID(),
+		UserType:     platform.Owner,
+		ResourceType: platform.TasksResourceType,
+		ResourceID:   task.ID,
+	}
+
+	if err := p.urm.CreateUserResourceMapping(ctx, mapping); err != nil {
+		// clean up the task if we fail to map the user and resource
+		// TODO(lh): Multi step creates could benefit from a service wide transactional request
+		if derr := p.DeleteTask(ctx, task.ID); derr != nil {
+			err = fmt.Errorf("%s: failed to clean up task: %s", err.Error(), derr.Error())
+		}
+
+		return nil, err
+	}
+
+	return task, nil
 }
 
 func (p pAdapter) UpdateTask(ctx context.Context, id platform.ID, upd platform.TaskUpdate) (*platform.Task, error) {
-	if err := upd.Validate(); err != nil {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	err := upd.Validate()
+	if err != nil {
 		return nil, err
 	}
 	req := backend.UpdateTaskRequest{ID: id}
@@ -120,6 +219,14 @@ func (p pAdapter) UpdateTask(ctx context.Context, id platform.ID, upd platform.T
 		req.Status = backend.TaskStatus(*upd.Status)
 	}
 	req.Options = upd.Options
+
+	if upd.Token != "" {
+		req.AuthorizationID, err = p.authorizationIDFromToken(ctx, upd.Token)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	res, err := p.s.UpdateTask(ctx, req)
 	if err != nil {
 		return nil, err
@@ -127,40 +234,47 @@ func (p pAdapter) UpdateTask(ctx context.Context, id platform.ID, upd platform.T
 	if res.NewTask.Script == "" {
 		return nil, errors.New("script not defined in the store")
 	}
-	opts, err := options.FromScript(res.NewTask.Script)
-	if err != nil {
-		return nil, err
-	}
-
-	task := &platform.Task{
-		ID:     id,
-		Name:   opts.Name,
-		Status: res.NewMeta.Status,
-		Owner:  platform.User{},
-		Flux:   res.NewTask.Script,
-		Every:  opts.Every.String(),
-		Cron:   opts.Cron,
-		Offset: opts.Offset.String(),
-	}
-
-	t, err := p.s.FindTaskByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	task.Owner.ID = t.User
-	task.OrganizationID = t.Org
-
-	return task, nil
+	return p.FindTaskByID(ctx, id)
 }
 
 func (p pAdapter) DeleteTask(ctx context.Context, id platform.ID) error {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	_, err := p.s.DeleteTask(ctx, id)
+	if err != nil {
+		return err
+	}
 	// TODO(mr): Store.DeleteTask returns false, nil if ID didn't match; do we want to handle that case?
-	return err
+
+	// clean up resource maps for deleted task
+	urms, _, err := p.urm.FindUserResourceMappings(ctx, platform.UserResourceMappingFilter{
+		ResourceID:   id,
+		ResourceType: platform.TasksResourceType,
+	})
+
+	if err != nil {
+		return err
+	}
+	for _, m := range urms {
+		if err := p.urm.DeleteUserResourceMapping(ctx, m.ResourceID, m.UserID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (p pAdapter) FindLogs(ctx context.Context, filter platform.LogFilter) ([]*platform.Log, int, error) {
-	logs, err := p.r.ListLogs(ctx, filter)
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	task, err := p.s.FindTaskByID(ctx, filter.Task)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	logs, err := p.r.ListLogs(ctx, task.Org, filter)
 	logPointers := make([]*platform.Log, len(logs))
 	for i := range logs {
 		logPointers[i] = &logs[i]
@@ -169,11 +283,22 @@ func (p pAdapter) FindLogs(ctx context.Context, filter platform.LogFilter) ([]*p
 }
 
 func (p pAdapter) FindRuns(ctx context.Context, filter platform.RunFilter) ([]*platform.Run, int, error) {
-	runs, err := p.r.ListRuns(ctx, filter)
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	task, err := p.s.FindTaskByID(ctx, filter.Task)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	runs, err := p.r.ListRuns(ctx, task.Org, filter)
 	return runs, len(runs), err
 }
 
 func (p pAdapter) FindRunByID(ctx context.Context, taskID, id platform.ID) (*platform.Run, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	task, err := p.s.FindTaskByID(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -182,6 +307,9 @@ func (p pAdapter) FindRunByID(ctx context.Context, taskID, id platform.ID) (*pla
 }
 
 func (p pAdapter) RetryRun(ctx context.Context, taskID, id platform.ID) (*platform.Run, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	task, err := p.s.FindTaskByID(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -215,6 +343,9 @@ func (p pAdapter) RetryRun(ctx context.Context, taskID, id platform.ID) (*platfo
 }
 
 func (p pAdapter) ForceRun(ctx context.Context, taskID platform.ID, scheduledFor int64) (*platform.Run, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	requestedAt := time.Now()
 	m, err := p.s.ManuallyRunTimeRange(ctx, taskID, scheduledFor, scheduledFor, requestedAt.Unix())
 	if err != nil {
@@ -230,35 +361,115 @@ func (p pAdapter) ForceRun(ctx context.Context, taskID platform.ID, scheduledFor
 }
 
 func (p pAdapter) CancelRun(ctx context.Context, taskID, runID platform.ID) error {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	return p.rc.CancelRun(ctx, taskID, runID)
 }
 
-func toPlatformTask(t backend.StoreTask, m *backend.StoreTaskMeta) (*platform.Task, error) {
+var errTokenUnreadable = errors.New("token invalid or unreadable by the current user")
+
+// authorizationIDFromToken looks up the authorization ID from the given token,
+// and returns that ID iff the authorizer on the context is allowed to view that authorization.
+func (p pAdapter) authorizationIDFromToken(ctx context.Context, token string) (platform.ID, error) {
+	authorizer, err := icontext.GetAuthorizer(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	if token == "" {
+		// No explicit token. Use the authorization ID from the context's authorizer.
+		k := authorizer.Kind()
+		if k != platform.AuthorizationKind {
+			return 0, fmt.Errorf("unable to create task using authorization of kind %s", k)
+		}
+
+		return authorizer.Identifier(), nil
+	}
+
+	// Token was explicitly provided. Look it up.
+	a, err := p.as.FindAuthorizationByToken(ctx, token)
+	if err != nil {
+		// TODO(mr): log the actual error.
+		return 0, errTokenUnreadable
+	}
+
+	// It's a valid token. Is it our token?
+	if a.GetUserID() != authorizer.GetUserID() {
+		// The auth token isn't ours. Ensure we're allowed to read it.
+		p, err := platform.NewPermissionAtID(a.ID, platform.ReadAction, platform.AuthorizationsResourceType, a.OrgID)
+		if err != nil {
+			// TODO(mr): log the actual error.
+			return 0, errTokenUnreadable
+		}
+		if !authorizer.Allowed(*p) {
+			return 0, errTokenUnreadable
+		}
+	}
+
+	return a.ID, nil
+}
+
+func (p *pAdapter) toPlatformTask(ctx context.Context, t backend.StoreTask, m *backend.StoreTaskMeta) (*platform.Task, error) {
 	opts, err := options.FromScript(t.Script)
 	if err != nil {
 		return nil, err
 	}
 
+	org := platform.Organization{ID: t.Org}
+	if err := p.populateOrg(ctx, &org); err != nil {
+		return nil, err
+	}
+
 	pt := &platform.Task{
 		ID:             t.ID,
-		OrganizationID: t.Org,
+		OrganizationID: org.ID,
+		Organization:   org.Name,
 		Name:           t.Name,
-		Owner: platform.User{
-			ID:   t.User,
-			Name: "", // TODO(mr): how to get owner name?
-		},
-		Flux: t.Script,
-		Cron: opts.Cron,
+		Flux:           t.Script,
+		Cron:           opts.Cron,
 	}
 	if opts.Every != 0 {
 		pt.Every = opts.Every.String()
 	}
-	if opts.Offset != 0 {
+	if opts.Offset != nil && *opts.Offset != 0 {
 		pt.Offset = opts.Offset.String()
 	}
 	if m != nil {
 		pt.Status = string(m.Status)
 		pt.LatestCompleted = time.Unix(m.LatestCompleted, 0).Format(time.RFC3339)
+		if m.CreatedAt != 0 {
+			pt.CreatedAt = time.Unix(m.CreatedAt, 0).Format(time.RFC3339)
+		}
+		if m.UpdatedAt != 0 {
+			pt.UpdatedAt = time.Unix(m.UpdatedAt, 0).Format(time.RFC3339)
+		}
+		pt.AuthorizationID = platform.ID(m.AuthorizationID)
 	}
 	return pt, nil
+}
+
+func (p *pAdapter) populateOrg(ctx context.Context, org *platform.Organization) error {
+	if org.ID.Valid() && org.Name != "" {
+		return nil
+	}
+
+	if !org.ID.Valid() && org.Name == "" {
+		return errors.New("missing orgID and organization name")
+	}
+
+	if org.ID.Valid() {
+		o, err := p.orgSvc.FindOrganizationByID(ctx, org.ID)
+		if err != nil {
+			return err
+		}
+		org.Name = o.Name
+	} else {
+		o, err := p.orgSvc.FindOrganization(ctx, platform.OrganizationFilter{Name: &org.Name})
+		if err != nil {
+			return err
+		}
+		org.ID = o.ID
+	}
+	return nil
 }

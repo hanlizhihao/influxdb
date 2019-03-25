@@ -1,25 +1,30 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
+import _ from 'lodash'
+
 // Components
-// Types
-import {Alignment, Button, ComponentColor, ComponentSize, EmptyState, IconFont, IndexList, Sort,} from 'src/clockface'
-import TableRows from 'src/dashboards/components/dashboard_index/TableRows'
+import {ComponentSize} from '@influxdata/clockface'
+import {EmptyState, ResourceList} from 'src/clockface'
+import AddResourceDropdown from 'src/shared/components/AddResourceDropdown'
+import DashboardCards from 'src/dashboards/components/dashboard_index/DashboardCards'
 import SortingHat from 'src/shared/components/sorting_hat/SortingHat'
-import {Dashboard, Organization} from 'src/types/v2'
+
+// Types
+import {Sort} from 'src/clockface'
+import {Dashboard} from 'src/types/v2'
 
 interface Props {
   searchTerm: string
   dashboards: Dashboard[]
-  defaultDashboardLink: string
   onDeleteDashboard: (dashboard: Dashboard) => void
   onCreateDashboard: () => void
   onCloneDashboard: (dashboard: Dashboard) => void
-  onExportDashboard: (dashboard: Dashboard) => void
   onUpdateDashboard: (dashboard: Dashboard) => void
-  onSetDefaultDashboard: (dashboardLink: string) => void
-  onEditLabels: (dashboard: Dashboard) => void
-  orgs: Organization[]
+  onFilterChange: (searchTerm: string) => void
+  showOwnerColumn: boolean
+  filterComponent?: () => JSX.Element
+  onImportDashboard: () => void
 }
 
 interface DatedDashboard extends Dashboard {
@@ -43,59 +48,65 @@ class DashboardsTable extends PureComponent<Props & WithRouterProps, State> {
   }
 
   public render() {
+    const {filterComponent} = this.props
     const {sortKey, sortDirection} = this.state
-    const headerKeys: SortKey[] = ['name', 'owner', 'modified', 'default']
 
     return (
-      <IndexList>
-        <IndexList.Header>
-          <IndexList.HeaderCell
-            columnName={headerKeys[0]}
-            sortKey={headerKeys[0]}
-            sort={sortKey === headerKeys[0] ? sortDirection : Sort.None}
-            width="62%"
+      <ResourceList>
+        <ResourceList.Header filterComponent={filterComponent}>
+          <ResourceList.Sorter
+            name={this.headerKeys[0]}
+            sortKey={this.headerKeys[0]}
+            sort={sortKey === this.headerKeys[0] ? sortDirection : Sort.None}
             onClick={this.handleClickColumn}
           />
-          <IndexList.HeaderCell
-            columnName={headerKeys[1]}
-            sortKey={headerKeys[1]}
-            sort={sortKey === headerKeys[1] ? sortDirection : Sort.None}
-            width="17%"
+          {this.ownerSorter}
+          <ResourceList.Sorter
+            name={this.headerKeys[2]}
+            sortKey={this.headerKeys[2]}
+            sort={sortKey === this.headerKeys[2] ? sortDirection : Sort.None}
             onClick={this.handleClickColumn}
           />
-          <IndexList.HeaderCell
-            columnName={headerKeys[2]}
-            sortKey={headerKeys[2]}
-            sort={sortKey === headerKeys[2] ? sortDirection : Sort.None}
-            width="11%"
-            onClick={this.handleClickColumn}
-          />
-          <IndexList.HeaderCell
-            columnName=""
-            width="10%"
-            alignment={Alignment.Right}
-          />
-        </IndexList.Header>
-        <IndexList.Body emptyState={this.emptyState} columnCount={5}>
-          {this.sortedRows}
-        </IndexList.Body>
-      </IndexList>
+        </ResourceList.Header>
+        <ResourceList.Body emptyState={this.emptyState}>
+          {this.sortedCards}
+        </ResourceList.Body>
+      </ResourceList>
     )
+  }
+
+  private get headerKeys(): SortKey[] {
+    return ['name', 'owner', 'modified', 'default']
+  }
+
+  private get ownerSorter(): JSX.Element {
+    const {showOwnerColumn} = this.props
+    const {sortKey, sortDirection} = this.state
+
+    if (showOwnerColumn) {
+      return (
+        <ResourceList.Sorter
+          name={this.headerKeys[1]}
+          sortKey={this.headerKeys[1]}
+          sort={sortKey === this.headerKeys[1] ? sortDirection : Sort.None}
+          onClick={this.handleClickColumn}
+        />
+      )
+    }
   }
 
   private handleClickColumn = (nextSort: Sort, sortKey: SortKey) => {
     this.setState({sortKey, sortDirection: nextSort})
   }
 
-  private get sortedRows(): JSX.Element {
+  private get sortedCards(): JSX.Element {
     const {
       dashboards,
-      onExportDashboard,
       onCloneDashboard,
       onDeleteDashboard,
       onUpdateDashboard,
-      onEditLabels,
-      orgs,
+      showOwnerColumn,
+      onFilterChange,
     } = this.props
 
     const {sortKey, sortDirection} = this.state
@@ -108,14 +119,13 @@ class DashboardsTable extends PureComponent<Props & WithRouterProps, State> {
           direction={sortDirection}
         >
           {ds => (
-            <TableRows
+            <DashboardCards
               dashboards={ds}
               onCloneDashboard={onCloneDashboard}
-              onExportDashboard={onExportDashboard}
               onDeleteDashboard={onDeleteDashboard}
               onUpdateDashboard={onUpdateDashboard}
-              onEditLabels={onEditLabels}
-              orgs={orgs}
+              showOwnerColumn={showOwnerColumn}
+              onFilterChange={onFilterChange}
             />
           )}
         </SortingHat>
@@ -133,7 +143,7 @@ class DashboardsTable extends PureComponent<Props & WithRouterProps, State> {
   }
 
   private get emptyState(): JSX.Element {
-    const {onCreateDashboard, searchTerm} = this.props
+    const {onCreateDashboard, searchTerm, onImportDashboard} = this.props
 
     if (searchTerm) {
       return (
@@ -149,12 +159,10 @@ class DashboardsTable extends PureComponent<Props & WithRouterProps, State> {
           text="Looks like you don’t have any Dashboards , why not create one?"
           highlightWords={['Dashboards']}
         />
-        <Button
-          text="Create a Dashboard"
-          icon={IconFont.Plus}
-          color={ComponentColor.Primary}
-          onClick={onCreateDashboard}
-          size={ComponentSize.Medium}
+        <AddResourceDropdown
+          onSelectNew={onCreateDashboard}
+          onSelectImport={onImportDashboard}
+          resourceName="Dashboard"
         />
       </EmptyState>
     )

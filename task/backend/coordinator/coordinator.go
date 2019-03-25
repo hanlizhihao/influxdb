@@ -53,6 +53,11 @@ func (c *Coordinator) claimExistingTasks() {
 
 	for len(tasks) > 0 {
 		for _, task := range tasks {
+			if task.Meta.Status != string(backend.TaskActive) {
+				// Don't claim inactive tasks at startup.
+				continue
+			}
+
 			t := task // Copy to avoid mistaken closure around task value.
 			if err := c.sch.ClaimTask(&t.Task, &t.Meta); err != nil {
 				c.logger.Error("failed claim task", zap.Error(err))
@@ -148,23 +153,18 @@ func (c *Coordinator) DeleteOrg(ctx context.Context, orgID platform.ID) error {
 	return c.Store.DeleteOrg(ctx, orgID)
 }
 
-func (c *Coordinator) DeleteUser(ctx context.Context, userID platform.ID) error {
-	userTasks, err := c.Store.ListTasks(ctx, backend.TaskSearchParams{
-		User: userID,
-	})
-	if err != nil {
-		return err
-	}
-
-	for _, userTask := range userTasks {
-		if err := c.sch.ReleaseTask(userTask.Task.ID); err != nil {
-			return err
-		}
-	}
-
-	return c.Store.DeleteUser(ctx, userID)
-}
-
 func (c *Coordinator) CancelRun(ctx context.Context, taskID, runID platform.ID) error {
 	return c.sch.CancelRun(ctx, taskID, runID)
+}
+
+func (c *Coordinator) ManuallyRunTimeRange(ctx context.Context, taskID platform.ID, start, end, requestedAt int64) (*backend.StoreTaskMetaManualRun, error) {
+	r, err := c.Store.ManuallyRunTimeRange(ctx, taskID, start, end, requestedAt)
+	if err != nil {
+		return r, err
+	}
+	t, m, err := c.Store.FindTaskByIDWithMeta(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	return r, c.sch.UpdateTask(t, m)
 }

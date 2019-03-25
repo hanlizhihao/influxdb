@@ -1,5 +1,82 @@
 version: 2
+
 jobs:
+  litmus_daily:
+    machine: true
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - run: docker login -u=$QUAY_USER -p=$QUAY_PASS quay.io
+      - run: docker run --entrypoint "./run_litmus_tests_oss.sh" -e ONE_TEST=src/cloud/rest_api/smoke/test_smoke.py -e PROTOSPATH=/Litmus/result/influxd_test -e BINARYPATH=/Litmus/result/bin/linux/influxd -e BOLTPATH=/Litmus/result/influxd_test/influxd.bolt -e ENGINEPATH=/Litmus/result/influxd_test --net host -v /var/run/docker.sock:/var/run/docker.sock -v ~/project:/Litmus/result quay.io/influxdb/litmus:latest
+      - run:
+          name: Litmus Smoke Tests Success
+          when: on_success
+          command: bash ~/project/etc/litmus_success_notify.sh Smoke
+          path: ~/project
+      - run:
+          name: Litmus Smoke Tests Fail
+          when: on_fail
+          command: bash ~/project/etc/litmus_fail_notify.sh Smoke
+      - store_artifacts:
+          path: ~/project
+
+  litmus_nightly:
+    machine: true
+    steps:
+      - attach_workspace:
+          at: ~/project
+      - run: docker login -u=$QUAY_USER -p=$QUAY_PASS quay.io
+      - run: docker run --entrypoint "./run_litmus_tests_oss.sh" -e TEST_LIST=tests_lists/gateway_api_tests.list -e DOCKERIMAGE=true --net host -v /var/run/docker.sock:/var/run/docker.sock -v ~/project:/Litmus/result quay.io/influxdb/litmus:latest
+      - run:
+          name: Litmus Nightly Tests Success
+          when: on_success
+          command: bash ~/project/etc/litmus_success_notify.sh Nightly
+      - run:
+          name: Litmus Nightly Tests Fail
+          when: on_fail
+          command: bash ~/project/etc/litmus_fail_notify.sh Nightly
+      - store_artifacts:
+          path: ~/project
+  e2e:
+    docker:
+      - image: circleci/golang:1.11-node-browsers
+    environment:
+      GOCACHE: /tmp/go-cache
+      GOFLAGS: '-mod=readonly -p=4' # Go on Circle thinks 32 CPUs are available, but there aren't.
+    working_directory: /go/src/github.com/influxdata/influxdb
+    steps:
+      - checkout
+
+      # Speed up `make build` by restoring caches from previous runs.
+      - restore_cache:
+          name: Restoring GOCACHE
+          keys:
+            - influxdb-gocache- # Just match the most recent Go cache.
+      - restore_cache:
+          name: Restoring GOPATH/pkg/mod
+          keys:
+            - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
+      - restore_cache:
+          name: Restore npm package cache
+          keys:
+            - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+      - run: sudo apt-get install -y netcat-openbsd
+      - run: make protoc
+      - run: mkdir -p /home/circleci/.influxdbv2/protos
+      - run: make build
+      - run:
+          command: ./bin/linux/influxd --store=memory --e2e-testing=true
+          background: true
+      - run: make e2e
+      - store_test_results:
+          path: ui/junit-results
+          destination: junit-results
+      - store_artifacts:
+          path: ui/cypress/videos
+          destination: videos
+      - store_artifacts:
+          path: ui/cypress/screenshots
+          destination: screenshots
   jstest:
     docker:
       - image: circleci/golang:1.11-node-browsers
@@ -11,11 +88,11 @@ jobs:
       - restore_cache:
           name: Restore npm package cache
           keys:
-            # Only cache on exact package-lock.json match, as in Circle's yarn example:
+            # Only cache on exact package-lock.json match, as in Circle's npm example:
             - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
       - run: make node_modules
       - save_cache:
-          name: Save Yarn package cache
+          name: Save npm package cache
           key: chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
           paths:
             - ~/.cache/npm
@@ -28,7 +105,7 @@ jobs:
       - image: circleci/golang:1.11
     environment:
       GOCACHE: /tmp/go-cache
-      GOFLAGS: "-mod=readonly -p=2" # Go on Circle thinks 32 CPUs are available, but there aren't.
+      GOFLAGS: '-mod=readonly -p=2' # Go on Circle thinks 32 CPUs are available, but there aren't.
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
@@ -38,13 +115,13 @@ jobs:
           name: Restoring GOCACHE
           keys:
             - influxdb-gocache-{{ .Branch }}-{{ .Revision }} # Matches when retrying a single run.
-            - influxdb-gocache-{{ .Branch }}-                # Matches a new commit on an existing branch.
-            - influxdb-gocache-                              # Matches a new branch.
+            - influxdb-gocache-{{ .Branch }}- # Matches a new commit on an existing branch.
+            - influxdb-gocache- # Matches a new branch.
       # Populate GOPATH/pkg.
       - restore_cache:
           name: Restoring GOPATH/pkg/mod
           keys:
-            - influxdb-gomod-{{ checksum "go.sum" }}         # Matches based on go.sum checksum.
+            - influxdb-gomod-{{ checksum "go.sum" }} # Matches based on go.sum checksum.
       - run: make test-go # This uses the test cache so it may succeed or fail quickly.
       - run: make vet
       - run: make checkfmt
@@ -80,10 +157,11 @@ jobs:
       - image: circleci/golang:1.11-node-browsers
     environment:
       GOCACHE: /tmp/go-cache
-      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
+      GOFLAGS: '-mod=readonly -p=4' # Go on Circle thinks 32 CPUs are available, but there aren't.
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
+      - run: make checkcommit
 
       # Speed up `make build` by restoring caches from previous runs.
       - restore_cache:
@@ -95,17 +173,26 @@ jobs:
           keys:
             - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
       - restore_cache:
-          name: Restore Yarn package cache
+          name: Restore npm package cache
           keys:
             - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
+      - run: make protoc
       - run: make build
+      - persist_to_workspace:
+          root: .
+          paths:
+            - project
+            - bin/linux/influxd
+            - bin/linux/influx
+            - etc/litmus_success_notify.sh
+            - etc/litmus_fail_notify.sh
 
   deploy-nightly:
     docker:
       - image: circleci/golang:1.11-node-browsers
     environment:
       GOCACHE: /tmp/go-cache
-      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
+      GOFLAGS: '-mod=readonly -p=4' # Go on Circle thinks 32 CPUs are available, but there aren't.
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
       - checkout
@@ -120,22 +207,28 @@ jobs:
           keys:
             - influxdb-gomod-{{ checksum "go.sum" }} # Just match the go.sum checksum cache.
       - restore_cache:
-          name: Restore Yarn package cache
+          name: Restore npm package cache
           keys:
             - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
       - setup_remote_docker
       - run:
-          name: "Docker Login"
+          name: 'Docker Login'
           command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
       - run:
-          name: "Build nightly"
+          name: 'Build nightly'
           command: make nightly
+      - persist_to_workspace:
+          root: .
+          paths:
+            - etc/litmus_success_notify.sh
+            - etc/litmus_fail_notify.sh
+
   release:
     docker:
       - image: circleci/golang:1.11-node-browsers
     environment:
       GOCACHE: /tmp/go-cache
-      GOFLAGS: "-mod=readonly -p=4" # Go on Circle thinks 32 CPUs are available, but there aren't.
+      GOFLAGS: '-mod=readonly -p=4' # Go on Circle thinks 32 CPUs are available, but there aren't.
       DOCKER_VERSION: 2.0.0-alpha
     working_directory: /go/src/github.com/influxdata/influxdb
     steps:
@@ -156,10 +249,10 @@ jobs:
             - chronograf-npm-packages-{{ checksum "ui/package-lock.json" }}
       - setup_remote_docker
       - run:
-          name: "Docker Login"
+          name: 'Docker Login'
           command: docker login -u "$QUAY_USER" -p $QUAY_PASS quay.io
       - run:
-          name: "Build release"
+          name: 'Build release'
           command: make release
 
 workflows:
@@ -169,11 +262,20 @@ workflows:
       - gotest
       - jstest
       - build
+      - litmus_daily:
+          requires:
+            - build
+          filters:
+            branches:
+              only: /^(?!pull\/).*$/
 
+  e2e:
+    jobs:
+      - e2e
   nightly:
     triggers:
       - schedule:
-          cron: "0 7 * * *"
+          cron: '0 7 * * *'
           filters:
             branches:
               only:
@@ -188,6 +290,10 @@ workflows:
           filters:
             branches:
               only: master
+      - litmus_nightly:
+          requires:
+            - deploy-nightly
+
   release:
     jobs:
       - gotest:

@@ -1,10 +1,13 @@
 // Libraries
 import React from 'react'
 import {shallow} from 'enzyme'
+
 // Components
 import TasksList from 'src/tasks/components/TasksList'
+
 // Types
-import {Task} from 'src/types/v2/tasks'
+import {Task} from 'src/types/v2'
+
 // Constants
 import {tasks} from 'mocks/dummyData'
 
@@ -16,6 +19,7 @@ const setup = (override?) => {
     onDelete: oneTestFunction,
     onCreate: secondTestFunction,
     onSelect: oneTestFunction,
+    onImportTask: oneTestFunction,
     ...override,
   }
 

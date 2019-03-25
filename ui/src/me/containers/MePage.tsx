@@ -1,19 +1,22 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
-// Styles
-import 'src/me/containers/MePage.scss'
+
 // Components
-import {Columns, Grid, Panel} from 'src/clockface'
+import {Grid, Columns} from 'src/clockface'
 import {Page} from 'src/pageLayout'
 import Resources from 'src/me/components/Resources'
 import Header from 'src/me/components/UserPageHeader'
 import Docs from 'src/me/components/Docs'
 import GettingStarted from 'src/me/components/GettingStarted'
+
 // Types
-import {AppState, MeState} from 'src/types/v2'
+import {MeState, AppState} from 'src/types/v2'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
+
+import {Panel} from 'src/clockface'
 
 interface StateProps {
   me: MeState

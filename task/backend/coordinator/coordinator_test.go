@@ -36,8 +36,8 @@ func TestCoordinator(t *testing.T) {
 	updateChan := sched.TaskUpdateChan()
 
 	orgID := platformtesting.MustIDBase16("69746f7175650d0a")
-	usrID := platformtesting.MustIDBase16("6c61757320657420")
-	id, err := coord.CreateTask(context.Background(), backend.CreateTaskRequest{Org: orgID, User: usrID, Script: script})
+	authzID := platform.ID(123456)
+	id, err := coord.CreateTask(context.Background(), backend.CreateTaskRequest{Org: orgID, AuthorizationID: authzID, Script: script})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestCoordinator(t *testing.T) {
 		t.Fatal("task sent to scheduler doesnt match task created")
 	}
 
-	id, err = coord.CreateTask(context.Background(), backend.CreateTaskRequest{Org: orgID, User: usrID, Script: script})
+	id, err = coord.CreateTask(context.Background(), backend.CreateTaskRequest{Org: orgID, AuthorizationID: authzID, Script: script})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestCoordinator_DeleteUnclaimedTask(t *testing.T) {
 	coord := coordinator.New(zaptest.NewLogger(t), sched, st)
 
 	// Create an isolated task directly through the store so the coordinator doesn't know about it.
-	id, err := st.CreateTask(context.Background(), backend.CreateTaskRequest{Org: 1, User: 2, Script: script})
+	id, err := st.CreateTask(context.Background(), backend.CreateTaskRequest{Org: 1, AuthorizationID: 3, Script: script})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,11 +166,16 @@ func TestCoordinator_ClaimExistingTasks(t *testing.T) {
 
 	createChan := sched.TaskCreateChan()
 
-	const numTasks = 110 // One page of listed tasks should be 100, so pick more than that.
+	const numTasks = 110         // One page of listed tasks should be 100, so pick more than that.
+	const inactiveTaskIndex = 13 // One arbitrary task is set to inactive.
 
 	createdIDs := make([]platform.ID, numTasks)
 	for i := 0; i < numTasks; i++ {
-		id, err := st.CreateTask(context.Background(), backend.CreateTaskRequest{Org: 1, User: 2, Script: script})
+		ctr := backend.CreateTaskRequest{Org: 1, AuthorizationID: 3, Script: script}
+		if i == inactiveTaskIndex {
+			ctr.Status = backend.TaskInactive
+		}
+		id, err := st.CreateTask(context.Background(), ctr)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -179,16 +184,58 @@ func TestCoordinator_ClaimExistingTasks(t *testing.T) {
 
 	coordinator.New(zaptest.NewLogger(t), sched, st)
 
-	for i := 0; i < numTasks; i++ {
+	const expectedCreatedTasks = numTasks - 1 // -1 to skip the single inactive task.
+	for i := 0; i < expectedCreatedTasks; i++ {
 		_, err := timeoutSelector(createChan)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	for _, id := range createdIDs {
-		if task := sched.TaskFor(id); task == nil {
+	for i, id := range createdIDs {
+		task := sched.TaskFor(id)
+		if i == inactiveTaskIndex {
+			if task != nil {
+				t.Fatalf("inactive task with id %s claimed by coordinator at startup", id)
+			}
+		} else if task == nil {
 			t.Fatalf("did not find created task with ID %s", id)
 		}
 	}
+}
+
+func TestCoordinator_ManuallyRunTimeRange(t *testing.T) {
+	st := backend.NewInMemStore()
+	sched := mock.NewScheduler()
+
+	coord := coordinator.New(zaptest.NewLogger(t), sched, st)
+
+	// Create an isolated task directly through the store so the coordinator doesn't know about it.
+	id, err := coord.CreateTask(context.Background(), backend.CreateTaskRequest{Org: 1, AuthorizationID: 3, Script: script})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch := sched.TaskUpdateChan()
+	manualRunTime := time.Now().Unix()
+	if _, err := coord.ManuallyRunTimeRange(context.Background(), id, manualRunTime, manualRunTime, manualRunTime); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case <-ch:
+		// great!
+	case <-time.After(time.Second):
+		t.Fatal("didnt receive task update in time")
+	}
+
+	_, meta, err := st.FindTaskByIDWithMeta(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(meta.ManualRuns) != 1 {
+		t.Fatal("failed to update store")
+	}
+
 }

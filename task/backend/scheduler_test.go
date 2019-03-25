@@ -2,12 +2,15 @@ package backend_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/influxdata/flux"
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/kit/prom"
 	"github.com/influxdata/influxdb/kit/prom/promtest"
@@ -29,8 +32,10 @@ func TestScheduler_Cancelation(t *testing.T) {
 	o.Start(context.Background())
 	defer o.Stop()
 
+	const orgID = 2
 	task := &backend.StoreTask{
-		ID: platform.ID(1),
+		ID:  platform.ID(1),
+		Org: orgID,
 	}
 	meta := &backend.StoreTaskMeta{
 		MaxConcurrency:  1,
@@ -41,7 +46,7 @@ func TestScheduler_Cancelation(t *testing.T) {
 	if err := o.ClaimTask(task, meta); err != nil {
 		t.Fatal(err)
 	}
-	runs, err := rl.ListRuns(context.Background(), platform.RunFilter{Task: &task.ID})
+	runs, err := rl.ListRuns(context.Background(), orgID, platform.RunFilter{Task: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +54,7 @@ func TestScheduler_Cancelation(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Millisecond) // we have to do this because the storage system we are using for the logs is eventually consistent.
-	runs, err = rl.ListRuns(context.Background(), platform.RunFilter{Task: &task.ID})
+	runs, err = rl.ListRuns(context.Background(), orgID, platform.RunFilter{Task: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +63,7 @@ func TestScheduler_Cancelation(t *testing.T) {
 	}
 	// check to make sure it is really canceling, and that the status doesn't get changed to something else after it would have finished
 	time.Sleep(500 * time.Millisecond)
-	runs, err = rl.ListRuns(context.Background(), platform.RunFilter{Task: &task.ID})
+	runs, err = rl.ListRuns(context.Background(), orgID, platform.RunFilter{Task: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +77,8 @@ func TestScheduler_Cancelation(t *testing.T) {
 }
 
 func TestScheduler_StartScriptOnClaim(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	o := backend.NewScheduler(d, e, backend.NopLogWriter{}, 5, backend.WithLogger(zaptest.NewLogger(t)))
@@ -146,6 +153,8 @@ func TestScheduler_StartScriptOnClaim(t *testing.T) {
 }
 
 func TestScheduler_CreateNextRunOnTick(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	o := backend.NewScheduler(d, e, backend.NopLogWriter{}, 5)
@@ -215,7 +224,81 @@ func TestScheduler_CreateNextRunOnTick(t *testing.T) {
 	}
 }
 
+func TestScheduler_LogStatisticsOnSuccess(t *testing.T) {
+	t.Parallel()
+
+	d := mock.NewDesiredState()
+	e := mock.NewExecutor()
+	rl := backend.NewInMemRunReaderWriter()
+
+	o := backend.NewScheduler(d, e, rl, 5, backend.WithLogger(zaptest.NewLogger(t)))
+	o.Start(context.Background())
+	defer o.Stop()
+
+	const taskID = 0x12345
+	const orgID = 0x54321
+	task := &backend.StoreTask{
+		ID:  taskID,
+		Org: orgID,
+	}
+	meta := &backend.StoreTaskMeta{
+		MaxConcurrency:  1,
+		EffectiveCron:   "@every 1s",
+		LatestCompleted: 5,
+	}
+
+	d.SetTaskMeta(taskID, *meta)
+	if err := o.ClaimTask(task, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	o.Tick(6)
+
+	p, err := e.PollForNumberRunning(taskID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := mock.NewRunResult(nil, false)
+	rr.Stats = flux.Statistics{Metadata: flux.Metadata{"foo": []interface{}{"bar"}}}
+	p[0].Finish(rr, nil)
+
+	runID := p[0].Run().RunID
+
+	if _, err := e.PollForNumberRunning(taskID, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	logs, err := rl.ListLogs(context.Background(), orgID, platform.LogFilter{Task: taskID, Run: &runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// For now, assume the stats line is the only line beginning with "{".
+	var statJSON string
+	for _, log := range logs {
+		if len(log.Message) > 0 && log.Message[0] == '{' {
+			statJSON = log.Message
+			break
+		}
+	}
+
+	if statJSON == "" {
+		t.Fatal("could not find log message that looked like statistics")
+	}
+	var stats flux.Statistics
+	if err := json.Unmarshal([]byte(statJSON), &stats); err != nil {
+		t.Fatal(err)
+	}
+	foo := stats.Metadata["foo"]
+	if !reflect.DeepEqual(foo, []interface{}{"bar"}) {
+		t.Fatalf("query statistics were not encoded correctly into logs. expected metadata.foo=[bar], got: %#v", stats)
+	}
+}
+
 func TestScheduler_Release(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	o := backend.NewScheduler(d, e, backend.NopLogWriter{}, 5)
@@ -252,6 +335,8 @@ func TestScheduler_Release(t *testing.T) {
 }
 
 func TestScheduler_UpdateTask(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	s := backend.NewScheduler(d, e, backend.NopLogWriter{}, 3059, backend.WithLogger(zaptest.NewLogger(t)))
@@ -303,6 +388,8 @@ func TestScheduler_UpdateTask(t *testing.T) {
 }
 
 func TestScheduler_Queue(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	o := backend.NewScheduler(d, e, backend.NopLogWriter{}, 3059, backend.WithLogger(zaptest.NewLogger(t)))
@@ -384,8 +471,39 @@ func TestScheduler_Queue(t *testing.T) {
 	}
 }
 
+func pollForRunLog(t *testing.T, r backend.LogReader, taskID, runID, orgID platform.ID, exp string) {
+	t.Helper()
+
+	var logs []platform.Log
+	var err error
+
+	const maxAttempts = 50
+	for i := 0; i < maxAttempts; i++ {
+		if i != 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		logs, err = r.ListLogs(context.Background(), orgID, platform.LogFilter{Task: taskID, Run: &runID})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, log := range logs {
+			if log.Message == exp {
+				return
+			}
+		}
+	}
+
+	t.Logf("Didn't find message %q in logs:", exp)
+	for _, log := range logs {
+		t.Logf("\t%s", log.Message)
+	}
+	t.FailNow()
+}
+
 // pollForRunStatus tries a few times to find runs matching supplied conditions, before failing.
-func pollForRunStatus(t *testing.T, r backend.LogReader, taskID platform.ID, expCount, expIndex int, expStatus string) {
+func pollForRunStatus(t *testing.T, r backend.LogReader, taskID, orgID platform.ID, expCount, expIndex int, expStatus string) {
 	t.Helper()
 
 	var runs []*platform.Run
@@ -397,7 +515,7 @@ func pollForRunStatus(t *testing.T, r backend.LogReader, taskID platform.ID, exp
 			time.Sleep(10 * time.Millisecond)
 		}
 
-		runs, err = r.ListRuns(context.Background(), platform.RunFilter{Task: &taskID})
+		runs, err = r.ListRuns(context.Background(), orgID, platform.RunFilter{Task: taskID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -421,7 +539,9 @@ func pollForRunStatus(t *testing.T, r backend.LogReader, taskID platform.ID, exp
 	t.FailNow()
 }
 
-func TestScheduler_RunLog(t *testing.T) {
+func TestScheduler_RunStatus(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	rl := backend.NewInMemRunReaderWriter()
@@ -431,7 +551,8 @@ func TestScheduler_RunLog(t *testing.T) {
 
 	// Claim a task that starts later.
 	task := &backend.StoreTask{
-		ID: platform.ID(1),
+		ID:  platform.ID(1),
+		Org: 2,
 	}
 	meta := &backend.StoreTaskMeta{
 		MaxConcurrency:  99,
@@ -444,17 +565,13 @@ func TestScheduler_RunLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := rl.ListRuns(context.Background(), platform.RunFilter{Task: &task.ID}); err != backend.ErrRunNotFound {
-		t.Fatal(err)
-	}
-
 	s.Tick(6)
 	promises, err := e.PollForNumberRunning(task.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	runs, err := rl.ListRuns(context.Background(), platform.RunFilter{Task: &task.ID})
+	runs, err := rl.ListRuns(context.Background(), task.Org, platform.RunFilter{Task: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +589,7 @@ func TestScheduler_RunLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pollForRunStatus(t, rl, task.ID, 1, 0, backend.RunSuccess.String())
+	pollForRunStatus(t, rl, task.ID, task.Org, 1, 0, backend.RunSuccess.String())
 
 	// Create a new run, but fail this time.
 	s.Tick(7)
@@ -481,24 +598,38 @@ func TestScheduler_RunLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pollForRunStatus(t, rl, task.ID, 2, 1, backend.RunStarted.String())
+	pollForRunStatus(t, rl, task.ID, task.Org, 2, 1, backend.RunStarted.String())
 
-	// Finish with failure.
+	// Finish with failure to create the run.
 	promises[0].Finish(nil, errors.New("forced failure"))
 	if _, err := e.PollForNumberRunning(task.ID, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	pollForRunStatus(t, rl, task.ID, 2, 1, backend.RunFail.String())
+	pollForRunStatus(t, rl, task.ID, task.Org, 2, 1, backend.RunFail.String())
 
-	// One more run, but cancel this time.
+	// Create a new run that starts but fails.
 	s.Tick(8)
 	promises, err = e.PollForNumberRunning(task.ID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pollForRunStatus(t, rl, task.ID, 3, 2, backend.RunStarted.String())
+	pollForRunStatus(t, rl, task.ID, task.Org, 3, 2, backend.RunStarted.String())
+	promises[0].Finish(mock.NewRunResult(errors.New("started but failed to finish properly"), false), nil)
+	if _, err := e.PollForNumberRunning(task.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	pollForRunStatus(t, rl, task.ID, task.Org, 3, 2, backend.RunFail.String())
+
+	// One more run, but cancel this time.
+	s.Tick(9)
+	promises, err = e.PollForNumberRunning(task.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pollForRunStatus(t, rl, task.ID, task.Org, 4, 3, backend.RunStarted.String())
 
 	// Finish with failure.
 	promises[0].Cancel()
@@ -506,10 +637,98 @@ func TestScheduler_RunLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pollForRunStatus(t, rl, task.ID, 3, 2, backend.RunCanceled.String())
+	pollForRunStatus(t, rl, task.ID, task.Org, 4, 3, backend.RunCanceled.String())
+}
+
+func TestScheduler_RunFailureCleanup(t *testing.T) {
+	t.Parallel()
+
+	d := mock.NewDesiredState()
+	e := mock.NewExecutor()
+	rl := backend.NewInMemRunReaderWriter()
+	s := backend.NewScheduler(d, e, rl, 5, backend.WithLogger(zaptest.NewLogger(t)))
+	s.Start(context.Background())
+	defer s.Stop()
+
+	// Task with concurrency 1 should continue after one run fails.
+	task := &backend.StoreTask{
+		ID: platform.ID(1),
+	}
+	meta := &backend.StoreTaskMeta{
+		MaxConcurrency:  1,
+		EffectiveCron:   "@every 1s",
+		LatestCompleted: 5,
+	}
+
+	d.SetTaskMeta(task.ID, *meta)
+	if err := s.ClaimTask(task, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Tick(6)
+	promises, err := e.PollForNumberRunning(task.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Finish with failure to create the run.
+	promises[0].Finish(nil, errors.New("forced failure"))
+	if _, err := e.PollForNumberRunning(task.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	pollForRunLog(t, rl, task.ID, promises[0].Run().RunID, task.Org, "Waiting for execution result: forced failure")
+
+	// Should continue even if max concurrency == 1.
+	// This run will start and then fail.
+	s.Tick(7)
+	promises, err = e.PollForNumberRunning(task.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	promises[0].Finish(mock.NewRunResult(errors.New("started but failed to finish properly"), false), nil)
+	if _, err := e.PollForNumberRunning(task.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	pollForRunLog(t, rl, task.ID, promises[0].Run().RunID, task.Org, "Run failed to execute: started but failed to finish properly")
+
+	// Fail to execute next run.
+	if n := d.TotalRunsCreatedForTask(task.ID); n != 2 {
+		t.Fatalf("should have created 2 runs so far, got %d", n)
+	}
+	e.FailNextCallToExecute(errors.New("forced failure on Execute"))
+	s.Tick(8)
+	// The execution happens in the background, so check a few times for 3 runs created.
+	const attempts = 50
+	for i := 0; i < attempts; i++ {
+		time.Sleep(2 * time.Millisecond)
+		n := d.TotalRunsCreatedForTask(task.ID)
+		if n == 3 {
+			break
+		}
+		if i == attempts-1 {
+			// Fail if we haven't seen the right count by the last attempt.
+			t.Fatalf("expected 3 runs created, got %d", n)
+		}
+	}
+	// We don't have a good hook to get the run ID right now, so list the runs and assume the final one is ours.
+	runs, err := rl.ListRuns(context.Background(), task.Org, platform.RunFilter{Task: task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pollForRunLog(t, rl, task.ID, runs[len(runs)-1].ID, task.Org, "Run failed to begin execution: forced failure on Execute")
+
+	// One more tick just to ensure that we can keep going after this type of failure too.
+	s.Tick(9)
+	_, err = e.PollForNumberRunning(task.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestScheduler_Metrics(t *testing.T) {
+	t.Parallel()
+
 	d := mock.NewDesiredState()
 	e := mock.NewExecutor()
 	s := backend.NewScheduler(d, e, backend.NopLogWriter{}, 5)

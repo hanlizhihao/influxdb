@@ -1,12 +1,16 @@
 // Libraries
 import React, {Component} from 'react'
 import classnames from 'classnames'
+
 // Components
-import {Button, ButtonShape, Dropdown, IconFont} from 'src/clockface'
+import {Dropdown} from 'src/clockface'
+import {Button, ButtonShape, IconFont} from '@influxdata/clockface'
+
 // Constants
-import autoRefreshOptions, {AutoRefreshOption, AutoRefreshOptionType,} from 'src/shared/data/autoRefreshes'
-// Styles
-import 'src/shared/components/dropdown_auto_refresh/AutoRefreshDropdown.scss'
+import autoRefreshOptions, {
+  AutoRefreshOption,
+  AutoRefreshOptionType,
+} from 'src/shared/data/autoRefreshes'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 

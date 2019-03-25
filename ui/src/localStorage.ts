@@ -1,9 +1,11 @@
 import normalizer from 'src/normalizers/dashboardTime'
-import {loadLocalSettingsFailed, newVersion,} from 'src/shared/copy/notifications'
+import {VERSION} from 'src/shared/constants'
+import {
+  newVersion,
+  loadLocalSettingsFailed,
+} from 'src/shared/copy/notifications'
 
 import {LocalStorage} from 'src/types/localStorage'
-
-const VERSION = process.env.npm_package_version
 
 export const loadLocalStorage = (): LocalStorage => {
   try {
@@ -14,7 +16,7 @@ export const loadLocalStorage = (): LocalStorage => {
     if (state.VERSION && state.VERSION !== VERSION) {
       const version = VERSION ? ` (${VERSION})` : ''
 
-      console.log(newVersion(version).message) // tslint:disable-line no-console
+      console.log(newVersion(version).message) // eslint-disable-line no-console
     }
 
     delete state.VERSION

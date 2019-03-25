@@ -1,52 +1,58 @@
 import {SourceType} from 'src/types/v2/sources'
 import {Bucket, RetentionRule, RetentionRuleTypes} from 'src/types/v2/buckets'
-import {RangeState} from 'src/dashboards/reducers/v2/ranges'
-import {ViewsState} from 'src/dashboards/reducers/v2/views'
+import {RangeState} from 'src/dashboards/reducers/ranges'
+import {ViewsState} from 'src/dashboards/reducers/views'
 import {
-    BuilderConfig,
-    Cell,
-    Dashboard,
-    DashboardQuery,
-    DashboardSwitcherLinks,
-    InfluxLanguage,
-    NewCell,
-    NewView,
-    QueryEditMode,
-    View,
-    ViewParams,
-    ViewProperties,
-    ViewShape,
-    ViewType,
+  DashboardSwitcherLinks,
+  NewCell,
+  Cell,
+  View,
+  NewView,
+  ViewType,
+  ViewShape,
+  ViewParams,
+  ViewProperties,
+  QueryEditMode,
+  BuilderConfig,
+  DashboardQuery,
+  Dashboard,
 } from 'src/types/v2/dashboards'
 
-import {Organization, Source} from 'src/api'
-import {Task} from 'src/types/v2/tasks'
+import {Source} from '@influxdata/influx'
 import {Member} from 'src/types/v2/members'
+import {Organization, ITask as Task} from '@influxdata/influx'
+import {TaskStatus} from 'src/types/tasks'
 import {Links} from 'src/types/v2/links'
 import {Notification} from 'src/types'
 import {TimeRange} from 'src/types/queries'
-import {LogsState} from 'src/types/logs'
-import {TimeMachinesState} from 'src/shared/reducers/v2/timeMachines'
+import {TimeMachinesState} from 'src/timeMachine/reducers'
 import {AppState as AppPresentationState} from 'src/shared/reducers/app'
-import {State as TaskState} from 'src/tasks/reducers/v2'
+import {State as TaskState} from 'src/tasks/reducers'
 import {RouterState} from 'react-router-redux'
 import {MeState} from 'src/shared/reducers/v2/me'
-import {OverlayState} from 'src/types/v2/overlay'
-import {SourcesState} from 'src/sources/reducers'
-import {NoteEditorState} from 'src/dashboards/reducers/v2/notes'
+import {NoteEditorState} from 'src/dashboards/reducers/notes'
 import {DataLoadingState} from 'src/dataLoaders/reducers'
 import {OnboardingState} from 'src/onboarding/reducers'
 import {ProtosState} from 'src/protos/reducers'
+import {VariablesState} from 'src/variables/reducers'
 import {Label} from 'src/types/v2/labels'
+import {OrgViewState} from 'src/organizations/reducers/orgView'
+import {LabelsState} from 'src/labels/reducers'
+import {BucketsState} from 'src/buckets/reducers'
+import {TelegrafsState} from 'src/telegrafs/reducers'
+import {TemplatesState} from 'src/templates/reducers'
+import {AuthorizationsState} from 'src/authorizations/reducers'
+import {ScrapersState} from 'src/scrapers/reducers'
 
 export interface AppState {
   VERSION: string
+  labels: LabelsState
+  buckets: BucketsState
+  telegrafs: TelegrafsState
   links: Links
   app: AppPresentationState
-  logs: LogsState
   ranges: RangeState
   views: ViewsState
-  sources: SourcesState
   dashboards: Dashboard[]
   notifications: Notification[]
   timeMachines: TimeMachinesState
@@ -54,11 +60,16 @@ export interface AppState {
   tasks: TaskState
   timeRange: TimeRange
   orgs: Organization[]
+  orgView: OrgViewState
   me: MeState
   onboarding: OnboardingState
   noteEditor: NoteEditorState
   dataLoading: DataLoadingState
   protos: ProtosState
+  variables: VariablesState
+  tokens: AuthorizationsState
+  templates: TemplatesState
+  scrapers: ScrapersState
 }
 
 export type GetState = () => AppState
@@ -68,7 +79,6 @@ export {
   SourceType,
   Member,
   Bucket,
-  OverlayState,
   RetentionRule,
   RetentionRuleTypes,
   Dashboard,
@@ -88,7 +98,7 @@ export {
   DashboardSwitcherLinks,
   Organization,
   Task,
+  TaskStatus,
   MeState,
-  InfluxLanguage,
   Label,
 }

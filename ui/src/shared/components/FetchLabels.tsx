@@ -1,12 +1,18 @@
 // Libraries
 import React, {PureComponent} from 'react'
+import _ from 'lodash'
+
 // Components
 import {EmptyState} from 'src/clockface'
+import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+
 // APIs
-import {getLabels} from 'src/configuration/apis'
+import {client} from 'src/utils/api'
+
 // Types
 import {RemoteDataState} from 'src/types'
-import {Label} from 'src/api'
+import {Label} from 'src/types/v2/labels'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
@@ -16,7 +22,7 @@ interface Props {
 
 interface State {
   labels: Label[]
-  ready: RemoteDataState
+  loading: RemoteDataState
 }
 
 @ErrorHandling
@@ -26,17 +32,22 @@ class FetchLabels extends PureComponent<Props, State> {
 
     this.state = {
       labels: [],
-      ready: RemoteDataState.NotStarted,
+      loading: RemoteDataState.NotStarted,
     }
   }
 
   public async componentDidMount() {
-    const labels = await getLabels()
-    this.setState({ready: RemoteDataState.Done, labels})
+    const labels = await client.labels.getAll()
+    this.setState({
+      loading: RemoteDataState.Done,
+      labels: _.orderBy(labels, ['name']),
+    })
   }
 
   public render() {
-    if (this.state.ready === RemoteDataState.Error) {
+    const {loading} = this.state
+
+    if (loading === RemoteDataState.Error) {
       return (
         <EmptyState>
           <EmptyState.Text text="Could not load labels" />
@@ -44,11 +55,11 @@ class FetchLabels extends PureComponent<Props, State> {
       )
     }
 
-    if (this.state.ready !== RemoteDataState.Done) {
-      return <div className="page-spinner" />
-    }
-
-    return this.props.children(this.state.labels)
+    return (
+      <SpinnerContainer loading={loading} spinnerComponent={<TechnoSpinner />}>
+        {this.props.children(this.state.labels)}
+      </SpinnerContainer>
+    )
   }
 }
 

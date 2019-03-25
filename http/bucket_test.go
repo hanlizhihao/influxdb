@@ -16,7 +16,22 @@ import (
 	"github.com/influxdata/influxdb/mock"
 	platformtesting "github.com/influxdata/influxdb/testing"
 	"github.com/julienschmidt/httprouter"
+	"go.uber.org/zap"
 )
+
+// NewMockBucketBackend returns a BucketBackend with mock services.
+func NewMockBucketBackend() *BucketBackend {
+	return &BucketBackend{
+		Logger: zap.NewNop().With(zap.String("handler", "bucket")),
+
+		BucketService:              mock.NewBucketService(),
+		BucketOperationLogService:  mock.NewBucketOperationLogService(),
+		UserResourceMappingService: mock.NewUserResourceMappingService(),
+		LabelService:               mock.NewLabelService(),
+		UserService:                mock.NewUserService(),
+		OrganizationService:        mock.NewOrganizationService(),
+	}
+}
 
 func TestService_handleGetBuckets(t *testing.T) {
 	type fields struct {
@@ -93,8 +108,11 @@ func TestService_handleGetBuckets(t *testing.T) {
       "links": {
         "org": "/api/v2/orgs/50f7ba1150f7ba11",
         "self": "/api/v2/buckets/0b501e7e557ab1ed",
-        "log": "/api/v2/buckets/0b501e7e557ab1ed/log",
-        "labels": "/api/v2/buckets/0b501e7e557ab1ed/labels"
+        "logs": "/api/v2/buckets/0b501e7e557ab1ed/logs",
+        "labels": "/api/v2/buckets/0b501e7e557ab1ed/labels",
+        "owners": "/api/v2/buckets/0b501e7e557ab1ed/owners",
+        "members": "/api/v2/buckets/0b501e7e557ab1ed/members",
+        "write": "/api/v2/write?org=50f7ba1150f7ba11&bucket=0b501e7e557ab1ed"
       },
       "id": "0b501e7e557ab1ed",
       "organizationID": "50f7ba1150f7ba11",
@@ -114,8 +132,11 @@ func TestService_handleGetBuckets(t *testing.T) {
       "links": {
         "org": "/api/v2/orgs/7e55e118dbabb1ed",
         "self": "/api/v2/buckets/c0175f0077a77005",
-        "log": "/api/v2/buckets/c0175f0077a77005/log",
-        "labels": "/api/v2/buckets/c0175f0077a77005/labels"
+        "logs": "/api/v2/buckets/c0175f0077a77005/logs",
+        "labels": "/api/v2/buckets/c0175f0077a77005/labels",
+        "members": "/api/v2/buckets/c0175f0077a77005/members",
+        "owners": "/api/v2/buckets/c0175f0077a77005/owners",
+        "write": "/api/v2/write?org=7e55e118dbabb1ed&bucket=c0175f0077a77005"
       },
       "id": "c0175f0077a77005",
       "organizationID": "7e55e118dbabb1ed",
@@ -167,11 +188,10 @@ func TestService_handleGetBuckets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := tt.fields.LabelService
-			userService := mock.NewUserService()
-			h := NewBucketHandler(mappingService, labelService, userService)
-			h.BucketService = tt.fields.BucketService
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.BucketService = tt.fields.BucketService
+			bucketBackend.LabelService = tt.fields.LabelService
+			h := NewBucketHandler(bucketBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -252,8 +272,11 @@ func TestService_handleGetBucket(t *testing.T) {
 		  "links": {
 		    "org": "/api/v2/orgs/020f755c3c082000",
 		    "self": "/api/v2/buckets/020f755c3c082000",
-		    "log": "/api/v2/buckets/020f755c3c082000/log",
-		    "labels": "/api/v2/buckets/020f755c3c082000/labels"
+		    "logs": "/api/v2/buckets/020f755c3c082000/logs",
+		    "labels": "/api/v2/buckets/020f755c3c082000/labels",
+		    "members": "/api/v2/buckets/020f755c3c082000/members",
+		    "owners": "/api/v2/buckets/020f755c3c082000/owners",
+		    "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
 		  },
 		  "id": "020f755c3c082000",
 		  "organizationID": "020f755c3c082000",
@@ -287,11 +310,9 @@ func TestService_handleGetBucket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewBucketHandler(mappingService, labelService, userService)
-			h.BucketService = tt.fields.BucketService
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.BucketService = tt.fields.BucketService
+			h := NewBucketHandler(bucketBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -376,8 +397,11 @@ func TestService_handlePostBucket(t *testing.T) {
   "links": {
     "org": "/api/v2/orgs/6f626f7274697320",
     "self": "/api/v2/buckets/020f755c3c082000",
-    "log": "/api/v2/buckets/020f755c3c082000/log",
-    "labels": "/api/v2/buckets/020f755c3c082000/labels"
+    "logs": "/api/v2/buckets/020f755c3c082000/logs",
+    "labels": "/api/v2/buckets/020f755c3c082000/labels",
+    "members": "/api/v2/buckets/020f755c3c082000/members",
+    "owners": "/api/v2/buckets/020f755c3c082000/owners",
+    "write": "/api/v2/write?org=6f626f7274697320&bucket=020f755c3c082000"
   },
   "id": "020f755c3c082000",
   "organizationID": "6f626f7274697320",
@@ -392,12 +416,10 @@ func TestService_handlePostBucket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewBucketHandler(mappingService, labelService, userService)
-			h.BucketService = tt.fields.BucketService
-			h.OrganizationService = tt.fields.OrganizationService
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.BucketService = tt.fields.BucketService
+			bucketBackend.OrganizationService = tt.fields.OrganizationService
+			h := NewBucketHandler(bucketBackend)
 
 			b, err := json.Marshal(newBucket(tt.args.bucket))
 			if err != nil {
@@ -414,8 +436,7 @@ func TestService_handlePostBucket(t *testing.T) {
 			body, _ := ioutil.ReadAll(res.Body)
 
 			if res.StatusCode != tt.wants.statusCode {
-				msg := res.Header.Get(ErrorHeader)
-				t.Errorf("%q. handlePostBucket() = %v, want %v: %s", tt.name, res.StatusCode, tt.wants.statusCode, msg)
+				t.Errorf("%q. handlePostBucket() = %v, want %v", tt.name, res.StatusCode, tt.wants.statusCode)
 			}
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handlePostBucket() = %v, want %v", tt.name, content, tt.wants.contentType)
@@ -489,11 +510,9 @@ func TestService_handleDeleteBucket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewBucketHandler(mappingService, labelService, userService)
-			h.BucketService = tt.fields.BucketService
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.BucketService = tt.fields.BucketService
+			h := NewBucketHandler(bucketBackend)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -589,8 +608,11 @@ func TestService_handlePatchBucket(t *testing.T) {
   "links": {
     "org": "/api/v2/orgs/020f755c3c082000",
     "self": "/api/v2/buckets/020f755c3c082000",
-    "log": "/api/v2/buckets/020f755c3c082000/log",
-    "labels": "/api/v2/buckets/020f755c3c082000/labels"
+    "logs": "/api/v2/buckets/020f755c3c082000/logs",
+    "labels": "/api/v2/buckets/020f755c3c082000/labels",
+    "members": "/api/v2/buckets/020f755c3c082000/members",
+    "owners": "/api/v2/buckets/020f755c3c082000/owners",
+    "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
   },
   "id": "020f755c3c082000",
   "organizationID": "020f755c3c082000",
@@ -662,8 +684,11 @@ func TestService_handlePatchBucket(t *testing.T) {
   "links": {
     "org": "/api/v2/orgs/020f755c3c082000",
     "self": "/api/v2/buckets/020f755c3c082000",
-    "log": "/api/v2/buckets/020f755c3c082000/log",
-    "labels": "/api/v2/buckets/020f755c3c082000/labels"
+    "logs": "/api/v2/buckets/020f755c3c082000/logs",
+    "labels": "/api/v2/buckets/020f755c3c082000/labels",
+    "members": "/api/v2/buckets/020f755c3c082000/members",
+    "owners": "/api/v2/buckets/020f755c3c082000/owners",
+    "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
   },
   "id": "020f755c3c082000",
   "organizationID": "020f755c3c082000",
@@ -716,8 +741,11 @@ func TestService_handlePatchBucket(t *testing.T) {
   "links": {
     "org": "/api/v2/orgs/020f755c3c082000",
     "self": "/api/v2/buckets/020f755c3c082000",
-    "log": "/api/v2/buckets/020f755c3c082000/log",
-    "labels": "/api/v2/buckets/020f755c3c082000/labels"
+    "logs": "/api/v2/buckets/020f755c3c082000/logs",
+    "labels": "/api/v2/buckets/020f755c3c082000/labels",
+    "members": "/api/v2/buckets/020f755c3c082000/members",
+    "owners": "/api/v2/buckets/020f755c3c082000/owners",
+    "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
   },
   "id": "020f755c3c082000",
   "organizationID": "020f755c3c082000",
@@ -771,11 +799,9 @@ func TestService_handlePatchBucket(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mappingService := mock.NewUserResourceMappingService()
-			labelService := mock.NewLabelService()
-			userService := mock.NewUserService()
-			h := NewBucketHandler(mappingService, labelService, userService)
-			h.BucketService = tt.fields.BucketService
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.BucketService = tt.fields.BucketService
+			h := NewBucketHandler(bucketBackend)
 
 			upd := platform.BucketUpdate{}
 			if tt.args.name != "" {
@@ -868,7 +894,7 @@ func TestService_handlePostBucketMember(t *testing.T) {
 				body: `
 {
   "links": {
-    "log": "/api/v2/users/6f626f7274697320/log",
+    "logs": "/api/v2/users/6f626f7274697320/logs",
     "self": "/api/v2/users/6f626f7274697320"
   },
   "role": "member",
@@ -882,7 +908,9 @@ func TestService_handlePostBucketMember(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewBucketHandler(mock.NewUserResourceMappingService(), mock.NewLabelService(), tt.fields.UserService)
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.UserService = tt.fields.UserService
+			h := NewBucketHandler(bucketBackend)
 
 			b, err := json.Marshal(tt.args.user)
 			if err != nil {
@@ -956,7 +984,7 @@ func TestService_handlePostBucketOwner(t *testing.T) {
 				body: `
 {
   "links": {
-    "log": "/api/v2/users/6f626f7274697320/log",
+    "logs": "/api/v2/users/6f626f7274697320/logs",
     "self": "/api/v2/users/6f626f7274697320"
   },
   "role": "owner",
@@ -970,7 +998,9 @@ func TestService_handlePostBucketOwner(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewBucketHandler(mock.NewUserResourceMappingService(), mock.NewLabelService(), tt.fields.UserService)
+			bucketBackend := NewMockBucketBackend()
+			bucketBackend.UserService = tt.fields.UserService
+			h := NewBucketHandler(bucketBackend)
 
 			b, err := json.Marshal(tt.args.user)
 			if err != nil {
@@ -1016,13 +1046,10 @@ func initBucketService(f platformtesting.BucketFields, t *testing.T) (platform.B
 		}
 	}
 
-	mappingService := mock.NewUserResourceMappingService()
-	labelService := mock.NewLabelService()
-	userService := mock.NewUserService()
-	handler := NewBucketHandler(mappingService, labelService, userService)
-	handler.BucketService = svc
-	handler.OrganizationService = svc
-
+	bucketBackend := NewMockBucketBackend()
+	bucketBackend.BucketService = svc
+	bucketBackend.OrganizationService = svc
+	handler := NewBucketHandler(bucketBackend)
 	server := httptest.NewServer(handler)
 	client := BucketService{
 		Addr:     server.URL,

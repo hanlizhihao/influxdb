@@ -1,9 +1,8 @@
 // Libraries
 import React, {SFC} from 'react'
+
 // Components
 import {Panel} from 'src/clockface'
-// Styles
-import 'src/organizations/components/TelegrafExplainer.scss'
 
 const TelegrafExplainer: SFC = () => (
   <Panel className="telegraf-explainer">

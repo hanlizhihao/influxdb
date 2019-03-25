@@ -51,19 +51,19 @@ func (s *Service) ListTargets(ctx context.Context) (list []platform.ScraperTarge
 }
 
 // AddTarget add a new scraper target into storage.
-func (s *Service) AddTarget(ctx context.Context, target *platform.ScraperTarget) (err error) {
+func (s *Service) AddTarget(ctx context.Context, target *platform.ScraperTarget, userID platform.ID) (err error) {
 	target.ID = s.IDGenerator.ID()
 	if !target.OrgID.Valid() {
 		return &platform.Error{
 			Code: platform.EInvalid,
-			Msg:  "org id is invalid",
+			Msg:  "provided organization ID has invalid format",
 			Op:   OpPrefix + platform.OpAddTarget,
 		}
 	}
 	if !target.BucketID.Valid() {
 		return &platform.Error{
 			Code: platform.EInvalid,
-			Msg:  "bucket id is invalid",
+			Msg:  "provided bucket ID has invalid format",
 			Op:   OpPrefix + platform.OpAddTarget,
 		}
 	}
@@ -72,6 +72,15 @@ func (s *Service) AddTarget(ctx context.Context, target *platform.ScraperTarget)
 			Op:  OpPrefix + platform.OpAddTarget,
 			Err: err,
 		}
+	}
+	urm := &platform.UserResourceMapping{
+		ResourceID:   target.ID,
+		UserID:       userID,
+		UserType:     platform.Owner,
+		ResourceType: platform.ScraperResourceType,
+	}
+	if err := s.CreateUserResourceMapping(ctx, urm); err != nil {
+		return err
 	}
 	return nil
 }
@@ -85,17 +94,29 @@ func (s *Service) RemoveTarget(ctx context.Context, id platform.ID) error {
 		}
 	}
 	s.scraperTargetKV.Delete(id.String())
+	err := s.deleteUserResourceMapping(ctx, platform.UserResourceMappingFilter{
+		ResourceID:   id,
+		ResourceType: platform.ScraperResourceType,
+	})
+	if err != nil {
+		return &platform.Error{
+			Code: platform.ErrorCode(err),
+			Op:   OpPrefix + platform.OpRemoveTarget,
+			Err:  err,
+		}
+	}
+
 	return nil
 }
 
 // UpdateTarget updates a scraper target.
-func (s *Service) UpdateTarget(ctx context.Context, update *platform.ScraperTarget) (target *platform.ScraperTarget, err error) {
+func (s *Service) UpdateTarget(ctx context.Context, update *platform.ScraperTarget, userID platform.ID) (target *platform.ScraperTarget, err error) {
 	op := OpPrefix + platform.OpUpdateTarget
 	if !update.ID.Valid() {
 		return nil, &platform.Error{
 			Code: platform.EInvalid,
 			Op:   op,
-			Msg:  "id is invalid",
+			Msg:  "provided scraper target ID has invalid format",
 		}
 	}
 	oldTarget, pe := s.loadScraperTarget(update.ID)

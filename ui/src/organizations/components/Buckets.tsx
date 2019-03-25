@@ -1,26 +1,33 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import _ from 'lodash'
+
 // Components
-import TabbedPageHeader from 'src/shared/components/tabbed_page/TabbedPageHeader'
 import FilterList from 'src/shared/components/Filter'
 import BucketList from 'src/organizations/components/BucketList'
 import {PrettyBucket} from 'src/organizations/components/BucketRow'
 import CreateBucketOverlay from 'src/organizations/components/CreateBucketOverlay'
-import {Button, ComponentColor, ComponentSize, EmptyState, IconFont, Input, OverlayTechnology,} from 'src/clockface'
+import {
+  ComponentSize,
+  Button,
+  ComponentColor,
+  IconFont,
+} from '@influxdata/clockface'
+import {Input, Overlay, EmptyState, Tabs} from 'src/clockface'
+
 // Actions
 import * as NotificationsActions from 'src/types/actions/notifications'
+
 // Utils
 import {ruleToString} from 'src/utils/formatting'
-// APIs
-import {createBucket, deleteBucket, updateBucket} from 'src/organizations/apis'
-// Types
-import {OverlayState} from 'src/types/v2'
 
-import {Bucket, BucketRetentionRules, Organization} from 'src/api'
-// Decorators
-import {ErrorHandling} from 'src/shared/decorators/errors'
-import {bucketDeleted} from 'src/shared/copy/v2/notifications'
+// APIs
+import {client} from 'src/utils/api'
+
+// Types
+import {OverlayState} from 'src/types'
+
+import {Bucket, Organization, BucketRetentionRules} from '@influxdata/influx'
 
 interface Props {
   org: Organization
@@ -34,6 +41,17 @@ interface State {
   searchTerm: string
   overlayState: OverlayState
 }
+
+// Decorators
+import {ErrorHandling} from 'src/shared/decorators/errors'
+import {
+  bucketDeleteSuccess,
+  bucketDeleteFailed,
+  bucketCreateFailed,
+  bucketCreateSuccess,
+  bucketUpdateFailed,
+  bucketUpdateSuccess,
+} from 'src/shared/copy/v2/notifications'
 
 @ErrorHandling
 export default class Buckets extends PureComponent<Props, State> {
@@ -53,10 +71,10 @@ export default class Buckets extends PureComponent<Props, State> {
 
     return (
       <>
-        <TabbedPageHeader>
+        <Tabs.TabContentsHeader>
           <Input
             icon={IconFont.Search}
-            placeholder="Filter Buckets..."
+            placeholder="Filter buckets..."
             widthPixels={290}
             value={searchTerm}
             onChange={this.handleFilterChange}
@@ -68,10 +86,10 @@ export default class Buckets extends PureComponent<Props, State> {
             color={ComponentColor.Primary}
             onClick={this.handleOpenModal}
           />
-        </TabbedPageHeader>
+        </Tabs.TabContentsHeader>
         <FilterList<PrettyBucket>
           searchTerm={searchTerm}
-          searchKeys={['name', 'ruleString']}
+          searchKeys={['name', 'ruleString', 'labels[].name']}
           list={this.prettyBuckets(buckets)}
         >
           {bs => (
@@ -80,38 +98,56 @@ export default class Buckets extends PureComponent<Props, State> {
               emptyState={this.emptyState}
               onUpdateBucket={this.handleUpdateBucket}
               onDeleteBucket={this.handleDeleteBucket}
+              onFilterChange={this.handleFilterUpdate}
             />
           )}
         </FilterList>
-        <OverlayTechnology visible={overlayState === OverlayState.Open}>
+        <Overlay visible={overlayState === OverlayState.Open}>
           <CreateBucketOverlay
             org={org}
             onCloseModal={this.handleCloseModal}
             onCreateBucket={this.handleCreateBucket}
           />
-        </OverlayTechnology>
+        </Overlay>
       </>
     )
   }
 
   private handleUpdateBucket = async (updatedBucket: PrettyBucket) => {
-    await updateBucket(updatedBucket)
-    this.props.onChange()
-  }
-  private handleDeleteBucket = async (deletedBucket: PrettyBucket) => {
     const {onChange, notify} = this.props
-    await deleteBucket(deletedBucket)
-    onChange()
-    notify(bucketDeleted(deletedBucket.name))
+    try {
+      await client.buckets.update(updatedBucket.id, updatedBucket)
+      onChange()
+      notify(bucketUpdateSuccess(updatedBucket.name))
+    } catch (e) {
+      console.error(e)
+      notify(bucketUpdateFailed(updatedBucket.name))
+    }
   }
 
-  private handleCreateBucket = async (
-    org: Organization,
-    bucket: Bucket
-  ): Promise<void> => {
-    await createBucket(org, bucket)
-    this.props.onChange()
-    this.handleCloseModal()
+  private handleDeleteBucket = async (deletedBucket: PrettyBucket) => {
+    const {onChange, notify} = this.props
+    try {
+      await client.buckets.delete(deletedBucket.id)
+      onChange()
+      notify(bucketDeleteSuccess(deletedBucket.name))
+    } catch (e) {
+      console.error(e)
+      bucketDeleteFailed(deletedBucket.name)
+    }
+  }
+
+  private handleCreateBucket = async (bucket: Bucket): Promise<void> => {
+    const {onChange, notify} = this.props
+    try {
+      await client.buckets.create(bucket)
+      onChange()
+      this.handleCloseModal()
+      notify(bucketCreateSuccess())
+    } catch (e) {
+      console.error(e)
+      notify(bucketCreateFailed())
+    }
   }
 
   private handleOpenModal = (): void => {
@@ -127,7 +163,11 @@ export default class Buckets extends PureComponent<Props, State> {
   }
 
   private handleFilterChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    this.setState({searchTerm: e.target.value})
+    this.handleFilterUpdate(e.target.value)
+  }
+
+  private handleFilterUpdate = (searchTerm: string): void => {
+    this.setState({searchTerm})
   }
 
   private prettyBuckets(buckets: Bucket[]): PrettyBucket[] {
@@ -156,7 +196,7 @@ export default class Buckets extends PureComponent<Props, State> {
 
     if (_.isEmpty(searchTerm)) {
       return (
-        <EmptyState size={ComponentSize.Medium}>
+        <EmptyState size={ComponentSize.Large}>
           <EmptyState.Text
             text={`${org.name} does not own any Buckets , why not create one?`}
             highlightWords={['Buckets']}
@@ -172,7 +212,7 @@ export default class Buckets extends PureComponent<Props, State> {
     }
 
     return (
-      <EmptyState size={ComponentSize.Medium}>
+      <EmptyState size={ComponentSize.Large}>
         <EmptyState.Text text="No Buckets match your query" />
       </EmptyState>
     )

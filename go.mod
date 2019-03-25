@@ -20,6 +20,7 @@ require (
 	github.com/bouk/httprouter v0.0.0-20160817010721-ee8b3818a7f5
 	github.com/cenkalti/backoff v2.1.1+incompatible // indirect
 	github.com/cespare/xxhash v1.1.0
+	github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd // indirect
 	github.com/containerd/continuity v0.0.0-20181203112020-004b46473808 // indirect
 	github.com/coreos/bbolt v1.3.1-coreos.6
 	github.com/davecgh/go-spew v1.1.1
@@ -28,6 +29,7 @@ require (
 	github.com/dgryski/go-bitstream v0.0.0-20180413035011-3522498ce2c8
 	github.com/docker/docker v1.13.1 // indirect
 	github.com/duosecurity/duo_api_golang v0.0.0-20190107154727-539434bf0d45 // indirect
+	github.com/editorconfig-checker/editorconfig-checker v0.0.0-20190219201458-ead62885d7c8
 	github.com/elazarl/go-bindata-assetfs v1.0.0
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/getkin/kin-openapi v0.1.1-0.20190103155524-1fa206970bc1
@@ -61,7 +63,7 @@ require (
 	github.com/hashicorp/vault v0.11.5
 	github.com/hashicorp/vault-plugin-secrets-kv v0.0.0-20181106190520-2236f141171e // indirect
 	github.com/hashicorp/yamux v0.0.0-20181012175058-2f1d1f20f75d // indirect
-	github.com/influxdata/flux v0.17.0
+	github.com/influxdata/flux v0.22.0
 	github.com/influxdata/influxql v0.0.0-20180925231337-1cbfca8e56b6
 	github.com/influxdata/usage-client v0.0.0-20160829180054-6d3895376368
 	github.com/jefferai/jsonx v0.0.0-20160721235117-9cc31c3135ee // indirect
@@ -103,12 +105,17 @@ require (
 	github.com/sirupsen/logrus v1.3.0 // indirect
 	github.com/smartystreets/assertions v0.0.0-20180927180507-b2de0cb4f26d // indirect
 	github.com/smartystreets/goconvey v0.0.0-20181108003508-044398e4856c // indirect
+	github.com/spf13/cast v1.2.0
 	github.com/spf13/cobra v0.0.3
+	github.com/spf13/pflag v1.0.3
 	github.com/spf13/viper v1.2.1
 	github.com/tcnksm/go-input v0.0.0-20180404061846-548a7d7a8ee8
 	github.com/testcontainers/testcontainers-go v0.0.0-20190108154635-47c0da630f72
 	github.com/tinylib/msgp v1.1.0 // indirect
 	github.com/tylerb/graceful v1.2.15
+	github.com/uber-go/atomic v1.3.2 // indirect
+	github.com/uber/jaeger-client-go v2.15.0+incompatible
+	github.com/uber/jaeger-lib v1.5.0+incompatible // indirect
 	github.com/willf/bitset v1.1.9 // indirect
 	github.com/yudai/gojsondiff v1.0.0
 	github.com/yudai/golcs v0.0.0-20170316035057-ecda9a501e82 // indirect
@@ -125,6 +132,8 @@ require (
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
 	gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d // indirect
+	gopkg.in/editorconfig/editorconfig-core-go.v1 v1.3.0 // indirect
+	gopkg.in/ini.v1 v1.42.0 // indirect
 	gopkg.in/ldap.v2 v2.5.1 // indirect
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	gopkg.in/robfig/cron.v2 v2.0.0-20150107220207-be2e0b0deed5

@@ -1,0 +1,70 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`MemberList rendering renders 1`] = `
+<IndexList>
+  <IndexListHeader>
+    <IndexListHeaderCell
+      alignment="left"
+      columnName="Username"
+      width="20%"
+    />
+    <IndexListHeaderCell
+      alignment="left"
+      columnName="Role"
+      width="20%"
+    />
+    <IndexListHeaderCell
+      alignment="left"
+      columnName=""
+      width="60%"
+    />
+  </IndexListHeader>
+  <IndexListBody
+    columnCount={3}
+    emptyState={<React.Fragment />}
+  >
+    <MemberRow
+      key="1"
+      member={
+        Object {
+          "id": "1",
+          "links": Object {
+            "self": "/api/v2/users/1",
+          },
+          "name": "John",
+          "role": "owner",
+          "status": "active",
+        }
+      }
+    />
+    <MemberRow
+      key="2"
+      member={
+        Object {
+          "id": "2",
+          "links": Object {
+            "self": "/api/v2/users/2",
+          },
+          "name": "Jane",
+          "role": "owner",
+          "status": "active",
+        }
+      }
+    />
+    <MemberRow
+      key="3"
+      member={
+        Object {
+          "id": "3",
+          "links": Object {
+            "self": "/api/v2/users/3",
+          },
+          "name": "Smith",
+          "role": "owner",
+          "status": "active",
+        }
+      }
+    />
+  </IndexListBody>
+</IndexList>
+`;

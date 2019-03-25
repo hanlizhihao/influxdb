@@ -2,18 +2,22 @@
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
 import _ from 'lodash'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import TableGraph from 'src/shared/components/tables/TableGraph'
 import TableSidebar from 'src/shared/components/tables/TableSidebar'
 import EmptyGraphMessage from 'src/shared/components/EmptyGraphMessage'
+
 // Actions
-import {setFieldOptions as setFieldOptionsAction} from 'src/shared/actions/v2/timeMachines'
+import {setFieldOptions as setFieldOptionsAction} from 'src/timeMachine/actions'
+
 // Utils
 import {getDeep} from 'src/utils/wrappers'
 import {findTableNameHeaders} from 'src/dashboards/utils/tableGraph'
+
 // Types
-import {FieldOption, TableView} from 'src/types/v2/dashboards'
+import {TableView, FieldOption} from 'src/types/v2/dashboards'
 import {FluxTable} from 'src/types'
 
 interface PassedProps {

@@ -1,29 +1,30 @@
 // Libraries
 import React, {Component} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
-import ReactGridLayout, {Layout, WidthProvider} from 'react-grid-layout'
-import CellComponent from 'src/shared/components/cells/Cell'
-import GradientBorder from 'src/shared/components/cells/GradientBorder'
-// Utils
-import {fastMap} from 'src/utils/fast'
-// Constants
-import {
-    DASHBOARD_LAYOUT_ROW_HEIGHT,
-    LAYOUT_MARGIN,
-    PAGE_CONTAINER_MARGIN,
-    PAGE_HEADER_HEIGHT,
-    STATUS_PAGE_ROW_COUNT,
-} from 'src/shared/constants'
-// Types
-import {Cell} from 'src/types/v2'
-import {TimeRange} from 'src/types'
-// Styles
-import './react-grid-layout.scss'
-
-import {ErrorHandling} from 'src/shared/decorators/errors'
+import ReactGridLayout, {WidthProvider, Layout} from 'react-grid-layout'
 
 // Components
 const Grid = WidthProvider(ReactGridLayout)
+import CellComponent from 'src/shared/components/cells/Cell'
+import GradientBorder from 'src/shared/components/cells/GradientBorder'
+
+// Utils
+import {fastMap} from 'src/utils/fast'
+
+// Constants
+import {
+  LAYOUT_MARGIN,
+  PAGE_HEADER_HEIGHT,
+  PAGE_CONTAINER_MARGIN,
+  STATUS_PAGE_ROW_COUNT,
+  DASHBOARD_LAYOUT_ROW_HEIGHT,
+} from 'src/shared/constants'
+
+// Types
+import {Cell} from 'src/types/v2'
+import {TimeRange} from 'src/types'
+
+import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
   cells: Cell[]
@@ -35,6 +36,7 @@ interface Props {
   onDeleteCell?: (cell: Cell) => void
   onPositionChange?: (cells: Cell[]) => void
   onEditView: (cellID: string) => void
+  onEditNote: (id: string) => void
 }
 
 interface State {
@@ -60,6 +62,7 @@ class Cells extends Component<Props & WithRouterProps, State> {
       timeRange,
       autoRefresh,
       manualRefresh,
+      onEditNote,
     } = this.props
     const {rowHeight} = this.state
 
@@ -87,6 +90,7 @@ class Cells extends Component<Props & WithRouterProps, State> {
               onCloneCell={onCloneCell}
               onDeleteCell={onDeleteCell}
               onEditCell={this.handleEditCell(cell)}
+              onEditNote={onEditNote}
             />
             {this.cellBorder}
           </div>

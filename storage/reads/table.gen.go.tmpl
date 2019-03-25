@@ -1,12 +1,12 @@
 package reads
 
 import (
-	"github.com/influxdata/flux/arrow"
-	"github.com/influxdata/flux/memory"
 	"sync"
 
 	"github.com/influxdata/flux"
+	"github.com/influxdata/flux/arrow"
 	"github.com/influxdata/flux/execute"
+	"github.com/influxdata/flux/memory"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/tsdb/cursors"
 	"github.com/pkg/errors"
@@ -21,6 +21,7 @@ type {{.name}}Table struct {
 	valBuf []{{.Type}}
 	mu     sync.Mutex
 	cur    cursors.{{.Name}}ArrayCursor
+	alloc  *memory.Allocator
 }
 
 func new{{.Name}}Table(
@@ -31,9 +32,10 @@ func new{{.Name}}Table(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *{{.name}}Table {
 	t := &{{.name}}Table{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		cur:   cur,
 	}
 	t.readTags(tags)
@@ -51,15 +53,15 @@ func (t *{{.name}}Table) Close() {
 	t.mu.Unlock()
 }
 
-func (t *{{.name}}Table) Statistics() flux.Statistics {
+func (t *{{.name}}Table) Statistics() cursors.CursorStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cur := t.cur
 	if cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -83,6 +85,12 @@ func (t *{{.name}}Table) Do(f func(flux.ColReader) error) error {
 }
 
 func (t *{{.name}}Table) advance() bool {
+	for _, cb := range t.colBufs {
+		if cb != nil {
+			cb.Release()
+		}
+	}
+
 	a := t.cur.Next()
 	t.l = a.Len()
 	if t.l == 0 {
@@ -129,9 +137,10 @@ func new{{.Name}}GroupTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *{{.name}}GroupTable {
 	t := &{{.name}}GroupTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		gc:    gc,
 		cur:   cur,
 	}
@@ -227,12 +236,12 @@ func (t *{{.name}}GroupTable) advanceCursor() bool {
 	return false
 }
 
-func (t *{{.name}}GroupTable) Statistics() flux.Statistics {
+func (t *{{.name}}GroupTable) Statistics() cursors.CursorStats {
 	if t.cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := t.cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}

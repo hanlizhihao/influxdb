@@ -1,6 +1,12 @@
 // Libraries
 import React, {PureComponent, RefObject} from 'react'
-import {Button, ButtonType, ComponentColor, ComponentSize, ComponentStatus,} from 'src/clockface'
+import {
+  Button,
+  ComponentColor,
+  ComponentSize,
+  ButtonType,
+  ComponentStatus,
+} from '@influxdata/clockface'
 
 interface Props {
   onClickBack?: () => void
@@ -11,6 +17,7 @@ interface Props {
   nextButtonStatus?: ComponentStatus
   showSkip?: boolean
   autoFocusNext?: boolean
+  className?: string
 }
 
 class OnboardingButtons extends PureComponent<Props> {
@@ -46,7 +53,7 @@ class OnboardingButtons extends PureComponent<Props> {
   public render() {
     const {nextButtonText, nextButtonStatus} = this.props
     return (
-      <div className="wizard--button-container">
+      <div className={this.className}>
         <div className="wizard--button-bar">
           {this.backButton}
           <Button
@@ -54,7 +61,7 @@ class OnboardingButtons extends PureComponent<Props> {
             text={nextButtonText}
             size={ComponentSize.Medium}
             type={ButtonType.Submit}
-            data-test="next"
+            data-testid="next"
             ref={this.submitRef}
             status={nextButtonStatus}
             tabIndex={0}
@@ -63,6 +70,10 @@ class OnboardingButtons extends PureComponent<Props> {
         {this.skipButton}
       </div>
     )
+  }
+
+  private get className(): string {
+    return this.props.className || ''
   }
 
   private get backButton(): JSX.Element {
@@ -78,7 +89,7 @@ class OnboardingButtons extends PureComponent<Props> {
         text={backButtonText}
         size={ComponentSize.Medium}
         onClick={onClickBack}
-        data-test="back"
+        data-testid="back"
         tabIndex={1}
       />
     )
@@ -98,7 +109,7 @@ class OnboardingButtons extends PureComponent<Props> {
           color={ComponentColor.Default}
           text={skipButtonText}
           onClick={onClickSkip}
-          data-test="skip"
+          data-testid="skip"
         />
       </div>
     )

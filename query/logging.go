@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/influxdata/flux"
+	"github.com/influxdata/influxdb/kit/tracing"
 )
 
 // LoggingServiceBridge implements ProxyQueryService and logs the queries while consuming a QueryService interface.
@@ -16,8 +17,11 @@ type LoggingServiceBridge struct {
 }
 
 // Query executes and logs the query.
-func (s *LoggingServiceBridge) Query(ctx context.Context, w io.Writer, req *ProxyRequest) (n int64, err error) {
-	var stats flux.Statistics
+func (s *LoggingServiceBridge) Query(ctx context.Context, w io.Writer, req *ProxyRequest) (stats flux.Statistics, err error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	var n int64
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -38,22 +42,23 @@ func (s *LoggingServiceBridge) Query(ctx context.Context, w io.Writer, req *Prox
 
 	results, err := s.QueryService.Query(ctx, &req.Request)
 	if err != nil {
-		return 0, err
+		return stats, tracing.LogError(span, err)
 	}
 	// Check if this result iterator reports stats. We call this defer before cancel because
 	// the query needs to be finished before it will have valid statistics.
-	if s, ok := results.(flux.Statisticser); ok {
-		defer func() {
-			stats = s.Statistics()
-		}()
-	}
-	defer results.Release()
+	defer func() {
+		results.Release()
+		stats = results.Statistics()
+	}()
 
 	encoder := req.Dialect.Encoder()
 	n, err = encoder.Encode(w, results)
 	if err != nil {
-		return n, err
+		return stats, tracing.LogError(span, err)
 	}
 	// The results iterator may have had an error independent of encoding errors.
-	return n, results.Err()
+	if err = results.Err(); err != nil {
+		return stats, tracing.LogError(span, err)
+	}
+	return stats, nil
 }

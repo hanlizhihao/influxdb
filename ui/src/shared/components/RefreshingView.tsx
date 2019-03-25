@@ -1,28 +1,44 @@
 // Libraries
 import React, {PureComponent} from 'react'
+import {connect} from 'react-redux'
+import _ from 'lodash'
+
 // Components
 import TimeSeries from 'src/shared/components/TimeSeries'
 import EmptyQueryView from 'src/shared/components/EmptyQueryView'
 import QueryViewSwitcher from 'src/shared/components/QueryViewSwitcher'
+
 // Utils
 import {GlobalAutoRefresher} from 'src/utils/AutoRefresher'
-import {timeRangeVariables} from 'src/shared/utils/queryBuilder'
+import {getTimeRangeVars} from 'src/variables/utils/getTimeRangeVars'
+import {getVariableAssignments} from 'src/variables/selectors'
+
 // Types
 import {TimeRange} from 'src/types'
-import {DashboardQuery, QueryViewProperties, ViewType} from 'src/types/v2/dashboards'
+import {VariableAssignment} from 'src/types/ast'
+import {AppState} from 'src/types/v2'
+import {DashboardQuery} from 'src/types/v2/dashboards'
+import {QueryViewProperties, ViewType} from 'src/types/v2/dashboards'
 
-interface Props {
+interface OwnProps {
   timeRange: TimeRange
   viewID: string
   inView: boolean
   manualRefresh: number
   onZoom: (range: TimeRange) => void
   properties: QueryViewProperties
+  dashboardID: string
+}
+
+interface StateProps {
+  variableAssignments: VariableAssignment[]
 }
 
 interface State {
   submitToken: number
 }
+
+type Props = OwnProps & StateProps
 
 class RefreshingView extends PureComponent<Props, State> {
   public static defaultProps: Partial<Props> = {
@@ -61,12 +77,12 @@ class RefreshingView extends PureComponent<Props, State> {
         submitToken={submitToken}
         queries={this.queries}
         key={manualRefresh}
-        variables={{...timeRangeVariables(timeRange)}}
+        variables={this.variableAssignments}
       >
         {({tables, loading, error, isInitialFetch}) => {
           return (
             <EmptyQueryView
-              error={error}
+              errorMessage={error ? error.message : null}
               tables={tables}
               loading={loading}
               isInitialFetch={isInitialFetch}
@@ -103,6 +119,12 @@ class RefreshingView extends PureComponent<Props, State> {
     return queries
   }
 
+  private get variableAssignments(): VariableAssignment[] {
+    const {timeRange, variableAssignments} = this.props
+
+    return [...variableAssignments, ...getTimeRangeVars(timeRange)]
+  }
+
   private get fallbackNote(): string {
     const {note, showNoteWhenEmpty} = this.props.properties
 
@@ -114,4 +136,13 @@ class RefreshingView extends PureComponent<Props, State> {
   }
 }
 
-export default RefreshingView
+const mstp = (state: AppState, ownProps: OwnProps): StateProps => {
+  const variableAssignments = getVariableAssignments(
+    state,
+    ownProps.dashboardID
+  )
+
+  return {variableAssignments}
+}
+
+export default connect<StateProps, {}, OwnProps>(mstp)(RefreshingView)

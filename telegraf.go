@@ -16,12 +16,11 @@ import (
 const ErrTelegrafConfigInvalidOrganizationID = "invalid organization ID"
 
 // ErrTelegrafConfigNotFound is the error message for a missing telegraf config.
-const ErrTelegrafConfigNotFound = "telegraf config not found"
+const ErrTelegrafConfigNotFound = "telegraf configuration not found"
 
 // ops for buckets error and buckets op logs.
 var (
 	OpFindTelegrafConfigByID = "FindTelegrafConfigByID"
-	OpFindTelegrafConfig     = "FindTelegrafConfig"
 	OpFindTelegrafConfigs    = "FindTelegrafConfigs"
 	OpCreateTelegrafConfig   = "CreateTelegrafConfig"
 	OpUpdateTelegrafConfig   = "UpdateTelegrafConfig"
@@ -36,9 +35,6 @@ type TelegrafConfigStore interface {
 
 	// FindTelegrafConfigByID returns a single telegraf config by ID.
 	FindTelegrafConfigByID(ctx context.Context, id ID) (*TelegrafConfig, error)
-
-	// FindTelegrafConfig returns the first telegraf config that matches filter.
-	FindTelegrafConfig(ctx context.Context, filter TelegrafConfigFilter) (*TelegrafConfig, error)
 
 	// FindTelegrafConfigs returns a list of telegraf configs that match filter and the total count of matching telegraf configs.
 	// Additional options provide pagination & sorting.
@@ -67,6 +63,7 @@ type TelegrafConfig struct {
 	ID             ID
 	OrganizationID ID
 	Name           string
+	Description    string
 
 	Agent   TelegrafAgentConfig
 	Plugins []TelegrafPlugin
@@ -141,6 +138,7 @@ type telegrafConfigEncode struct {
 	ID             ID     `json:"id"`
 	OrganizationID ID     `json:"organizationID,omitempty"`
 	Name           string `json:"name"`
+	Description    string `json:"description"`
 
 	Agent TelegrafAgentConfig `json:"agent"`
 
@@ -152,8 +150,8 @@ type telegrafPluginEncode struct {
 	// Name of the telegraf plugin, exp "docker"
 	Name    string         `json:"name"`
 	Type    plugins.Type   `json:"type"`
-	Comment string         `json:"comment"`
-	Config  plugins.Config `json:"config"`
+	Comment string         `json:"comment,omitempty"`
+	Config  plugins.Config `json:"config,omitempty"`
 }
 
 // telegrafConfigDecode is the helper struct for json decoding.
@@ -161,6 +159,7 @@ type telegrafConfigDecode struct {
 	ID             ID     `json:"id"`
 	OrganizationID ID     `json:"organizationID,omitempty"`
 	Name           string `json:"name"`
+	Description    string `json:"description"`
 
 	Agent TelegrafAgentConfig `json:"agent"`
 
@@ -172,14 +171,14 @@ type telegrafPluginDecode struct {
 	// Name of the telegraf plugin, exp "docker"
 	Name    string          `json:"name"`
 	Type    plugins.Type    `json:"type"`
-	Comment string          `json:"comment"`
-	Config  json.RawMessage `json:"config"`
+	Comment string          `json:"comment,omitempty"`
+	Config  json.RawMessage `json:"config,omitempty"`
 }
 
 // TelegrafPlugin is the general wrapper of the telegraf plugin config
 type TelegrafPlugin struct {
-	Comment string         `json:"comment"`
-	Config  plugins.Config `json:"config"`
+	Comment string         `json:"comment,omitempty"`
+	Config  plugins.Config `json:"config,omitempty"`
 }
 
 // TelegrafAgentConfig is based telegraf/internal/config AgentConfig.
@@ -203,6 +202,7 @@ func (tc *TelegrafConfig) MarshalJSON() ([]byte, error) {
 		ID:             tc.ID,
 		OrganizationID: tc.OrganizationID,
 		Name:           tc.Name,
+		Description:    tc.Description,
 		Agent:          tc.Agent,
 		Plugins:        make([]telegrafPluginEncode, len(tc.Plugins)),
 	}
@@ -309,6 +309,7 @@ func (tc *TelegrafConfig) UnmarshalJSON(b []byte) error {
 		ID:             tcd.ID,
 		OrganizationID: tcd.OrganizationID,
 		Name:           tcd.Name,
+		Description:    tcd.Description,
 		Agent:          tcd.Agent,
 		Plugins:        make([]TelegrafPlugin, len(tcd.Plugins)),
 	}
@@ -335,6 +336,11 @@ func decodePluginRaw(tcd *telegrafConfigDecode, tc *TelegrafConfig) (err error) 
 		}
 		if ok {
 			config = tpFn()
+			// if pr.Config if empty, make it a blank obj,
+			// so it will still go to the unmarshalling process to validate.
+			if len(string(pr.Config)) == 0 {
+				pr.Config = []byte("{}")
+			}
 			if err = json.Unmarshal(pr.Config, config); err != nil {
 				return &Error{
 					Code: EInvalid,

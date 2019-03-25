@@ -7,13 +7,40 @@ import (
 	"fmt"
 	"net/http"
 	"path"
-	"strconv"
 
-	platform "github.com/influxdata/influxdb"
-	kerrors "github.com/influxdata/influxdb/kit/errors"
 	"github.com/julienschmidt/httprouter"
 	"go.uber.org/zap"
+
+	"github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/kit/tracing"
 )
+
+// OrgBackend is all services and associated parameters required to construct
+// the OrgHandler.
+type OrgBackend struct {
+	Logger *zap.Logger
+
+	OrganizationService             influxdb.OrganizationService
+	OrganizationOperationLogService influxdb.OrganizationOperationLogService
+	UserResourceMappingService      influxdb.UserResourceMappingService
+	SecretService                   influxdb.SecretService
+	LabelService                    influxdb.LabelService
+	UserService                     influxdb.UserService
+}
+
+// NewOrgBackend is a datasource used by the org handler.
+func NewOrgBackend(b *APIBackend) *OrgBackend {
+	return &OrgBackend{
+		Logger: b.Logger.With(zap.String("handler", "org")),
+
+		OrganizationService:             b.OrganizationService,
+		OrganizationOperationLogService: b.OrganizationOperationLogService,
+		UserResourceMappingService:      b.UserResourceMappingService,
+		SecretService:                   b.SecretService,
+		LabelService:                    b.LabelService,
+		UserService:                     b.UserService,
+	}
+}
 
 // OrgHandler represents an HTTP API handler for orgs.
 type OrgHandler struct {
@@ -21,18 +48,18 @@ type OrgHandler struct {
 
 	Logger *zap.Logger
 
-	OrganizationService             platform.OrganizationService
-	OrganizationOperationLogService platform.OrganizationOperationLogService
-	UserResourceMappingService      platform.UserResourceMappingService
-	SecretService                   platform.SecretService
-	LabelService                    platform.LabelService
-	UserService                     platform.UserService
+	OrganizationService             influxdb.OrganizationService
+	OrganizationOperationLogService influxdb.OrganizationOperationLogService
+	UserResourceMappingService      influxdb.UserResourceMappingService
+	SecretService                   influxdb.SecretService
+	LabelService                    influxdb.LabelService
+	UserService                     influxdb.UserService
 }
 
 const (
 	organizationsPath            = "/api/v2/orgs"
 	organizationsIDPath          = "/api/v2/orgs/:id"
-	organizationsIDLogPath       = "/api/v2/orgs/:id/log"
+	organizationsIDLogPath       = "/api/v2/orgs/:id/logs"
 	organizationsIDMembersPath   = "/api/v2/orgs/:id/members"
 	organizationsIDMembersIDPath = "/api/v2/orgs/:id/members/:userID"
 	organizationsIDOwnersPath    = "/api/v2/orgs/:id/owners"
@@ -45,15 +72,17 @@ const (
 )
 
 // NewOrgHandler returns a new instance of OrgHandler.
-func NewOrgHandler(mappingService platform.UserResourceMappingService,
-	labelService platform.LabelService, userService platform.UserService) *OrgHandler {
+func NewOrgHandler(b *OrgBackend) *OrgHandler {
 	h := &OrgHandler{
 		Router: NewRouter(),
 		Logger: zap.NewNop(),
 
-		UserResourceMappingService: mappingService,
-		LabelService:               labelService,
-		UserService:                userService,
+		OrganizationService:             b.OrganizationService,
+		OrganizationOperationLogService: b.OrganizationOperationLogService,
+		UserResourceMappingService:      b.UserResourceMappingService,
+		SecretService:                   b.SecretService,
+		LabelService:                    b.LabelService,
+		UserService:                     b.UserService,
 	}
 
 	h.HandlerFunc("POST", organizationsPath, h.handlePostOrg)
@@ -63,22 +92,42 @@ func NewOrgHandler(mappingService platform.UserResourceMappingService,
 	h.HandlerFunc("PATCH", organizationsIDPath, h.handlePatchOrg)
 	h.HandlerFunc("DELETE", organizationsIDPath, h.handleDeleteOrg)
 
-	h.HandlerFunc("POST", organizationsIDMembersPath, newPostMemberHandler(h.UserResourceMappingService, h.UserService, platform.OrgsResourceType, platform.Member))
-	h.HandlerFunc("GET", organizationsIDMembersPath, newGetMembersHandler(h.UserResourceMappingService, h.UserService, platform.OrgsResourceType, platform.Member))
-	h.HandlerFunc("DELETE", organizationsIDMembersIDPath, newDeleteMemberHandler(h.UserResourceMappingService, platform.Member))
+	memberBackend := MemberBackend{
+		Logger:                     b.Logger.With(zap.String("handler", "member")),
+		ResourceType:               influxdb.OrgsResourceType,
+		UserType:                   influxdb.Member,
+		UserResourceMappingService: b.UserResourceMappingService,
+		UserService:                b.UserService,
+	}
+	h.HandlerFunc("POST", organizationsIDMembersPath, newPostMemberHandler(memberBackend))
+	h.HandlerFunc("GET", organizationsIDMembersPath, newGetMembersHandler(memberBackend))
+	h.HandlerFunc("DELETE", organizationsIDMembersIDPath, newDeleteMemberHandler(memberBackend))
 
-	h.HandlerFunc("POST", organizationsIDOwnersPath, newPostMemberHandler(h.UserResourceMappingService, h.UserService, platform.OrgsResourceType, platform.Owner))
-	h.HandlerFunc("GET", organizationsIDOwnersPath, newGetMembersHandler(h.UserResourceMappingService, h.UserService, platform.OrgsResourceType, platform.Owner))
-	h.HandlerFunc("DELETE", organizationsIDOwnersIDPath, newDeleteMemberHandler(h.UserResourceMappingService, platform.Owner))
+	ownerBackend := MemberBackend{
+		Logger:                     b.Logger.With(zap.String("handler", "member")),
+		ResourceType:               influxdb.OrgsResourceType,
+		UserType:                   influxdb.Owner,
+		UserResourceMappingService: b.UserResourceMappingService,
+		UserService:                b.UserService,
+	}
+	h.HandlerFunc("POST", organizationsIDOwnersPath, newPostMemberHandler(ownerBackend))
+	h.HandlerFunc("GET", organizationsIDOwnersPath, newGetMembersHandler(ownerBackend))
+	h.HandlerFunc("DELETE", organizationsIDOwnersIDPath, newDeleteMemberHandler(ownerBackend))
 
 	h.HandlerFunc("GET", organizationsIDSecretsPath, h.handleGetSecrets)
 	h.HandlerFunc("PATCH", organizationsIDSecretsPath, h.handlePatchSecrets)
 	// TODO(desa): need a way to specify which secrets to delete. this should work for now
 	h.HandlerFunc("POST", organizationsIDSecretsDeletePath, h.handleDeleteSecrets)
 
-	h.HandlerFunc("GET", organizationsIDLabelsPath, newGetLabelsHandler(h.LabelService))
-	h.HandlerFunc("POST", organizationsIDLabelsPath, newPostLabelHandler(h.LabelService))
-	h.HandlerFunc("DELETE", organizationsIDLabelsIDPath, newDeleteLabelHandler(h.LabelService))
+	labelBackend := &LabelBackend{
+		Logger:       b.Logger.With(zap.String("handler", "label")),
+		LabelService: b.LabelService,
+		ResourceType: influxdb.OrgsResourceType,
+	}
+	h.HandlerFunc("GET", organizationsIDLabelsPath, newGetLabelsHandler(labelBackend))
+	h.HandlerFunc("POST", organizationsIDLabelsPath, newPostLabelHandler(labelBackend))
+	h.HandlerFunc("DELETE", organizationsIDLabelsIDPath, newDeleteLabelHandler(labelBackend))
+	h.HandlerFunc("PATCH", organizationsIDLabelsIDPath, newPatchLabelHandler(labelBackend))
 
 	return h
 }
@@ -88,15 +137,15 @@ type orgsResponse struct {
 	Organizations []*orgResponse    `json:"orgs"`
 }
 
-func (o orgsResponse) ToPlatform() []*platform.Organization {
-	orgs := make([]*platform.Organization, len(o.Organizations))
+func (o orgsResponse) Toinfluxdb() []*influxdb.Organization {
+	orgs := make([]*influxdb.Organization, len(o.Organizations))
 	for i := range o.Organizations {
 		orgs[i] = &o.Organizations[i].Organization
 	}
 	return orgs
 }
 
-func newOrgsResponse(orgs []*platform.Organization) *orgsResponse {
+func newOrgsResponse(orgs []*influxdb.Organization) *orgsResponse {
 	res := orgsResponse{
 		Links: map[string]string{
 			"self": "/api/v2/orgs",
@@ -111,15 +160,16 @@ func newOrgsResponse(orgs []*platform.Organization) *orgsResponse {
 
 type orgResponse struct {
 	Links map[string]string `json:"links"`
-	platform.Organization
+	influxdb.Organization
 }
 
-func newOrgResponse(o *platform.Organization) *orgResponse {
+func newOrgResponse(o *influxdb.Organization) *orgResponse {
 	return &orgResponse{
 		Links: map[string]string{
 			"self":       fmt.Sprintf("/api/v2/orgs/%s", o.ID),
-			"log":        fmt.Sprintf("/api/v2/orgs/%s/log", o.ID),
+			"logs":       fmt.Sprintf("/api/v2/orgs/%s/logs", o.ID),
 			"members":    fmt.Sprintf("/api/v2/orgs/%s/members", o.ID),
+			"owners":     fmt.Sprintf("/api/v2/orgs/%s/owners", o.ID),
 			"secrets":    fmt.Sprintf("/api/v2/orgs/%s/secrets", o.ID),
 			"labels":     fmt.Sprintf("/api/v2/orgs/%s/labels", o.ID),
 			"buckets":    fmt.Sprintf("/api/v2/buckets?org=%s", o.Name),
@@ -135,11 +185,11 @@ type secretsResponse struct {
 	Secrets []string          `json:"secrets"`
 }
 
-func newSecretsResponse(orgID platform.ID, ks []string) *secretsResponse {
+func newSecretsResponse(orgID influxdb.ID, ks []string) *secretsResponse {
 	return &secretsResponse{
 		Links: map[string]string{
-			"org":     fmt.Sprintf("/api/v2/orgs/%s", orgID),
-			"secrets": fmt.Sprintf("/api/v2/orgs/%s/secrets", orgID),
+			"org":  fmt.Sprintf("/api/v2/orgs/%s", orgID),
+			"self": fmt.Sprintf("/api/v2/orgs/%s/secrets", orgID),
 		},
 		Secrets: ks,
 	}
@@ -167,11 +217,11 @@ func (h *OrgHandler) handlePostOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 type postOrgRequest struct {
-	Org *platform.Organization
+	Org *influxdb.Organization
 }
 
 func decodePostOrgRequest(ctx context.Context, r *http.Request) (*postOrgRequest, error) {
-	o := &platform.Organization{}
+	o := &influxdb.Organization{}
 	if err := json.NewDecoder(r.Body).Decode(o); err != nil {
 		return nil, err
 	}
@@ -204,17 +254,20 @@ func (h *OrgHandler) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 type getOrgRequest struct {
-	OrgID platform.ID
+	OrgID influxdb.ID
 }
 
 func decodeGetOrgRequest(ctx context.Context, r *http.Request) (*getOrgRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -249,22 +302,22 @@ func (h *OrgHandler) handleGetOrgs(w http.ResponseWriter, r *http.Request) {
 }
 
 type getOrgsRequest struct {
-	filter platform.OrganizationFilter
+	filter influxdb.OrganizationFilter
 }
 
 func decodeGetOrgsRequest(ctx context.Context, r *http.Request) (*getOrgsRequest, error) {
 	qp := r.URL.Query()
 	req := &getOrgsRequest{}
 
-	if orgID := qp.Get("id"); orgID != "" {
-		id, err := platform.IDFromString(orgID)
+	if orgID := qp.Get(OrgID); orgID != "" {
+		id, err := influxdb.IDFromString(orgID)
 		if err != nil {
 			return nil, err
 		}
 		req.filter.ID = id
 	}
 
-	if name := qp.Get("name"); name != "" {
+	if name := qp.Get(OrgName); name != "" {
 		req.filter.Name = &name
 	}
 
@@ -290,17 +343,20 @@ func (h *OrgHandler) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 type deleteOrganizationRequest struct {
-	OrganizationID platform.ID
+	OrganizationID influxdb.ID
 }
 
 func decodeDeleteOrganizationRequest(ctx context.Context, r *http.Request) (*deleteOrganizationRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -334,23 +390,26 @@ func (h *OrgHandler) handlePatchOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchOrgRequest struct {
-	Update platform.OrganizationUpdate
-	OrgID  platform.ID
+	Update influxdb.OrganizationUpdate
+	OrgID  influxdb.ID
 }
 
 func decodePatchOrgRequest(ctx context.Context, r *http.Request) (*patchOrgRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
 
-	var upd platform.OrganizationUpdate
+	var upd influxdb.OrganizationUpdate
 	if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
 		return nil, err
 	}
@@ -384,7 +443,7 @@ func (h *OrgHandler) handleGetSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 type getSecretsRequest struct {
-	orgID platform.ID
+	orgID influxdb.ID
 }
 
 func decodeGetSecretsRequest(ctx context.Context, r *http.Request) (*getSecretsRequest, error) {
@@ -392,10 +451,13 @@ func decodeGetSecretsRequest(ctx context.Context, r *http.Request) (*getSecretsR
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -423,7 +485,7 @@ func (h *OrgHandler) handlePatchSecrets(w http.ResponseWriter, r *http.Request) 
 }
 
 type patchSecretsRequest struct {
-	orgID   platform.ID
+	orgID   influxdb.ID
 	secrets map[string]string
 }
 
@@ -432,10 +494,13 @@ func decodePatchSecretsRequest(ctx context.Context, r *http.Request) (*patchSecr
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -468,7 +533,7 @@ func (h *OrgHandler) handleDeleteSecrets(w http.ResponseWriter, r *http.Request)
 }
 
 type deleteSecretsRequest struct {
-	orgID   platform.ID
+	orgID   influxdb.ID
 	secrets []string
 }
 
@@ -477,10 +542,13 @@ func decodeDeleteSecretsRequest(ctx context.Context, r *http.Request) (*deleteSe
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -508,32 +576,38 @@ type OrganizationService struct {
 }
 
 // FindOrganizationByID gets a single organization with a given id using HTTP.
-func (s *OrganizationService) FindOrganizationByID(ctx context.Context, id platform.ID) (*platform.Organization, error) {
-	filter := platform.OrganizationFilter{ID: &id}
+func (s *OrganizationService) FindOrganizationByID(ctx context.Context, id influxdb.ID) (*influxdb.Organization, error) {
+	filter := influxdb.OrganizationFilter{ID: &id}
 	o, err := s.FindOrganization(ctx, filter)
 	if err != nil {
-		return nil, &platform.Error{
+		return nil, &influxdb.Error{
 			Err: err,
-			Op:  s.OpPrefix + platform.OpFindOrganizationByID,
+			Op:  s.OpPrefix + influxdb.OpFindOrganizationByID,
 		}
 	}
 	return o, nil
 }
 
 // FindOrganization gets a single organization matching the filter using HTTP.
-func (s *OrganizationService) FindOrganization(ctx context.Context, filter platform.OrganizationFilter) (*platform.Organization, error) {
+func (s *OrganizationService) FindOrganization(ctx context.Context, filter influxdb.OrganizationFilter) (*influxdb.Organization, error) {
+	if filter.ID == nil && filter.Name == nil {
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "no filter parameters provided",
+		}
+	}
 	os, n, err := s.FindOrganizations(ctx, filter)
 	if err != nil {
-		return nil, &platform.Error{
+		return nil, &influxdb.Error{
 			Err: err,
-			Op:  s.OpPrefix + platform.OpFindOrganization,
+			Op:  s.OpPrefix + influxdb.OpFindOrganization,
 		}
 	}
 
 	if n == 0 {
-		return nil, &platform.Error{
-			Code: platform.ENotFound,
-			Op:   s.OpPrefix + platform.OpFindOrganization,
+		return nil, &influxdb.Error{
+			Code: influxdb.ENotFound,
+			Op:   s.OpPrefix + influxdb.OpFindOrganization,
 			Msg:  "organization not found",
 		}
 	}
@@ -542,69 +616,105 @@ func (s *OrganizationService) FindOrganization(ctx context.Context, filter platf
 }
 
 // FindOrganizations returns all organizations that match the filter via HTTP.
-func (s *OrganizationService) FindOrganizations(ctx context.Context, filter platform.OrganizationFilter, opt ...platform.FindOptions) ([]*platform.Organization, int, error) {
+func (s *OrganizationService) FindOrganizations(ctx context.Context, filter influxdb.OrganizationFilter, opt ...influxdb.FindOptions) ([]*influxdb.Organization, int, error) {
+	span, _ := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	if filter.Name != nil {
+		span.LogKV("org", *filter.Name)
+	}
+	if filter.ID != nil {
+		span.LogKV("org-id", *filter.ID)
+	}
+	for _, o := range opt {
+		if o.Offset != 0 {
+			span.LogKV("offset", o.Offset)
+		}
+		span.LogKV("descending", o.Descending)
+		if o.Limit > 0 {
+			span.LogKV("limit", o.Limit)
+		}
+		if o.SortBy != "" {
+			span.LogKV("sortBy", o.SortBy)
+		}
+	}
+
 	url, err := newURL(s.Addr, organizationPath)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, tracing.LogError(span, err)
 	}
 	qp := url.Query()
 
 	if filter.Name != nil {
-		qp.Add("name", *filter.Name)
+		qp.Add(OrgName, *filter.Name)
 	}
 	if filter.ID != nil {
-		qp.Add("id", filter.ID.String())
+		qp.Add(OrgID, filter.ID.String())
 	}
 	url.RawQuery = qp.Encode()
 
 	req, err := http.NewRequest("GET", url.String(), nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, tracing.LogError(span, err)
 	}
+	tracing.InjectToHTTPRequest(span, req)
 
 	SetToken(s.Token, req)
 	hc := newClient(url.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, tracing.LogError(span, err)
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
-		return nil, 0, err
+	if err := CheckError(resp); err != nil {
+		return nil, 0, tracing.LogError(span, err)
 	}
 
 	var os orgsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&os); err != nil {
-		return nil, 0, err
+		return nil, 0, tracing.LogError(span, err)
 	}
 
-	orgs := os.ToPlatform()
+	orgs := os.Toinfluxdb()
 	return orgs, len(orgs), nil
-
 }
 
 // CreateOrganization creates an organization.
-func (s *OrganizationService) CreateOrganization(ctx context.Context, o *platform.Organization) error {
+func (s *OrganizationService) CreateOrganization(ctx context.Context, o *influxdb.Organization) error {
 	if o.Name == "" {
-		return kerrors.InvalidDataf("organization name is required")
+		return &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "organization name is required",
+		}
+	}
+
+	span, _ := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	if o.Name != "" {
+		span.LogKV("org", o.Name)
+	}
+	if o.ID != 0 {
+		span.LogKV("org-id", o.ID)
 	}
 
 	url, err := newURL(s.Addr, organizationPath)
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
 
 	octets, err := json.Marshal(o)
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
 
 	req, err := http.NewRequest("POST", url.String(), bytes.NewReader(octets))
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
+	tracing.InjectToHTTPRequest(span, req)
 
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
@@ -613,38 +723,45 @@ func (s *OrganizationService) CreateOrganization(ctx context.Context, o *platfor
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
 	defer resp.Body.Close()
 
 	// TODO(jsternberg): Should this check for a 201 explicitly?
-	if err := CheckError(resp, true); err != nil {
-		return err
+	if err := CheckError(resp); err != nil {
+		return tracing.LogError(span, err)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(o); err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
 
 	return nil
 }
 
 // UpdateOrganization updates the organization over HTTP.
-func (s *OrganizationService) UpdateOrganization(ctx context.Context, id platform.ID, upd platform.OrganizationUpdate) (*platform.Organization, error) {
+func (s *OrganizationService) UpdateOrganization(ctx context.Context, id influxdb.ID, upd influxdb.OrganizationUpdate) (*influxdb.Organization, error) {
+	span, _ := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	span.LogKV("org-id", id)
+	span.LogKV("name", upd.Name)
+
 	u, err := newURL(s.Addr, organizationIDPath(id))
 	if err != nil {
-		return nil, err
+		return nil, tracing.LogError(span, err)
 	}
 
 	octets, err := json.Marshal(upd)
 	if err != nil {
-		return nil, err
+		return nil, tracing.LogError(span, err)
 	}
 
 	req, err := http.NewRequest("PATCH", u.String(), bytes.NewReader(octets))
 	if err != nil {
-		return nil, err
+		return nil, tracing.LogError(span, err)
 	}
+	tracing.InjectToHTTPRequest(span, req)
 
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
@@ -653,46 +770,56 @@ func (s *OrganizationService) UpdateOrganization(ctx context.Context, id platfor
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, tracing.LogError(span, err)
 	}
 	defer resp.Body.Close()
 
-	if err := CheckError(resp, true); err != nil {
-		return nil, err
+	if err := CheckError(resp); err != nil {
+		return nil, tracing.LogError(span, err)
 	}
 
-	var o platform.Organization
+	var o influxdb.Organization
 	if err := json.NewDecoder(resp.Body).Decode(&o); err != nil {
-		return nil, err
+		return nil, tracing.LogError(span, err)
 	}
 
 	return &o, nil
 }
 
 // DeleteOrganization removes organization id over HTTP.
-func (s *OrganizationService) DeleteOrganization(ctx context.Context, id platform.ID) error {
+func (s *OrganizationService) DeleteOrganization(ctx context.Context, id influxdb.ID) error {
+	span, _ := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	u, err := newURL(s.Addr, organizationIDPath(id))
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
 
 	req, err := http.NewRequest("DELETE", u.String(), nil)
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
+	tracing.InjectToHTTPRequest(span, req)
+
 	SetToken(s.Token, req)
 
 	hc := newClient(u.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
-		return err
+		return tracing.LogError(span, err)
 	}
 	defer resp.Body.Close()
 
-	return CheckErrorStatus(http.StatusNoContent, resp, true)
+	err = CheckErrorStatus(http.StatusNoContent, resp)
+	if err != nil {
+		return tracing.LogError(span, err)
+	}
+
+	return nil
 }
 
-func organizationIDPath(id platform.ID) string {
+func organizationIDPath(id influxdb.ID) string {
 	return path.Join(organizationPath, id.String())
 }
 
@@ -719,57 +846,45 @@ func (h *OrgHandler) handleGetOrgLog(w http.ResponseWriter, r *http.Request) {
 }
 
 type getOrganizationLogRequest struct {
-	OrganizationID platform.ID
-	opts           platform.FindOptions
+	OrganizationID influxdb.ID
+	opts           influxdb.FindOptions
 }
 
 func decodeGetOrganizationLogRequest(ctx context.Context, r *http.Request) (*getOrganizationLogRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
 
-	opts := platform.DefaultOperationLogFindOptions
-	qp := r.URL.Query()
-	if v := qp.Get("desc"); v == "false" {
-		opts.Descending = false
-	}
-	if v := qp.Get("limit"); v != "" {
-		i, err := strconv.Atoi(v)
-		if err != nil {
-			return nil, err
-		}
-		opts.Limit = i
-	}
-	if v := qp.Get("offset"); v != "" {
-		i, err := strconv.Atoi(v)
-		if err != nil {
-			return nil, err
-		}
-		opts.Offset = i
+	opts, err := decodeFindOptions(ctx, r)
+	if err != nil {
+		return nil, err
 	}
 
 	return &getOrganizationLogRequest{
 		OrganizationID: i,
-		opts:           opts,
+		opts:           *opts,
 	}, nil
 }
 
-func newOrganizationLogResponse(id platform.ID, es []*platform.OperationLogEntry) *operationLogResponse {
-	log := make([]*operationLogEntryResponse, 0, len(es))
+func newOrganizationLogResponse(id influxdb.ID, es []*influxdb.OperationLogEntry) *operationLogResponse {
+	logs := make([]*operationLogEntryResponse, 0, len(es))
 	for _, e := range es {
-		log = append(log, newOperationLogEntryResponse(e))
+		logs = append(logs, newOperationLogEntryResponse(e))
 	}
 	return &operationLogResponse{
 		Links: map[string]string{
-			"self": fmt.Sprintf("/api/v2/organizations/%s/log", id),
+			"self": fmt.Sprintf("/api/v2/orgs/%s/logs", id),
 		},
-		Log: log,
+		Logs: logs,
 	}
 }

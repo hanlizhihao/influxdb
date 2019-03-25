@@ -1,30 +1,36 @@
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {connect} from 'react-redux'
+
 // utils
 import _ from 'lodash'
+
 // components
 import {
-    Button,
-    ButtonType,
-    Columns,
-    ComponentColor,
-    ComponentStatus,
-    Form,
-    Grid,
-    Input,
-    InputType,
-} from 'src/clockface'
+  Button,
+  ComponentColor,
+  ButtonType,
+  Columns,
+  ComponentStatus,
+} from '@influxdata/clockface'
+import {Grid, Form, Input, InputType} from 'src/clockface'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import DashboardsDropdown from 'src/dataExplorer/components/DashboardsDropdown'
+
 // constants
-import {cellAdded, cellAddFailed} from 'src/shared/copy/notifications'
+import {cellAddFailed, cellAdded} from 'src/shared/copy/notifications'
+
 // actions
-import {createCellWithView, getDashboardsAsync} from 'src/dashboards/actions/v2'
-import {createDashboard} from 'src/dashboards/apis/v2'
+import {getDashboardsAsync, createCellWithView} from 'src/dashboards/actions'
+import {createDashboard} from 'src/dashboards/apis'
 import {notify} from 'src/shared/actions/notifications'
+
 // types
-import {AppState, Dashboard, Organization, View} from 'src/types/v2'
-import {DashboardTemplate, DEFAULT_CELL_NAME, DEFAULT_DASHBOARD_NAME,} from 'src/dashboards/constants'
+import {AppState, Dashboard, View, Organization} from 'src/types/v2'
+import {
+  DashboardTemplate,
+  DEFAULT_DASHBOARD_NAME,
+  DEFAULT_CELL_NAME,
+} from 'src/dashboards/constants'
 
 interface State {
   targetDashboardIDs: string[]

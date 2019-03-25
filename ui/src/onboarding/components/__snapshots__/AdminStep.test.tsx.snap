@@ -6,6 +6,7 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
 >
   <Form
     onSubmit={[Function]}
+    testID="form-container"
   >
     <div
       className="wizard-step--scroll-area"
@@ -13,6 +14,7 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
       <FancyScrollbar
         autoHeight={false}
         autoHide={false}
+        hideTracksWhenNotNeeded={true}
         maxHeight={null}
         setScrollTop={[Function]}
         style={Object {}}
@@ -51,7 +53,9 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
                     size="md"
                     spellCheck={false}
                     status="default"
+                    testID="input-field"
                     titleText="Username"
+                    type="text"
                     value=""
                   />
                 </FormElement>
@@ -75,6 +79,7 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
                     size="md"
                     spellCheck={false}
                     status="default"
+                    testID="input-field"
                     titleText="Password"
                     type="password"
                     value=""
@@ -100,6 +105,7 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
                     size="md"
                     spellCheck={false}
                     status="default"
+                    testID="input-field"
                     titleText="Confirm Password"
                     type="password"
                     value=""
@@ -126,7 +132,9 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
                     size="md"
                     spellCheck={false}
                     status="default"
+                    testID="input-field"
                     titleText="Initial Organization Name"
+                    type="text"
                     value=""
                   />
                 </FormElement>
@@ -151,7 +159,9 @@ exports[`Onboarding.Components.AdminStep renders 1`] = `
                     size="md"
                     spellCheck={false}
                     status="default"
+                    testID="input-field"
                     titleText="Initial Bucket Name"
+                    type="text"
                     value=""
                   />
                 </FormElement>

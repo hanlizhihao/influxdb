@@ -24,7 +24,7 @@ class NavMenu extends PureComponent<Props> {
     const {children} = this.props
 
     return (
-      <nav className="nav">
+      <nav className="nav" data-testid="nav">
         <Select type={NavMenuItem}>{children}</Select>
       </nav>
     )

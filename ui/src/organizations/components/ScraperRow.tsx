@@ -1,12 +1,23 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
-import {Alignment, ComponentSize, ConfirmationButton, IndexList,} from 'src/clockface'
-import {ScraperTargetResponse} from 'src/api'
+import {
+  ComponentSize,
+  IndexList,
+  ConfirmationButton,
+  Alignment,
+} from 'src/clockface'
+import {ScraperTargetResponse} from '@influxdata/influx'
+import EditableName from 'src/shared/components/EditableName'
+
+// Constants
+import {DEFAULT_SCRAPER_NAME} from 'src/dashboards/constants'
 
 interface Props {
   scraper: ScraperTargetResponse
   onDeleteScraper: (scraper) => void
+  onUpdateScraper: (scraper: ScraperTargetResponse) => void
 }
 
 export default class ScraperRow extends PureComponent<Props> {
@@ -15,6 +26,13 @@ export default class ScraperRow extends PureComponent<Props> {
     return (
       <>
         <IndexList.Row>
+          <IndexList.Cell>
+            <EditableName
+              onUpdate={this.handleUpdateScraperName}
+              name={scraper.name}
+              noNameString={DEFAULT_SCRAPER_NAME}
+            />
+          </IndexList.Cell>
           <IndexList.Cell>{scraper.url}</IndexList.Cell>
           <IndexList.Cell>{scraper.bucket}</IndexList.Cell>
           <IndexList.Cell revealOnHover={true} alignment={Alignment.Right}>
@@ -29,5 +47,10 @@ export default class ScraperRow extends PureComponent<Props> {
         </IndexList.Row>
       </>
     )
+  }
+
+  private handleUpdateScraperName = async (name: string) => {
+    const {onUpdateScraper, scraper} = this.props
+    await onUpdateScraper({...scraper, name})
   }
 }

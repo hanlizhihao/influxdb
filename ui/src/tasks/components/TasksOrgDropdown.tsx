@@ -1,12 +1,16 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
+
 // Components
 import {Dropdown} from 'src/clockface'
+
 // Actions
-import {setDropdownOrgID as setDropdownOrgIDAction} from 'src/tasks/actions/v2'
+import {setDropdownOrgID as setDropdownOrgIDAction} from 'src/tasks/actions'
+
 // Constants
 import {defaultAllOrgs} from 'src/tasks/constants'
+
 // Types
 import {Organization} from 'src/types/v2'
 

@@ -52,7 +52,7 @@ class Context extends PureComponent<Props, State> {
               />
             )
           } else {
-            throw new Error('Expected children of type <Context.Menu />')
+            return child
           }
         })}
       </div>

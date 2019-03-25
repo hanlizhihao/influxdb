@@ -7,7 +7,6 @@ interface Props {
   id: string
   title: string
   url: string
-  children: JSX.Element
 }
 
 @ErrorHandling

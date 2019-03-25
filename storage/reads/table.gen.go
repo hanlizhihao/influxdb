@@ -7,12 +7,12 @@
 package reads
 
 import (
-	"github.com/influxdata/flux/arrow"
-	"github.com/influxdata/flux/memory"
 	"sync"
 
 	"github.com/influxdata/flux"
+	"github.com/influxdata/flux/arrow"
 	"github.com/influxdata/flux/execute"
+	"github.com/influxdata/flux/memory"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/tsdb/cursors"
 	"github.com/pkg/errors"
@@ -27,6 +27,7 @@ type floatTable struct {
 	valBuf []float64
 	mu     sync.Mutex
 	cur    cursors.FloatArrayCursor
+	alloc  *memory.Allocator
 }
 
 func newFloatTable(
@@ -37,9 +38,10 @@ func newFloatTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *floatTable {
 	t := &floatTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		cur:   cur,
 	}
 	t.readTags(tags)
@@ -57,15 +59,15 @@ func (t *floatTable) Close() {
 	t.mu.Unlock()
 }
 
-func (t *floatTable) Statistics() flux.Statistics {
+func (t *floatTable) Statistics() cursors.CursorStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cur := t.cur
 	if cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -89,6 +91,12 @@ func (t *floatTable) Do(f func(flux.ColReader) error) error {
 }
 
 func (t *floatTable) advance() bool {
+	for _, cb := range t.colBufs {
+		if cb != nil {
+			cb.Release()
+		}
+	}
+
 	a := t.cur.Next()
 	t.l = a.Len()
 	if t.l == 0 {
@@ -135,9 +143,10 @@ func newFloatGroupTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *floatGroupTable {
 	t := &floatGroupTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		gc:    gc,
 		cur:   cur,
 	}
@@ -233,12 +242,12 @@ func (t *floatGroupTable) advanceCursor() bool {
 	return false
 }
 
-func (t *floatGroupTable) Statistics() flux.Statistics {
+func (t *floatGroupTable) Statistics() cursors.CursorStats {
 	if t.cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := t.cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -253,6 +262,7 @@ type integerTable struct {
 	valBuf []int64
 	mu     sync.Mutex
 	cur    cursors.IntegerArrayCursor
+	alloc  *memory.Allocator
 }
 
 func newIntegerTable(
@@ -263,9 +273,10 @@ func newIntegerTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *integerTable {
 	t := &integerTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		cur:   cur,
 	}
 	t.readTags(tags)
@@ -283,15 +294,15 @@ func (t *integerTable) Close() {
 	t.mu.Unlock()
 }
 
-func (t *integerTable) Statistics() flux.Statistics {
+func (t *integerTable) Statistics() cursors.CursorStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cur := t.cur
 	if cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -315,6 +326,12 @@ func (t *integerTable) Do(f func(flux.ColReader) error) error {
 }
 
 func (t *integerTable) advance() bool {
+	for _, cb := range t.colBufs {
+		if cb != nil {
+			cb.Release()
+		}
+	}
+
 	a := t.cur.Next()
 	t.l = a.Len()
 	if t.l == 0 {
@@ -361,9 +378,10 @@ func newIntegerGroupTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *integerGroupTable {
 	t := &integerGroupTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		gc:    gc,
 		cur:   cur,
 	}
@@ -459,12 +477,12 @@ func (t *integerGroupTable) advanceCursor() bool {
 	return false
 }
 
-func (t *integerGroupTable) Statistics() flux.Statistics {
+func (t *integerGroupTable) Statistics() cursors.CursorStats {
 	if t.cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := t.cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -479,6 +497,7 @@ type unsignedTable struct {
 	valBuf []uint64
 	mu     sync.Mutex
 	cur    cursors.UnsignedArrayCursor
+	alloc  *memory.Allocator
 }
 
 func newUnsignedTable(
@@ -489,9 +508,10 @@ func newUnsignedTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *unsignedTable {
 	t := &unsignedTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		cur:   cur,
 	}
 	t.readTags(tags)
@@ -509,15 +529,15 @@ func (t *unsignedTable) Close() {
 	t.mu.Unlock()
 }
 
-func (t *unsignedTable) Statistics() flux.Statistics {
+func (t *unsignedTable) Statistics() cursors.CursorStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cur := t.cur
 	if cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -541,6 +561,12 @@ func (t *unsignedTable) Do(f func(flux.ColReader) error) error {
 }
 
 func (t *unsignedTable) advance() bool {
+	for _, cb := range t.colBufs {
+		if cb != nil {
+			cb.Release()
+		}
+	}
+
 	a := t.cur.Next()
 	t.l = a.Len()
 	if t.l == 0 {
@@ -587,9 +613,10 @@ func newUnsignedGroupTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *unsignedGroupTable {
 	t := &unsignedGroupTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		gc:    gc,
 		cur:   cur,
 	}
@@ -685,12 +712,12 @@ func (t *unsignedGroupTable) advanceCursor() bool {
 	return false
 }
 
-func (t *unsignedGroupTable) Statistics() flux.Statistics {
+func (t *unsignedGroupTable) Statistics() cursors.CursorStats {
 	if t.cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := t.cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -705,6 +732,7 @@ type stringTable struct {
 	valBuf []string
 	mu     sync.Mutex
 	cur    cursors.StringArrayCursor
+	alloc  *memory.Allocator
 }
 
 func newStringTable(
@@ -715,9 +743,10 @@ func newStringTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *stringTable {
 	t := &stringTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		cur:   cur,
 	}
 	t.readTags(tags)
@@ -735,15 +764,15 @@ func (t *stringTable) Close() {
 	t.mu.Unlock()
 }
 
-func (t *stringTable) Statistics() flux.Statistics {
+func (t *stringTable) Statistics() cursors.CursorStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cur := t.cur
 	if cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -767,6 +796,12 @@ func (t *stringTable) Do(f func(flux.ColReader) error) error {
 }
 
 func (t *stringTable) advance() bool {
+	for _, cb := range t.colBufs {
+		if cb != nil {
+			cb.Release()
+		}
+	}
+
 	a := t.cur.Next()
 	t.l = a.Len()
 	if t.l == 0 {
@@ -813,9 +848,10 @@ func newStringGroupTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *stringGroupTable {
 	t := &stringGroupTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		gc:    gc,
 		cur:   cur,
 	}
@@ -911,12 +947,12 @@ func (t *stringGroupTable) advanceCursor() bool {
 	return false
 }
 
-func (t *stringGroupTable) Statistics() flux.Statistics {
+func (t *stringGroupTable) Statistics() cursors.CursorStats {
 	if t.cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := t.cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -931,6 +967,7 @@ type booleanTable struct {
 	valBuf []bool
 	mu     sync.Mutex
 	cur    cursors.BooleanArrayCursor
+	alloc  *memory.Allocator
 }
 
 func newBooleanTable(
@@ -941,9 +978,10 @@ func newBooleanTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *booleanTable {
 	t := &booleanTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		cur:   cur,
 	}
 	t.readTags(tags)
@@ -961,15 +999,15 @@ func (t *booleanTable) Close() {
 	t.mu.Unlock()
 }
 
-func (t *booleanTable) Statistics() flux.Statistics {
+func (t *booleanTable) Statistics() cursors.CursorStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	cur := t.cur
 	if cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}
@@ -993,6 +1031,12 @@ func (t *booleanTable) Do(f func(flux.ColReader) error) error {
 }
 
 func (t *booleanTable) advance() bool {
+	for _, cb := range t.colBufs {
+		if cb != nil {
+			cb.Release()
+		}
+	}
+
 	a := t.cur.Next()
 	t.l = a.Len()
 	if t.l == 0 {
@@ -1039,9 +1083,10 @@ func newBooleanGroupTable(
 	cols []flux.ColMeta,
 	tags models.Tags,
 	defs [][]byte,
+	alloc *memory.Allocator,
 ) *booleanGroupTable {
 	t := &booleanGroupTable{
-		table: newTable(done, bounds, key, cols, defs),
+		table: newTable(done, bounds, key, cols, defs, alloc),
 		gc:    gc,
 		cur:   cur,
 	}
@@ -1137,12 +1182,12 @@ func (t *booleanGroupTable) advanceCursor() bool {
 	return false
 }
 
-func (t *booleanGroupTable) Statistics() flux.Statistics {
+func (t *booleanGroupTable) Statistics() cursors.CursorStats {
 	if t.cur == nil {
-		return flux.Statistics{}
+		return cursors.CursorStats{}
 	}
 	cs := t.cur.Stats()
-	return flux.Statistics{
+	return cursors.CursorStats{
 		ScannedValues: cs.ScannedValues,
 		ScannedBytes:  cs.ScannedBytes,
 	}

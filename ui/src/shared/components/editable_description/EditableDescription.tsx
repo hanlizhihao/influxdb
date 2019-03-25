@@ -1,13 +1,13 @@
 // Libraries
-import React, {ChangeEvent, Component, KeyboardEvent} from 'react'
+import React, {Component, KeyboardEvent, ChangeEvent} from 'react'
 import classnames from 'classnames'
+
 // Components
-import {ComponentSize, Input} from 'src/clockface'
+import {Input, ComponentSize} from 'src/clockface'
 import {ClickOutside} from 'src/shared/components/ClickOutside'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
-// Styles
-import 'src/shared/components/editable_description/EditableDescription.scss'
 
 interface Props {
   onUpdate: (name: string) => void
@@ -119,7 +119,7 @@ class EditableDescription extends Component<Props, State> {
     const {description} = this.props
 
     return classnames('editable-description--preview', {
-      untitled: description === '',
+      untitled: !description,
     })
   }
 }

@@ -1,16 +1,29 @@
 // Libraries
 import React, {PureComponent} from 'react'
-// Components
-import {Alignment, Button, ComponentColor, ComponentSize, ComponentSpacer, IndexList,} from 'src/clockface'
-// Types
-import {Authorization} from 'src/api'
+import {connect} from 'react-redux'
 
-interface Props {
+// Actions
+import {deleteAuthorization} from 'src/authorizations/actions'
+
+// Components
+import {Alignment, ComponentSize} from '@influxdata/clockface'
+import {IndexList, ComponentSpacer, ConfirmationButton} from 'src/clockface'
+
+// Types
+import {Authorization} from '@influxdata/influx'
+
+interface OwnProps {
   auth: Authorization
   onClickDescription: (authID: string) => void
 }
 
-export default class TokenRow extends PureComponent<Props> {
+interface DispatchProps {
+  onDelete: typeof deleteAuthorization
+}
+
+type Props = DispatchProps & OwnProps
+
+class TokenRow extends PureComponent<Props> {
   public render() {
     const {description, status, id} = this.props.auth
 
@@ -20,7 +33,7 @@ export default class TokenRow extends PureComponent<Props> {
           <a
             href="#"
             onClick={this.handleClickDescription}
-            data-test={`token-description-${id}`}
+            data-testid={`token-description-${id}`}
           >
             {description}
           </a>
@@ -28,10 +41,11 @@ export default class TokenRow extends PureComponent<Props> {
         <IndexList.Cell>{status}</IndexList.Cell>
         <IndexList.Cell alignment={Alignment.Right} revealOnHover={true}>
           <ComponentSpacer align={Alignment.Right}>
-            <Button
+            <ConfirmationButton
               size={ComponentSize.ExtraSmall}
-              color={ComponentColor.Danger}
               text="Delete"
+              confirmText="Confirm"
+              onConfirm={this.handleDelete}
             />
           </ComponentSpacer>
         </IndexList.Cell>
@@ -39,8 +53,22 @@ export default class TokenRow extends PureComponent<Props> {
     )
   }
 
+  private handleDelete = () => {
+    const {id, description} = this.props.auth
+    this.props.onDelete(id, description)
+  }
+
   private handleClickDescription = () => {
     const {onClickDescription, auth} = this.props
     onClickDescription(auth.id)
   }
 }
+
+const mdtp = {
+  onDelete: deleteAuthorization,
+}
+
+export default connect<{}, DispatchProps, OwnProps>(
+  null,
+  mdtp
+)(TokenRow)

@@ -1,52 +1,38 @@
 // Libraries
 import React, {Component, MouseEvent} from 'react'
 import {connect} from 'react-redux'
-import {withRouter, WithRouterProps} from 'react-router'
+import {withRouter} from 'react-router'
 import _ from 'lodash'
+
 // Components
 import {Page} from 'src/pageLayout'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import DashboardHeader from 'src/dashboards/components/DashboardHeader'
 import DashboardComponent from 'src/dashboards/components/Dashboard'
-import ManualRefresh, {ManualRefreshProps} from 'src/shared/components/ManualRefresh'
-import VEO from 'src/dashboards/components/VEO'
-import {OverlayTechnology} from 'src/clockface'
+import ManualRefresh from 'src/shared/components/ManualRefresh'
 import {HoverTimeProvider} from 'src/dashboards/utils/hoverTime'
-import NoteEditorContainer from 'src/dashboards/components/NoteEditorContainer'
+import VariablesControlBar from 'src/dashboards/components/variablesControlBar/VariablesControlBar'
+
 // Actions
-import * as dashboardActions from 'src/dashboards/actions/v2'
-import * as rangesActions from 'src/dashboards/actions/v2/ranges'
+import * as dashboardActions from 'src/dashboards/actions'
+import * as rangesActions from 'src/dashboards/actions/ranges'
 import * as appActions from 'src/shared/actions/app'
 import * as notifyActions from 'src/shared/actions/notifications'
-import * as viewActions from 'src/dashboards/actions/v2/views'
-import {setActiveTimeMachine} from 'src/shared/actions/v2/timeMachines'
+import {setActiveTimeMachine} from 'src/timeMachine/actions'
+
 // Utils
 import {getDeep} from 'src/utils/wrappers'
-import {updateDashboardLinks} from 'src/dashboards/utils/dashboardSwitcherLinks'
 import {GlobalAutoRefresher} from 'src/utils/AutoRefresher'
-import {createView} from 'src/shared/utils/view'
-import {cellAddFailed} from 'src/shared/copy/notifications'
-// APIs
-import {loadDashboardLinks} from 'src/dashboards/apis/v2'
+
 // Constants
 import {DASHBOARD_LAYOUT_ROW_HEIGHT} from 'src/shared/constants'
 import {DEFAULT_TIME_RANGE} from 'src/shared/constants/timeRanges'
-import {EMPTY_LINKS} from 'src/dashboards/constants/dashboardHeader'
-import {VEO_TIME_MACHINE_ID} from 'src/shared/constants/timeMachine'
+
 // Types
-import {
-    AppState,
-    Cell,
-    Dashboard,
-    DashboardSwitcherLinks,
-    Links,
-    Source,
-    TimeRange,
-    View,
-    ViewType,
-} from 'src/types/v2'
-import {NewView, QueryViewProperties, XYView} from 'src/types/v2/dashboards'
+import {Links, Dashboard, Cell, View, TimeRange, AppState} from 'src/types/v2'
 import {RemoteDataState} from 'src/types'
+import {WithRouterProps} from 'react-router'
+import {ManualRefreshProps} from 'src/shared/components/ManualRefresh'
 import {Location} from 'history'
 import * as AppActions from 'src/types/actions/app'
 import * as ColorsModels from 'src/types/colors'
@@ -54,7 +40,6 @@ import * as NotificationsActions from 'src/types/actions/notifications'
 
 interface StateProps {
   links: Links
-  sources: Source[]
   zoomedTimeRange: TimeRange
   timeRange: TimeRange
   dashboard: Dashboard
@@ -76,14 +61,12 @@ interface DispatchProps {
   handleChooseAutoRefresh: AppActions.SetAutoRefreshActionCreator
   handleClickPresentationButton: AppActions.DelayEnablePresentationModeDispatcher
   notify: NotificationsActions.PublishNotificationActionCreator
-  onAddCell: typeof dashboardActions.addCellAsync
   onCreateCellWithView: typeof dashboardActions.createCellWithView
-  onUpdateView: typeof viewActions.updateView
+  onUpdateView: typeof dashboardActions.updateView
   onSetActiveTimeMachine: typeof setActiveTimeMachine
 }
 
 interface PassedProps {
-  source: Source
   params: {
     dashboardID: string
   }
@@ -107,8 +90,8 @@ type Props = PassedProps &
 interface State {
   scrollTop: number
   windowHeight: number
-  dashboardLinks: DashboardSwitcherLinks
   isShowingVEO: boolean
+  isShowingVariablesControlBar: boolean
 }
 
 @ErrorHandling
@@ -119,8 +102,8 @@ class DashboardPage extends Component<Props, State> {
     this.state = {
       scrollTop: 0,
       windowHeight: window.innerHeight,
-      dashboardLinks: EMPTY_LINKS,
       isShowingVEO: false,
+      isShowingVariablesControlBar: false,
     }
   }
 
@@ -132,8 +115,6 @@ class DashboardPage extends Component<Props, State> {
     window.addEventListener('resize', this.handleWindowResize, true)
 
     await this.getDashboard()
-
-    this.getDashboardLinks()
   }
 
   public componentDidUpdate(prevProps: Props) {
@@ -159,7 +140,6 @@ class DashboardPage extends Component<Props, State> {
 
   public render() {
     const {
-      source,
       timeRange,
       zoomedTimeRange,
       showTemplateControlBar,
@@ -170,8 +150,9 @@ class DashboardPage extends Component<Props, State> {
       inPresentationMode,
       handleChooseAutoRefresh,
       handleClickPresentationButton,
+      children,
     } = this.props
-    const {dashboardLinks, isShowingVEO} = this.state
+    const {isShowingVariablesControlBar} = this.state
 
     return (
       <Page titleTag={this.pageTitle}>
@@ -182,16 +163,21 @@ class DashboardPage extends Component<Props, State> {
             autoRefresh={autoRefresh}
             isHidden={inPresentationMode}
             onAddCell={this.handleAddCell}
+            onAddNote={this.showNoteOverlay}
             onManualRefresh={onManualRefresh}
             zoomedTimeRange={zoomedTimeRange}
             onRenameDashboard={this.handleRenameDashboard}
-            dashboardLinks={dashboardLinks}
             activeDashboard={dashboard ? dashboard.name : ''}
             showTemplateControlBar={showTemplateControlBar}
             handleChooseAutoRefresh={handleChooseAutoRefresh}
             handleChooseTimeRange={this.handleChooseTimeRange}
             handleClickPresentationButton={handleClickPresentationButton}
+            toggleVariablesControlBar={this.toggleVariablesControlBar}
+            isShowingVariablesControlBar={isShowingVariablesControlBar}
           />
+          {isShowingVariablesControlBar && (
+            <VariablesControlBar dashboardID={dashboard.id} />
+          )}
           {!!dashboard && (
             <DashboardComponent
               inView={this.inView}
@@ -207,17 +193,11 @@ class DashboardPage extends Component<Props, State> {
               onDeleteCell={this.handleDeleteDashboardCell}
               onEditView={this.handleEditView}
               onAddCell={this.handleAddCell}
+              onEditNote={this.showNoteOverlay}
             />
           )}
-          <OverlayTechnology visible={isShowingVEO}>
-            <VEO
-              source={source}
-              onHide={this.handleHideVEO}
-              onSave={this.handleSaveVEO}
-            />
-          </OverlayTechnology>
+          {children}
         </HoverTimeProvider>
-        <NoteEditorContainer />
       </Page>
     )
   }
@@ -226,16 +206,6 @@ class DashboardPage extends Component<Props, State> {
     const {params, getDashboard} = this.props
 
     await getDashboard(params.dashboardID)
-    this.updateActiveDashboard()
-  }
-
-  private updateActiveDashboard(): void {
-    this.setState((prevState, props) => ({
-      dashboardLinks: updateDashboardLinks(
-        prevState.dashboardLinks,
-        props.dashboard
-      ),
-    }))
   }
 
   private inView = (cell: Cell): boolean => {
@@ -267,50 +237,27 @@ class DashboardPage extends Component<Props, State> {
   }
 
   private handleAddCell = async (): Promise<void> => {
-    const newView = createView<XYView>(ViewType.XY)
-
-    this.showVEO(newView)
+    this.showVEO()
   }
 
-  private handleHideVEO = (): void => {
-    this.setState({isShowingVEO: false})
-  }
-
-  private handleSaveVEO = async (view: View): Promise<void> => {
-    this.setState({isShowingVEO: false})
-
-    const {dashboard, onCreateCellWithView, onUpdateView, notify} = this.props
-
-    try {
-      if (view.id) {
-        onUpdateView(dashboard.id, view)
-      } else {
-        await onCreateCellWithView(dashboard, view)
-      }
-    } catch (error) {
-      console.error(error)
-      notify(cellAddFailed())
+  private showNoteOverlay = async (id?: string): Promise<void> => {
+    if (id) {
+      this.props.router.push(`${this.props.location.pathname}/notes/${id}/edit`)
+    } else {
+      this.props.router.push(`${this.props.location.pathname}/notes/new`)
     }
   }
 
   private handleEditView = (cellID: string): void => {
-    const entry = this.props.views[cellID]
-
-    if (!entry || !entry.view) {
-      throw new Error(`Can't edit non-existent view with ID "${cellID}"`)
-    }
-
-    this.showVEO(entry.view as View<QueryViewProperties>)
+    this.showVEO(cellID)
   }
 
-  private showVEO = (
-    view: View<QueryViewProperties> | NewView<QueryViewProperties>
-  ): void => {
-    const {onSetActiveTimeMachine} = this.props
-
-    onSetActiveTimeMachine(VEO_TIME_MACHINE_ID, {view})
-
-    this.setState({isShowingVEO: true})
+  private showVEO = (id?: string): void => {
+    if (id) {
+      this.props.router.push(`${this.props.location.pathname}/cells/${id}/edit`)
+    } else {
+      this.props.router.push(`${this.props.location.pathname}/cells/new`)
+    }
   }
 
   private handleCloneCell = async (cell: Cell): Promise<void> => {
@@ -326,7 +273,6 @@ class DashboardPage extends Component<Props, State> {
     const renamedDashboard = {...dashboard, name}
 
     await updateDashboard(renamedDashboard)
-    this.updateActiveDashboard()
   }
 
   private handleDeleteDashboardCell = async (cell: Cell): Promise<void> => {
@@ -334,14 +280,7 @@ class DashboardPage extends Component<Props, State> {
     await deleteCell(dashboard, cell)
   }
 
-  private handleZoomedTimeRange = (__: TimeRange): void => {
-    // const {setZoomedTimeRange, updateQueryParams} = this.props
-    // setZoomedTimeRange(zoomedTimeRange)
-    // updateQueryParams({
-    //   zoomedLower: zoomedTimeRange.lower,
-    //   zoomedUpper: zoomedTimeRange.upper,
-    // })
-  }
+  private handleZoomedTimeRange = (__: TimeRange): void => {}
 
   private setScrollTop = (e: MouseEvent<HTMLElement>): void => {
     const target = e.target as HTMLElement
@@ -349,22 +288,14 @@ class DashboardPage extends Component<Props, State> {
     this.setState({scrollTop: target.scrollTop})
   }
 
-  private getDashboardLinks = async (): Promise<void> => {
-    const {dashboard: activeDashboard} = this.props
-
-    try {
-      const dashboardLinks = await loadDashboardLinks(activeDashboard)
-
-      this.setState({
-        dashboardLinks,
-      })
-    } catch (error) {
-      console.error(error)
-    }
-  }
-
   private handleWindowResize = (): void => {
     this.setState({windowHeight: window.innerHeight})
+  }
+
+  private toggleVariablesControlBar = (): void => {
+    this.setState({
+      isShowingVariablesControlBar: !this.state.isShowingVariablesControlBar,
+    })
   }
 
   private get pageTitle(): string {
@@ -381,10 +312,9 @@ const mstp = (state: AppState, {params: {dashboardID}}): StateProps => {
       ephemeral: {inPresentationMode},
       persisted: {autoRefresh, showTemplateControlBar},
     },
-    sources,
     ranges,
     dashboards,
-    views,
+    views: {views},
   } = state
 
   const timeRange =
@@ -395,7 +325,6 @@ const mstp = (state: AppState, {params: {dashboardID}}): StateProps => {
   return {
     links,
     views,
-    sources: Object.values(sources.sources),
     zoomedTimeRange: {lower: null, upper: null},
     timeRange,
     dashboard,
@@ -417,9 +346,8 @@ const mdtp: DispatchProps = {
   setDashTimeV1: rangesActions.setDashTimeV1,
   updateQueryParams: rangesActions.updateQueryParams,
   setZoomedTimeRange: rangesActions.setZoomedTimeRange,
-  onAddCell: dashboardActions.addCellAsync,
   onCreateCellWithView: dashboardActions.createCellWithView,
-  onUpdateView: viewActions.updateView,
+  onUpdateView: dashboardActions.updateView,
   onSetActiveTimeMachine: setActiveTimeMachine,
 }
 

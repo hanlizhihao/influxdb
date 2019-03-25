@@ -1,14 +1,21 @@
 // Libraries
-import React, {PureComponent, ReactElement} from 'react'
+import React, {ReactElement, PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
 import {connect} from 'react-redux'
+
+import {client} from 'src/utils/api'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
-import {getMe} from 'src/shared/apis/v2/user'
+import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
+
 // Constants
 import {sessionTimedOut} from 'src/shared/copy/notifications'
+import {CLOUD, CLOUD_SIGNIN_PATHNAME} from 'src/shared/constants'
+
 // Types
 import {RemoteDataState} from 'src/types'
 
@@ -40,8 +47,9 @@ export class Signin extends PureComponent<Props, State> {
   }
 
   public async componentDidMount() {
+    this.setState({loading: RemoteDataState.Loading})
+    await this.checkForLogin()
     this.setState({loading: RemoteDataState.Done})
-    this.checkForLogin()
     this.intervalID = setInterval(this.checkForLogin, FETCH_WAIT)
   }
 
@@ -50,29 +58,30 @@ export class Signin extends PureComponent<Props, State> {
   }
 
   public render() {
-    if (this.isLoading) {
-      return <div className="page-spinner" />
-    }
-
-    return this.props.children && React.cloneElement(this.props.children)
-  }
-
-  private get isLoading(): boolean {
     const {loading} = this.state
+
     return (
-      loading === RemoteDataState.Loading ||
-      loading === RemoteDataState.NotStarted
+      <SpinnerContainer loading={loading} spinnerComponent={<TechnoSpinner />}>
+        {this.props.children && React.cloneElement(this.props.children)}
+      </SpinnerContainer>
     )
   }
 
   private checkForLogin = async () => {
     try {
-      await getMe()
+      await client.users.me()
     } catch (error) {
       const {
         location: {pathname},
       } = this.props
       clearInterval(this.intervalID)
+
+      // TODO: add returnTo to CLOUD signin
+      if (CLOUD) {
+        window.location.pathname = CLOUD_SIGNIN_PATHNAME
+
+        throw error
+      }
 
       if (pathname.startsWith('/signin')) {
         return

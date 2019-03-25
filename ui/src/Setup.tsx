@@ -1,15 +1,21 @@
 // Libraries
-import React, {PureComponent, ReactElement} from 'react'
+import React, {ReactElement, PureComponent} from 'react'
 import {connect} from 'react-redux'
 import {InjectedRouter} from 'react-router'
+
 // APIs
-import {getSetupStatus} from 'src/onboarding/apis'
+import {client} from 'src/utils/api'
+
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
+import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+
 // Utils
 import {isOnboardingURL} from 'src/onboarding/utils'
+
 // Types
 import {Notification, NotificationFunc, RemoteDataState} from 'src/types'
 
@@ -45,12 +51,12 @@ export class Setup extends PureComponent<Props, State> {
       return
     }
 
-    const isSetupAllowed = await getSetupStatus()
+    const {allowed} = await client.setup.status()
     this.setState({
       loading: RemoteDataState.Done,
     })
 
-    if (!isSetupAllowed) {
+    if (!allowed) {
       return
     }
 
@@ -58,18 +64,12 @@ export class Setup extends PureComponent<Props, State> {
   }
 
   public render() {
-    if (this.isLoading) {
-      return <div className="page-spinner" />
-    } else {
-      return this.props.children && React.cloneElement(this.props.children)
-    }
-  }
-
-  private get isLoading(): boolean {
     const {loading} = this.state
+
     return (
-      loading === RemoteDataState.Loading ||
-      loading === RemoteDataState.NotStarted
+      <SpinnerContainer loading={loading} spinnerComponent={<TechnoSpinner />}>
+        {this.props.children && React.cloneElement(this.props.children)}
+      </SpinnerContainer>
     )
   }
 }

@@ -47,9 +47,10 @@ type LabelService interface {
 
 // Label is a tag set on a resource, typically used for filtering on a UI.
 type Label struct {
-	ID         ID                `json:"id,omitempty"`
-	Name       string            `json:"name"`
-	Properties map[string]string `json:"properties,omitempty"`
+	ID             ID                `json:"id,omitempty"`
+	OrganizationID ID                `json:"orgID,omitempty"`
+	Name           string            `json:"name"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }
 
 // Validate returns an error if the label is invalid.
@@ -61,22 +62,42 @@ func (l *Label) Validate() error {
 		}
 	}
 
+	if !l.OrganizationID.Valid() {
+		return &Error{
+			Code: EInvalid,
+			Msg:  "organization ID is required",
+		}
+	}
+
 	return nil
 }
 
 // LabelMapping is used to map resource to its labels.
 // It should not be shared directly over the HTTP API.
 type LabelMapping struct {
-	LabelID    *ID `json:"labelID"`
-	ResourceID *ID
+	LabelID      ID `json:"labelID"`
+	ResourceID   ID `json:"resourceID"`
+	ResourceType `json:"resourceType"`
 }
 
 // Validate returns an error if the mapping is invalid.
 func (l *LabelMapping) Validate() error {
+	if !l.LabelID.Valid() {
+		return &Error{
+			Code: EInvalid,
+			Msg:  "label id is required",
+		}
+	}
 	if !l.ResourceID.Valid() {
 		return &Error{
 			Code: EInvalid,
-			Msg:  "resourceID is required",
+			Msg:  "resource id is required",
+		}
+	}
+	if err := l.ResourceType.Valid(); err != nil {
+		return &Error{
+			Code: EInvalid,
+			Err:  err,
 		}
 	}
 
@@ -84,18 +105,20 @@ func (l *LabelMapping) Validate() error {
 }
 
 // LabelUpdate represents a changeset for a label.
-// Only fields which are set are updated.
+// Only the properties specified are updated.
 type LabelUpdate struct {
+	Name       string            `json:"name,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // LabelFilter represents a set of filters that restrict the returned results.
 type LabelFilter struct {
-	ID   ID
-	Name string
+	Name  string
+	OrgID *ID
 }
 
 // LabelMappingFilter represents a set of filters that restrict the returned results.
 type LabelMappingFilter struct {
 	ResourceID ID
+	ResourceType
 }

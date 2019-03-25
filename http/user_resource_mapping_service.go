@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"path"
 
+	"go.uber.org/zap"
+
 	platform "github.com/influxdata/influxdb"
-	kerrors "github.com/influxdata/influxdb/kit/errors"
 	"github.com/julienschmidt/httprouter"
 )
 
@@ -52,8 +53,20 @@ func newResourceUsersResponse(opts platform.FindOptions, f platform.UserResource
 	return &rs
 }
 
+// MemberBackend is all services and associated parameters required to construct
+// member handler.
+type MemberBackend struct {
+	Logger *zap.Logger
+
+	ResourceType platform.ResourceType
+	UserType     platform.UserType
+
+	UserResourceMappingService platform.UserResourceMappingService
+	UserService                platform.UserService
+}
+
 // newPostMemberHandler returns a handler func for a POST to /members or /owners endpoints
-func newPostMemberHandler(s platform.UserResourceMappingService, userService platform.UserService, resourceType platform.ResourceType, userType platform.UserType) http.HandlerFunc {
+func newPostMemberHandler(b MemberBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -63,7 +76,7 @@ func newPostMemberHandler(s platform.UserResourceMappingService, userService pla
 			return
 		}
 
-		user, err := userService.FindUserByID(ctx, req.MemberID)
+		user, err := b.UserService.FindUserByID(ctx, req.MemberID)
 		if err != nil {
 			EncodeError(ctx, err, w)
 			return
@@ -71,17 +84,17 @@ func newPostMemberHandler(s platform.UserResourceMappingService, userService pla
 
 		mapping := &platform.UserResourceMapping{
 			ResourceID:   req.ResourceID,
-			ResourceType: resourceType,
+			ResourceType: b.ResourceType,
 			UserID:       req.MemberID,
-			UserType:     userType,
+			UserType:     b.UserType,
 		}
 
-		if err := s.CreateUserResourceMapping(ctx, mapping); err != nil {
+		if err := b.UserResourceMappingService.CreateUserResourceMapping(ctx, mapping); err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
 
-		if err := encodeResponse(ctx, w, http.StatusCreated, newResourceUserResponse(user, userType)); err != nil {
+		if err := encodeResponse(ctx, w, http.StatusCreated, newResourceUserResponse(user, b.UserType)); err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
@@ -97,7 +110,10 @@ func decodePostMemberRequest(ctx context.Context, r *http.Request) (*postMemberR
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var rid platform.ID
@@ -111,7 +127,10 @@ func decodePostMemberRequest(ctx context.Context, r *http.Request) (*postMemberR
 	}
 
 	if !u.ID.Valid() {
-		return nil, kerrors.InvalidDataf("user id missing or invalid")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "user id missing or invalid",
+		}
 	}
 
 	return &postMemberRequest{
@@ -121,7 +140,7 @@ func decodePostMemberRequest(ctx context.Context, r *http.Request) (*postMemberR
 }
 
 // newGetMembersHandler returns a handler func for a GET to /members or /owners endpoints
-func newGetMembersHandler(s platform.UserResourceMappingService, userService platform.UserService, resourceType platform.ResourceType, userType platform.UserType) http.HandlerFunc {
+func newGetMembersHandler(b MemberBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -133,12 +152,12 @@ func newGetMembersHandler(s platform.UserResourceMappingService, userService pla
 
 		filter := platform.UserResourceMappingFilter{
 			ResourceID:   req.ResourceID,
-			ResourceType: resourceType,
-			UserType:     userType,
+			ResourceType: b.ResourceType,
+			UserType:     b.UserType,
 		}
 
 		opts := platform.FindOptions{}
-		mappings, _, err := s.FindUserResourceMappings(ctx, filter)
+		mappings, _, err := b.UserResourceMappingService.FindUserResourceMappings(ctx, filter)
 		if err != nil {
 			EncodeError(ctx, err, w)
 			return
@@ -146,7 +165,10 @@ func newGetMembersHandler(s platform.UserResourceMappingService, userService pla
 
 		users := make([]*platform.User, 0, len(mappings))
 		for _, m := range mappings {
-			user, err := userService.FindUserByID(ctx, m.UserID)
+			if m.MappingType == platform.OrgMappingType {
+				continue
+			}
+			user, err := b.UserService.FindUserByID(ctx, m.UserID)
 			if err != nil {
 				EncodeError(ctx, err, w)
 				return
@@ -171,7 +193,10 @@ func decodeGetMembersRequest(ctx context.Context, r *http.Request) (*getMembersR
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing id",
+		}
 	}
 
 	var i platform.ID
@@ -187,7 +212,7 @@ func decodeGetMembersRequest(ctx context.Context, r *http.Request) (*getMembersR
 }
 
 // newDeleteMemberHandler returns a handler func for a DELETE to /members or /owners endpoints
-func newDeleteMemberHandler(s platform.UserResourceMappingService, userType platform.UserType) http.HandlerFunc {
+func newDeleteMemberHandler(b MemberBackend) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
@@ -197,7 +222,7 @@ func newDeleteMemberHandler(s platform.UserResourceMappingService, userType plat
 			return
 		}
 
-		if err := s.DeleteUserResourceMapping(ctx, req.ResourceID, req.MemberID); err != nil {
+		if err := b.UserResourceMappingService.DeleteUserResourceMapping(ctx, req.ResourceID, req.MemberID); err != nil {
 			EncodeError(ctx, err, w)
 			return
 		}
@@ -215,7 +240,10 @@ func decodeDeleteMemberRequest(ctx context.Context, r *http.Request) (*deleteMem
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing resource id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing resource id",
+		}
 	}
 
 	var rid platform.ID
@@ -225,7 +253,10 @@ func decodeDeleteMemberRequest(ctx context.Context, r *http.Request) (*deleteMem
 
 	id = params.ByName("userID")
 	if id == "" {
-		return nil, kerrors.InvalidDataf("url missing member id")
+		return nil, &platform.Error{
+			Code: platform.EInvalid,
+			Msg:  "url missing member id",
+		}
 	}
 
 	var mid platform.ID

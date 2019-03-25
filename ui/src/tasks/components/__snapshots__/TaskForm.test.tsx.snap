@@ -1,7 +1,9 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`TaskForm rendering renders 1`] = `
-<Form>
+<Form
+  testID="form-container"
+>
   <Grid>
     <GridRow>
       <GridColumn
@@ -20,7 +22,9 @@ exports[`TaskForm rendering renders 1`] = `
             size="sm"
             spellCheck={false}
             status="default"
+            testID="input-field"
             titleText=""
+            type="text"
             value=""
           />
         </FormElement>
@@ -58,6 +62,7 @@ exports[`TaskForm rendering renders 1`] = `
                 disabledTitleText="This option is disabled"
                 id="every"
                 onClick={[Function]}
+                testID="radio-button"
                 titleText="Run task at regular intervals"
                 value="interval"
               >
@@ -69,6 +74,7 @@ exports[`TaskForm rendering renders 1`] = `
                 disabledTitleText="This option is disabled"
                 id="cron"
                 onClick={[Function]}
+                testID="radio-button"
                 titleText="Use cron syntax for more control over scheduling"
                 value="cron"
               >

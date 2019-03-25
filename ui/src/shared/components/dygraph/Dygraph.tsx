@@ -60,6 +60,7 @@ interface OwnProps {
   onZoom?: (timeRange: TimeRange) => void
   mode?: string
   underlayCallback?: () => void
+  children?: JSX.Element
 }
 
 type Props = OwnProps & InjectedHoverProps
@@ -156,7 +157,7 @@ class Dygraph extends Component<Props, State> {
         {legendData && (
           <Legend {...legendData} seriesDescriptions={seriesDescriptions} />
         )}
-        {!!hoverTime && (
+        {!!hoverTime && !!this.dygraph && (
           <HoverTimeMarker x={this.dygraph.toDomXCoord(hoverTime)} />
         )}
         {this.nestedGraph}

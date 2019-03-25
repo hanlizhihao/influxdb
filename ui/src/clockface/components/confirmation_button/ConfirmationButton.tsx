@@ -1,11 +1,21 @@
 // Libraries
 import React, {Component, RefObject} from 'react'
 import classnames from 'classnames'
+
 // Components
-import Button from 'src/clockface/components/Button/index'
+import {Button} from '@influxdata/clockface'
 import {ClickOutside} from 'src/shared/components/ClickOutside'
+
 // Types
-import {ButtonShape, ButtonType, ComponentColor, ComponentSize, ComponentStatus, IconFont,} from 'src/clockface/types'
+import {
+  ComponentColor,
+  ComponentStatus,
+  ComponentSize,
+  ButtonShape,
+  IconFont,
+  ButtonType,
+} from '@influxdata/clockface'
+
 // Styles
 import 'src/clockface/components/confirmation_button/ConfirmationButton.scss'
 
@@ -23,6 +33,7 @@ interface Props {
   titleText?: string
   tabIndex?: number
   className?: string
+  testID?: string
 }
 
 interface State {
@@ -35,6 +46,7 @@ class ConfirmationButton extends Component<Props, State> {
     size: ComponentSize.Small,
     shape: ButtonShape.Default,
     status: ComponentStatus.Default,
+    testID: 'confirmation-button',
   }
 
   public ref: RefObject<HTMLButtonElement> = React.createRef()
@@ -57,6 +69,7 @@ class ConfirmationButton extends Component<Props, State> {
       status,
       confirmText,
       icon,
+      testID,
     } = this.props
     const {isTooltipVisible} = this.state
 
@@ -75,10 +88,11 @@ class ConfirmationButton extends Component<Props, State> {
             onClick={this.handleButtonClick}
             icon={icon}
             type={ButtonType.Button}
+            testID="delete-button"
           />
           <div className={this.tooltipClassName}>
             <div
-              data-test="confirmation-button--click-target"
+              data-testid={testID}
               className="confirmation-button--tooltip-body"
               onClick={this.handleTooltipClick}
             >

@@ -2,7 +2,7 @@
 
 exports[`Onboarding.Components.CompletionStep renders 1`] = `
 <div
-  className="onboarding-step buttonless"
+  className="onboarding-step"
 >
   <div
     className="wizard-step--scroll-area"
@@ -10,6 +10,7 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
     <FancyScrollbar
       autoHeight={false}
       autoHide={false}
+      hideTracksWhenNotNeeded={true}
       maxHeight={null}
       setScrollTop={[Function]}
       style={Object {}}
@@ -87,13 +88,14 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
                 <div
                   className="wizard-completion--option"
                 >
-                  <Button
+                  <t
                     active={false}
                     color="success"
                     onClick={[MockFunction]}
                     shape="none"
                     size="lg"
                     status="default"
+                    testID="button"
                     text="Configure Later"
                     type="button"
                   />
@@ -101,7 +103,7 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
                     I've got this...
                   </dt>
                   <dd>
-                    Jump into Influx 2.0 and set up data collection when you’re ready.
+                    Jump into InfluxDB 2.0 and set up data collection when you’re ready.
                   </dd>
                 </div>
               </GridColumn>

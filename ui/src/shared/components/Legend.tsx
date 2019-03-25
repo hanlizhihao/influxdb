@@ -1,15 +1,16 @@
 // Libraries
-import React, {CSSProperties, PureComponent} from 'react'
+import React, {PureComponent, CSSProperties} from 'react'
 import {createPortal} from 'react-dom'
 import moment from 'moment'
-import {flatten, isNumber, uniq} from 'lodash'
+import {uniq, flatten, isNumber} from 'lodash'
+
 // Components
 import FancyScrollbar from 'src/shared/components/fancy_scrollbar/FancyScrollbar'
+
 // Constants
 import {LEGEND_PORTAL_ID} from 'src/shared/components/LegendPortal'
 import {DEFAULT_TIME_FORMAT} from 'src/shared/constants'
-// Styles
-import 'src/shared/components/Legend.scss'
+
 // Types
 import {SeriesDescription} from 'src/shared/parsing/flux/spreadTables'
 
@@ -43,18 +44,18 @@ class Legend extends PureComponent<Props> {
         <div className="legend--time">{this.time}</div>
         <FancyScrollbar autoHeight={true} maxHeight={120}>
           <div className="legend--columns">
-            {this.columns.map(({name, isNumeric, rows}) => (
+            {this.columns.map(({name, isNumeric, rows}, i) => (
               <div
-                key={name}
+                key={`${name}-${i}`}
                 className={`legend--column ${isNumeric ? 'numeric' : ''}`}
               >
                 <div className="legend--column-header">{name}</div>
-                {rows.map(({color, value}) => {
+                {rows.map(({color, value}, j) => {
                   const emptyClass = !value && value !== 0 ? 'empty' : ''
 
                   return (
                     <div
-                      key={color}
+                      key={`${color}-${j}`}
                       className={`legend--column-row ${emptyClass}`}
                       style={{color}}
                     >

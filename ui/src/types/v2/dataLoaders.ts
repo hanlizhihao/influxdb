@@ -1,44 +1,52 @@
 // Types
 import {
-    TelegrafPluginConfig,
-    TelegrafPluginInputCpu,
-    TelegrafPluginInputDisk,
-    TelegrafPluginInputDiskio,
-    TelegrafPluginInputDocker,
-    TelegrafPluginInputDockerConfig,
-    TelegrafPluginInputFile,
-    TelegrafPluginInputFileConfig,
-    TelegrafPluginInputKernel,
-    TelegrafPluginInputKubernetes,
-    TelegrafPluginInputKubernetesConfig,
-    TelegrafPluginInputLogParser,
-    TelegrafPluginInputLogParserConfig,
-    TelegrafPluginInputMem,
-    TelegrafPluginInputNet,
-    TelegrafPluginInputNetResponse,
-    TelegrafPluginInputNginx,
-    TelegrafPluginInputProcesses,
-    TelegrafPluginInputProcstat,
-    TelegrafPluginInputProcstatConfig,
-    TelegrafPluginInputPrometheus,
-    TelegrafPluginInputPrometheusConfig,
-    TelegrafPluginInputRedis,
-    TelegrafPluginInputRedisConfig,
-    TelegrafPluginInputSwap,
-    TelegrafPluginInputSyslog,
-    TelegrafPluginInputSyslogConfig,
-    TelegrafPluginInputSystem,
-    TelegrafPluginInputTail,
-    TelegrafPluginOutputFile,
-    TelegrafPluginOutputFileConfig,
-    TelegrafPluginOutputInfluxDBV2,
-    TelegrafPluginOutputInfluxDBV2Config,
-    WritePrecision,
-} from 'src/api'
+  TelegrafPluginInputCpu,
+  TelegrafPluginInputDisk,
+  TelegrafPluginInputDiskio,
+  TelegrafPluginInputDocker,
+  TelegrafPluginInputFile,
+  TelegrafPluginInputKernel,
+  TelegrafPluginInputKubernetes,
+  TelegrafPluginInputLogParser,
+  TelegrafPluginInputMem,
+  TelegrafPluginInputNet,
+  TelegrafPluginInputNetResponse,
+  TelegrafPluginInputNginx,
+  TelegrafPluginInputProcesses,
+  TelegrafPluginInputProcstat,
+  TelegrafPluginInputPrometheus,
+  TelegrafPluginInputRedis,
+  TelegrafPluginInputSyslog,
+  TelegrafPluginInputSwap,
+  TelegrafPluginInputSystem,
+  TelegrafPluginInputTail,
+  TelegrafPluginOutputFile,
+  TelegrafPluginOutputInfluxDBV2,
+  TelegrafPluginInputDockerConfig,
+  TelegrafPluginInputFileConfig,
+  TelegrafPluginInputKubernetesConfig,
+  TelegrafPluginInputLogParserConfig,
+  TelegrafPluginInputProcstatConfig,
+  TelegrafPluginInputPrometheusConfig,
+  TelegrafPluginInputRedisConfig,
+  TelegrafPluginInputSyslogConfig,
+  TelegrafPluginOutputFileConfig,
+  TelegrafPluginOutputInfluxDBV2Config,
+} from '@influxdata/influx'
 import {RemoteDataState} from 'src/types'
+import {WritePrecision} from '@influxdata/influx'
 
 export enum DataLoaderStep {
+  'Configure',
+}
+
+export enum CollectorsStep {
   'Select',
+  'Configure',
+  'Verify',
+}
+
+export enum LineProtocolStep {
   'Configure',
   'Verify',
 }
@@ -46,6 +54,7 @@ export enum DataLoaderStep {
 interface ScraperTarget {
   bucket: string
   url: string
+  name: string
   id?: string
 }
 
@@ -59,6 +68,9 @@ export interface DataLoadersState {
   lineProtocolBody: string
   precision: WritePrecision
   scraperTarget: ScraperTarget
+  telegrafConfigName: string
+  telegrafConfigDescription: string
+  token: string
 }
 
 export enum ConfigurationState {
@@ -76,7 +88,6 @@ export enum DataLoaderType {
 }
 
 export type PluginConfig =
-  | TelegrafPluginConfig
   | TelegrafPluginInputDockerConfig
   | TelegrafPluginInputFileConfig
   | TelegrafPluginInputKubernetesConfig
@@ -192,4 +203,4 @@ export interface TelegrafPluginInfo {
   }
 }
 
-export type Substep = number | 'streaming'
+export type Substep = number | 'streaming' | 'config'

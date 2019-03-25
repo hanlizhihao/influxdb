@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.uber.org/zap"
+
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/mock"
 	"github.com/julienschmidt/httprouter"
@@ -79,7 +81,7 @@ func TestUserResourceMappingService_GetMembersHandler(t *testing.T) {
   "users": [
     {
       "links": {
-        "log": "/api/v2/users/0000000000000001/log",
+        "logs": "/api/v2/users/0000000000000001/logs",
         "self": "/api/v2/users/0000000000000001"
       },
       "id": "0000000000000001",
@@ -88,7 +90,7 @@ func TestUserResourceMappingService_GetMembersHandler(t *testing.T) {
     },
     {
       "links": {
-        "log": "/api/v2/users/0000000000000002/log",
+        "logs": "/api/v2/users/0000000000000002/logs",
         "self": "/api/v2/users/0000000000000002"
       },
       "id": "0000000000000002",
@@ -143,7 +145,7 @@ func TestUserResourceMappingService_GetMembersHandler(t *testing.T) {
   "users": [
     {
       "links": {
-        "log": "/api/v2/users/0000000000000001/log",
+        "logs": "/api/v2/users/0000000000000001/logs",
         "self": "/api/v2/users/0000000000000001"
       },
       "id": "0000000000000001",
@@ -152,7 +154,7 @@ func TestUserResourceMappingService_GetMembersHandler(t *testing.T) {
     },
     {
       "links": {
-        "log": "/api/v2/users/0000000000000002/log",
+        "logs": "/api/v2/users/0000000000000002/logs",
         "self": "/api/v2/users/0000000000000002"
       },
       "id": "0000000000000002",
@@ -190,7 +192,14 @@ func TestUserResourceMappingService_GetMembersHandler(t *testing.T) {
 					}))
 
 				w := httptest.NewRecorder()
-				h := newGetMembersHandler(tt.fields.userResourceMappingService, tt.fields.userService, resourceType, tt.args.userType)
+				memberBackend := MemberBackend{
+					Logger:                     zap.NewNop().With(zap.String("handler", "member")),
+					ResourceType:               resourceType,
+					UserType:                   tt.args.userType,
+					UserResourceMappingService: tt.fields.userResourceMappingService,
+					UserService:                tt.fields.userService,
+				}
+				h := newGetMembersHandler(memberBackend)
 				h.ServeHTTP(w, r)
 
 				res := w.Result()
@@ -261,7 +270,7 @@ func TestUserResourceMappingService_PostMembersHandler(t *testing.T) {
 				body: `
 {
 	"links": {
-		"log": "/api/v2/users/0000000000000001/log",
+		"logs": "/api/v2/users/0000000000000001/logs",
 		"self": "/api/v2/users/0000000000000001"
 	},
 	"id": "0000000000000001",
@@ -299,7 +308,7 @@ func TestUserResourceMappingService_PostMembersHandler(t *testing.T) {
 				body: `
 {
 	"links": {
-		"log": "/api/v2/users/0000000000000002/log",
+		"logs": "/api/v2/users/0000000000000002/logs",
 		"self": "/api/v2/users/0000000000000002"
 	},
 	"id": "0000000000000002",
@@ -340,7 +349,14 @@ func TestUserResourceMappingService_PostMembersHandler(t *testing.T) {
 					}))
 
 				w := httptest.NewRecorder()
-				h := newPostMemberHandler(tt.fields.userResourceMappingService, tt.fields.userService, resourceType, tt.args.userType)
+				memberBackend := MemberBackend{
+					Logger:                     zap.NewNop().With(zap.String("handler", "member")),
+					ResourceType:               resourceType,
+					UserType:                   tt.args.userType,
+					UserResourceMappingService: tt.fields.userResourceMappingService,
+					UserService:                tt.fields.userService,
+				}
+				h := newPostMemberHandler(memberBackend)
 				h.ServeHTTP(w, r)
 
 				res := w.Result()

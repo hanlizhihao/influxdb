@@ -9,6 +9,7 @@ import (
 	"github.com/gogo/protobuf/types"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/execute"
+	"github.com/influxdata/flux/memory"
 	"github.com/influxdata/flux/values"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/query/stdlib/influxdata/influxdb"
@@ -20,6 +21,7 @@ type storageTable interface {
 	flux.Table
 	Close()
 	Cancel()
+	Statistics() cursors.CursorStats
 }
 
 type storeReader struct {
@@ -30,7 +32,7 @@ func NewReader(s Store) influxdb.Reader {
 	return &storeReader{s: s}
 }
 
-func (r *storeReader) Read(ctx context.Context, rs influxdb.ReadSpec, start, stop execute.Time) (flux.TableIterator, error) {
+func (r *storeReader) Read(ctx context.Context, rs influxdb.ReadSpec, start, stop execute.Time, alloc *memory.Allocator) (influxdb.TableIterator, error) {
 	var predicate *datatypes.Predicate
 	if rs.Predicate != nil {
 		p, err := toStoragePredicate(rs.Predicate)
@@ -46,6 +48,7 @@ func (r *storeReader) Read(ctx context.Context, rs influxdb.ReadSpec, start, sto
 		s:         r.s,
 		readSpec:  rs,
 		predicate: predicate,
+		alloc:     alloc,
 	}, nil
 }
 
@@ -57,10 +60,11 @@ type tableIterator struct {
 	s         Store
 	readSpec  influxdb.ReadSpec
 	predicate *datatypes.Predicate
-	stats     flux.Statistics
+	stats     cursors.CursorStats
+	alloc     *memory.Allocator
 }
 
-func (bi *tableIterator) Statistics() flux.Statistics { return bi.stats }
+func (bi *tableIterator) Statistics() cursors.CursorStats { return bi.stats }
 
 func (bi *tableIterator) Do(f func(flux.Table) error) error {
 	src, err := bi.s.GetSource(bi.readSpec)
@@ -158,19 +162,19 @@ READ:
 		switch typedCur := cur.(type) {
 		case cursors.IntegerArrayCursor:
 			cols, defs := determineTableColsForSeries(rs.Tags(), flux.TInt)
-			table = newIntegerTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs)
+			table = newIntegerTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs, bi.alloc)
 		case cursors.FloatArrayCursor:
 			cols, defs := determineTableColsForSeries(rs.Tags(), flux.TFloat)
-			table = newFloatTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs)
+			table = newFloatTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs, bi.alloc)
 		case cursors.UnsignedArrayCursor:
 			cols, defs := determineTableColsForSeries(rs.Tags(), flux.TUInt)
-			table = newUnsignedTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs)
+			table = newUnsignedTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs, bi.alloc)
 		case cursors.BooleanArrayCursor:
 			cols, defs := determineTableColsForSeries(rs.Tags(), flux.TBool)
-			table = newBooleanTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs)
+			table = newBooleanTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs, bi.alloc)
 		case cursors.StringArrayCursor:
 			cols, defs := determineTableColsForSeries(rs.Tags(), flux.TString)
-			table = newStringTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs)
+			table = newStringTable(done, typedCur, bi.bounds, key, cols, rs.Tags(), defs, bi.alloc)
 		default:
 			panic(fmt.Sprintf("unreachable: %T", typedCur))
 		}
@@ -191,8 +195,10 @@ READ:
 			}
 		}
 
+		stats := table.Statistics()
+		bi.stats.ScannedValues += stats.ScannedValues
+		bi.stats.ScannedBytes += stats.ScannedBytes
 		table.Close()
-		bi.stats = bi.stats.Add(table.Statistics())
 		table = nil
 	}
 	return rs.Err()
@@ -220,7 +226,7 @@ READ:
 		key := groupKeyForSeries(rs.Tags(), &bi.readSpec, bi.bounds)
 		done := make(chan struct{})
 		cols, defs := determineTableColsForSeries(rs.Tags(), flux.TString)
-		table = newTableNoPoints(done, bi.bounds, key, cols, rs.Tags(), defs)
+		table = newTableNoPoints(done, bi.bounds, key, cols, rs.Tags(), defs, bi.alloc)
 
 		if err := f(table); err != nil {
 			table.Close()
@@ -282,19 +288,19 @@ READ:
 		switch typedCur := cur.(type) {
 		case cursors.IntegerArrayCursor:
 			cols, defs := determineTableColsForGroup(gc.Keys(), flux.TInt)
-			table = newIntegerGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs)
+			table = newIntegerGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs, bi.alloc)
 		case cursors.FloatArrayCursor:
 			cols, defs := determineTableColsForGroup(gc.Keys(), flux.TFloat)
-			table = newFloatGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs)
+			table = newFloatGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs, bi.alloc)
 		case cursors.UnsignedArrayCursor:
 			cols, defs := determineTableColsForGroup(gc.Keys(), flux.TUInt)
-			table = newUnsignedGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs)
+			table = newUnsignedGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs, bi.alloc)
 		case cursors.BooleanArrayCursor:
 			cols, defs := determineTableColsForGroup(gc.Keys(), flux.TBool)
-			table = newBooleanGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs)
+			table = newBooleanGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs, bi.alloc)
 		case cursors.StringArrayCursor:
 			cols, defs := determineTableColsForGroup(gc.Keys(), flux.TString)
-			table = newStringGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs)
+			table = newStringGroupTable(done, gc, typedCur, bi.bounds, key, cols, gc.Tags(), defs, bi.alloc)
 		default:
 			panic(fmt.Sprintf("unreachable: %T", typedCur))
 		}
@@ -315,6 +321,9 @@ READ:
 			break READ
 		}
 
+		stats := table.Statistics()
+		bi.stats.ScannedValues += stats.ScannedValues
+		bi.stats.ScannedBytes += stats.ScannedBytes
 		table.Close()
 		table = nil
 
@@ -346,7 +355,7 @@ READ:
 		key := groupKeyForGroup(gc.PartitionKeyVals(), &bi.readSpec, bi.bounds)
 		done := make(chan struct{})
 		cols, defs := determineTableColsForGroup(gc.Keys(), flux.TString)
-		table = newGroupTableNoPoints(done, bi.bounds, key, cols, defs)
+		table = newGroupTableNoPoints(done, bi.bounds, key, cols, defs, bi.alloc)
 		gc.Close()
 		gc = nil
 

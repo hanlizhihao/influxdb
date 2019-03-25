@@ -1,0 +1,17 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`SideBarButton rendering renders! wee! 1`] = `
+<t
+  active={false}
+  color="secondary"
+  customClass="side-bar--button"
+  onClick={[MockFunction]}
+  shape="none"
+  size="sm"
+  status="default"
+  testID="button"
+  text="text"
+  titleText="titleText"
+  type="button"
+/>
+`;

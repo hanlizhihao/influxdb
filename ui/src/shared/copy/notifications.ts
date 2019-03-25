@@ -1,13 +1,14 @@
 // All copy for notifications should be stored here for easy editing
 // and ensuring stylistic consistency
 import {Notification} from 'src/types'
-import {FIVE_SECONDS, INFINITE, TEN_SECONDS} from 'src/shared/constants/index'
-import {QUICKSTART_SCRAPER_TARGET_URL} from 'src/onboarding/constants/pluginConfigs'
 
 type NotificationExcludingMessage = Pick<
   Notification,
   Exclude<keyof Notification, 'message'>
 >
+
+import {FIVE_SECONDS, TEN_SECONDS, INFINITE} from 'src/shared/constants/index'
+import {QUICKSTART_SCRAPER_TARGET_URL} from 'src/dataLoaders/constants/pluginConfigs'
 
 const defaultErrorNotification: NotificationExcludingMessage = {
   type: 'error',
@@ -98,10 +99,10 @@ export const SetupSuccess: Notification = {
   message: 'Initial user details have been successfully set',
 }
 
-export const SetupError: Notification = {
+export const SetupError = (message: string): Notification => ({
   ...defaultErrorNotification,
-  message: `Could not initial user at this time.`,
-}
+  message: `Could not set up admin user: ${message}`,
+})
 
 export const SetupNotAllowed: Notification = {
   ...defaultErrorNotification,
@@ -463,6 +464,18 @@ export const databaseNameAlreadyExists = (): Notification => ({
   message: 'A Database by this name already exists.',
 })
 
+//  Task Notifications
+//  ----------------------------------------------------------------------------
+export const addTaskLabelFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to add label to task',
+})
+
+export const removeTaskLabelFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to remove label from task',
+})
+
 //  Dashboard Notifications
 //  ----------------------------------------------------------------------------
 export const tempVarAlreadyExists = (tempVarName: string): Notification => ({
@@ -471,10 +484,10 @@ export const tempVarAlreadyExists = (tempVarName: string): Notification => ({
   message: `Variable '${tempVarName}' already exists. Please enter a new value.`,
 })
 
-export const dashboardNotFound = (dashboardID: string): Notification => ({
+export const dashboardGetFailed = (dashboardID: string): Notification => ({
   ...defaultErrorNotification,
   icon: 'dash-h',
-  message: `Dashboard ${dashboardID} could not be found`,
+  message: `Failed to load dashboard with id "${dashboardID}"`,
 })
 
 export const dashboardUpdateFailed = (): Notification => ({
@@ -514,19 +527,15 @@ export const dashboardSetDefaultFailed = (name: string) => ({
   message: `Failed to set ${name} to default dashboard.`,
 })
 
-export const dashboardImported = (name: string): Notification => ({
+export const dashboardImported = (): Notification => ({
   ...defaultSuccessNotification,
   icon: 'dash-h',
-  message: `Dashboard ${name} imported successfully.`,
+  message: `Dashboard imported successfully.`,
 })
 
-export const dashboardImportFailed = (
-  fileName: string,
-  errorMessage: string
-): Notification => ({
+export const dashboardImportFailed = (errorMessage: string): Notification => ({
   ...defaultErrorNotification,
-  duration: INFINITE,
-  message: `Failed to import Dashboard from file ${fileName}: ${errorMessage}.`,
+  message: `Failed to import Dashboard: ${errorMessage}.`,
 })
 
 export const dashboardDeleteFailed = (
@@ -552,6 +561,11 @@ export const cellAddFailed = (
 ): Notification => ({
   ...defaultErrorNotification,
   message: `Failed to add cell ${cellName + ' '}to dashboard ${dashboardName}`,
+})
+
+export const cellUpdateFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to update cell`,
 })
 
 export const cellDeleted = (): Notification => ({
@@ -596,6 +610,52 @@ export const invalidZoomedTimeRangeValueInURLQuery = (): Notification => ({
   ...defaultErrorNotification,
   icon: 'cube',
   message: `Invalid URL query value supplied for zoomed lower or zoomed upper time range.`,
+})
+
+export const getVariablesFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to fetch variables',
+})
+
+export const getVariableFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to fetch variable',
+})
+
+export const createVariableFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  icon: 'cube',
+  message: `Failed to create variable.`,
+})
+
+export const createVariableSuccess = (name: string): Notification => ({
+  ...defaultSuccessNotification,
+  icon: 'cube',
+  message: `Successfully created new variable ${name}.`,
+})
+
+export const deleteVariableFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  icon: 'cube',
+  message: `Failed to delete variable.`,
+})
+
+export const deleteVariableSuccess = (name: string): Notification => ({
+  ...defaultSuccessNotification,
+  icon: 'cube',
+  message: `Successfully deleted variable ${name}.`,
+})
+
+export const updateVariableFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  icon: 'cube',
+  message: `Failed to update variable.`,
+})
+
+export const updateVariableSuccess = (name: string): Notification => ({
+  ...defaultSuccessNotification,
+  icon: 'cube',
+  message: `Successfully updated variable ${name}.`,
 })
 
 //  Rule Builder Notifications
@@ -673,7 +733,7 @@ export const copyToClipboardSuccess = (
 ): Notification => ({
   ...defaultSuccessNotification,
   icon: 'dash-h',
-  message: `${title}'${text}' has been copied to clipboard.`,
+  message: `${title} '${text}' has been copied to clipboard.`,
 })
 
 export const copyToClipboardFailed = (
@@ -726,14 +786,118 @@ export const fluxTimeSeriesError = (message: string): Notification => ({
 })
 
 // Protos
-export const ProtoDashboardCreated = (configs: string[]): Notification => ({
+
+export const importSucceeded = (): Notification => ({
+  ...defaultSuccessNotification,
+  message: 'Import was successful',
+})
+
+export const importFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to import resource.`,
+})
+
+// Templates
+export const TelegrafDashboardCreated = (configs: string[]): Notification => ({
   ...defaultSuccessNotification,
   message: `Successfully created dashboards for telegraf plugin${
     configs.length > 1 ? 's' : ''
   }: ${configs.join(', ')}.`,
 })
 
-export const ProtoDashboardFailed = (): Notification => ({
+export const TelegrafDashboardFailed = (): Notification => ({
   ...defaultErrorNotification,
   message: `Could not create dashboards for one or more plugins`,
+})
+
+export const importTaskSucceeded = (): Notification => ({
+  ...defaultSuccessNotification,
+  message: `Successfully imported task.`,
+})
+
+export const importTaskFailed = (error: string): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to import task: ${error}`,
+})
+
+export const importDashboardSucceeded = (): Notification => ({
+  ...defaultSuccessNotification,
+  message: `Successfully imported dashboard.`,
+})
+
+export const importDashboardFailed = (error: string): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to import dashboard: ${error}`,
+})
+
+export const importTemplateSucceeded = (): Notification => ({
+  ...defaultSuccessNotification,
+  message: `Successfully imported template.`,
+})
+
+export const importTemplateFailed = (error: string): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to import template: ${error}`,
+})
+
+export const createTemplateFailed = (error: string): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to export resource as template: ${error}`,
+})
+
+export const resourceSavedAsTemplate = (
+  resourceName: string
+): Notification => ({
+  ...defaultSuccessNotification,
+  message: `Successfully saved ${resourceName.toLowerCase()} as template.`,
+})
+
+export const saveResourceAsTemplateFailed = (
+  resourceName: string,
+  error: string
+): Notification => ({
+  ...defaultErrorNotification,
+  message: `Failed to save ${resourceName.toLowerCase()} as template: ${error}`,
+})
+
+// Labels
+export const getLabelsFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to fetch labels',
+})
+
+export const createLabelFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to create label',
+})
+
+export const updateLabelFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to update label',
+})
+
+export const deleteLabelFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to delete label',
+})
+
+// Buckets
+export const getBucketsFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to fetch buckets',
+})
+
+export const createBucketFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to create bucket',
+})
+
+export const updateBucketFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to update bucket',
+})
+
+export const deleteBucketFailed = (): Notification => ({
+  ...defaultErrorNotification,
+  message: 'Failed to delete bucket',
 })

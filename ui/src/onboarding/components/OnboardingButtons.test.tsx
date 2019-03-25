@@ -3,13 +3,13 @@ import React from 'react'
 import {mount} from 'enzyme'
 // Components
 import OnboardingButtons from 'src/onboarding/components/OnboardingButtons'
-import {ButtonType} from 'src/clockface'
+import {ButtonType} from '@influxdata/clockface'
 
 const setup = (override = {}) => {
   const props = {
     onClickBack: jest.fn(),
-    nextButtonText: '',
-    backButtonText: '',
+    nextButtonText: 'next',
+    backButtonText: 'back',
     ...override,
   }
 
@@ -31,8 +31,8 @@ describe('Onboarding.Components.OnboardingButtons', () => {
         onClickBack,
       })
 
-      const nextButton = wrapper.find('[data-test="next"]')
-      const backButton = wrapper.find('[data-test="back"]')
+      const nextButton = wrapper.find('[data-testid="next"]')
+      const backButton = wrapper.find('[data-testid="back"]')
 
       backButton.simulate('click')
 
@@ -52,7 +52,7 @@ describe('Onboarding.Components.OnboardingButtons', () => {
           onClickSkip,
         })
 
-        const skipButton = wrapper.find('[data-test="skip"]')
+        const skipButton = wrapper.find('[data-testid="skip"]')
         skipButton.simulate('click')
 
         expect(skipButton.exists()).toBe(true)

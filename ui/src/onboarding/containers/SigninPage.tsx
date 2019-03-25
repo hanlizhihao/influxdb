@@ -1,22 +1,37 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
-// apis
-import {getSetupStatus} from 'src/onboarding/apis'
+import {connect} from 'react-redux'
+import _ from 'lodash'
+
+// APIs
+import {client} from 'src/utils/api'
+
+// Actions
+import {dismissAllNotifications} from 'src/shared/actions/notifications'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import SplashPage from 'src/shared/components/splash_page/SplashPage'
 import SigninForm from 'src/onboarding/components/SigninForm'
-import {Spinner} from 'src/clockface'
+import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
 import {RemoteDataState} from 'src/types'
-import Notifications from 'src/shared/components/notifications/Notifications'
+import VersionInfo from 'src/shared/components/VersionInfo'
+
+// Constants
+import {CLOUD, CLOUD_SIGNIN_PATHNAME} from 'src/shared/constants'
 
 interface State {
   status: RemoteDataState
 }
 
+interface DispatchProps {
+  dismissAllNotifications: typeof dismissAllNotifications
+}
+
+type Props = WithRouterProps & DispatchProps
 @ErrorHandling
-class SigninPage extends PureComponent<WithRouterProps, State> {
+class SigninPage extends PureComponent<Props, State> {
   constructor(props) {
     super(props)
 
@@ -25,29 +40,45 @@ class SigninPage extends PureComponent<WithRouterProps, State> {
     }
   }
   public async componentDidMount() {
-    const isSetupAllowed = await getSetupStatus()
+    const {allowed} = await client.setup.status()
 
-    if (isSetupAllowed) {
+    if (allowed) {
       this.props.router.push('/onboarding/0')
+    } else if (CLOUD) {
+      window.location.pathname = CLOUD_SIGNIN_PATHNAME
+      return
     }
 
     this.setState({status: RemoteDataState.Done})
   }
 
+  componentWillUnmount() {
+    this.props.dismissAllNotifications()
+  }
+
   public render() {
     return (
-      <Spinner loading={this.state.status}>
-        <Notifications inPresentationMode={true} />
+      <SpinnerContainer
+        loading={this.state.status}
+        spinnerComponent={<TechnoSpinner />}
+      >
         <SplashPage panelWidthPixels={300}>
           <SplashPage.Panel>
             <SplashPage.Logo />
             <SplashPage.Header title="InfluxData" />
             <SigninForm />
           </SplashPage.Panel>
+          <VersionInfo widthPixels={300} />
         </SplashPage>
-      </Spinner>
+      </SpinnerContainer>
     )
   }
 }
 
-export default withRouter(SigninPage)
+const mdtp: DispatchProps = {
+  dismissAllNotifications,
+}
+export default connect(
+  null,
+  mdtp
+)(withRouter(SigninPage))

@@ -6,9 +6,11 @@ import (
 
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/control"
-	platform "github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/query"
 	"github.com/prometheus/client_golang/prometheus"
+
+	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/kit/tracing"
+	"github.com/influxdata/influxdb/query"
 )
 
 // orgLabel is the metric label to use in the controller
@@ -28,6 +30,9 @@ func New(config control.Config) *Controller {
 
 // Query satisfies the AsyncQueryService while ensuring the request is propagated on the context.
 func (c *Controller) Query(ctx context.Context, req *query.Request) (flux.Query, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	// Set the request on the context so platform specific Flux operations can retrieve it later.
 	ctx = query.ContextWithRequest(ctx, req)
 	// Set the org label value for controller metrics

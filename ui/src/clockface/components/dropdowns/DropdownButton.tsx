@@ -1,8 +1,16 @@
 // Libraries
 import React, {Component, MouseEvent} from 'react'
 import classnames from 'classnames'
+
 // Types
-import {ButtonType, ComponentColor, ComponentSize, ComponentStatus, DropdownChild, IconFont,} from 'src/clockface/types'
+import {
+  ComponentStatus,
+  ComponentColor,
+  ComponentSize,
+  IconFont,
+  DropdownChild,
+  ButtonType,
+} from '@influxdata/clockface'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
@@ -15,6 +23,7 @@ interface Props {
   size?: ComponentSize
   icon?: IconFont
   title?: string
+  testID: string
 }
 
 @ErrorHandling
@@ -27,7 +36,7 @@ class DropdownButton extends Component<Props> {
   }
 
   public render() {
-    const {onClick, children, title} = this.props
+    const {onClick, children, title, testID} = this.props
     return (
       <button
         className={this.classname}
@@ -35,22 +44,13 @@ class DropdownButton extends Component<Props> {
         disabled={this.isDisabled}
         title={title}
         type={ButtonType.Button}
+        data-testid={testID}
       >
         {this.icon}
         <span className="dropdown--selected">{children}</span>
-        {this.caret}
+        <span className="dropdown--caret icon caret-down" />
       </button>
     )
-  }
-
-  private get caret(): JSX.Element {
-    const {active} = this.props
-
-    if (active) {
-      return <span className="dropdown--caret icon caret-up" />
-    }
-
-    return <span className="dropdown--caret icon caret-down" />
   }
 
   private get isDisabled(): boolean {

@@ -108,8 +108,7 @@ func TestService_handleGetLabels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewLabelHandler()
-			h.LabelService = tt.fields.LabelService
+			h := NewLabelHandler(tt.fields.LabelService)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -201,7 +200,7 @@ func TestService_handleGetLabel(t *testing.T) {
 					FindLabelByIDFn: func(ctx context.Context, id platform.ID) (*platform.Label, error) {
 						return nil, &platform.Error{
 							Code: platform.ENotFound,
-							Msg:  "label not found",
+							Err:  platform.ErrLabelNotFound,
 						}
 					},
 				},
@@ -217,8 +216,7 @@ func TestService_handleGetLabel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewLabelHandler()
-			h.LabelService = tt.fields.LabelService
+			h := NewLabelHandler(tt.fields.LabelService)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -284,7 +282,8 @@ func TestService_handlePostLabel(t *testing.T) {
 			},
 			args: args{
 				label: &platform.Label{
-					Name: "mylabel",
+					Name:           "mylabel",
+					OrganizationID: platformtesting.MustIDBase16("020f755c3c082008"),
 				},
 			},
 			wants: wants{
@@ -297,7 +296,8 @@ func TestService_handlePostLabel(t *testing.T) {
   },
   "label": {
     "id": "020f755c3c082000",
-    "name": "mylabel"
+    "name": "mylabel",
+		"orgID": "020f755c3c082008"
   }
 }
 `,
@@ -307,8 +307,7 @@ func TestService_handlePostLabel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewLabelHandler()
-			h.LabelService = tt.fields.LabelService
+			h := NewLabelHandler(tt.fields.LabelService)
 
 			l, err := json.Marshal(tt.args.label)
 			if err != nil {
@@ -383,7 +382,7 @@ func TestService_handleDeleteLabel(t *testing.T) {
 					DeleteLabelFn: func(ctx context.Context, id platform.ID) error {
 						return &platform.Error{
 							Code: platform.ENotFound,
-							Msg:  "label not found",
+							Err:  platform.ErrLabelNotFound,
 						}
 					},
 				},
@@ -399,8 +398,7 @@ func TestService_handleDeleteLabel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewLabelHandler()
-			h.LabelService = tt.fields.LabelService
+			h := NewLabelHandler(tt.fields.LabelService)
 
 			r := httptest.NewRequest("GET", "http://any.url", nil)
 
@@ -516,7 +514,7 @@ func TestService_handlePatchLabel(t *testing.T) {
 					UpdateLabelFn: func(ctx context.Context, id platform.ID, upd platform.LabelUpdate) (*platform.Label, error) {
 						return nil, &platform.Error{
 							Code: platform.ENotFound,
-							Msg:  "label not found",
+							Err:  platform.ErrLabelNotFound,
 						}
 					},
 				},
@@ -535,8 +533,7 @@ func TestService_handlePatchLabel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := NewLabelHandler()
-			h.LabelService = tt.fields.LabelService
+			h := NewLabelHandler(tt.fields.LabelService)
 
 			upd := platform.LabelUpdate{}
 			if len(tt.args.properties) > 0 {

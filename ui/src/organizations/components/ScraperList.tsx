@@ -4,12 +4,13 @@ import React, {PureComponent} from 'react'
 import {IndexList} from 'src/clockface'
 import ScraperRow from 'src/organizations/components/ScraperRow'
 // Types
-import {ScraperTargetResponse} from 'src/api'
+import {ScraperTargetResponse} from '@influxdata/influx'
 
 interface Props {
   scrapers: ScraperTargetResponse[]
   emptyState: JSX.Element
   onDeleteScraper: (scraper) => void
+  onUpdateScraper: (scraper: ScraperTargetResponse) => void
 }
 
 export default class ScraperList extends PureComponent<Props> {
@@ -20,10 +21,12 @@ export default class ScraperList extends PureComponent<Props> {
       <>
         <IndexList>
           <IndexList.Header>
-            <IndexList.HeaderCell columnName="URL" width="50%" />
-            <IndexList.HeaderCell columnName="Bucket" width="50%" />
+            <IndexList.HeaderCell columnName="Name" width="50%" />
+            <IndexList.HeaderCell columnName="Target URL" width="20%" />
+            <IndexList.HeaderCell columnName="Bucket" width="15%" />
+            <IndexList.HeaderCell columnName="" width="15%" />
           </IndexList.Header>
-          <IndexList.Body columnCount={3} emptyState={emptyState}>
+          <IndexList.Body columnCount={4} emptyState={emptyState}>
             {this.scrapersList}
           </IndexList.Body>
         </IndexList>
@@ -32,7 +35,7 @@ export default class ScraperList extends PureComponent<Props> {
   }
 
   public get scrapersList(): JSX.Element[] {
-    const {scrapers, onDeleteScraper} = this.props
+    const {scrapers, onDeleteScraper, onUpdateScraper} = this.props
 
     if (scrapers !== undefined) {
       return scrapers.map(scraper => (
@@ -40,6 +43,7 @@ export default class ScraperList extends PureComponent<Props> {
           key={scraper.id}
           scraper={scraper}
           onDeleteScraper={onDeleteScraper}
+          onUpdateScraper={onUpdateScraper}
         />
       ))
     }

@@ -1,9 +1,7 @@
 import React, {PureComponent} from 'react'
 
 import {Page} from 'src/pageLayout'
-import {Button, ComponentColor, ComponentStatus} from 'src/clockface'
-
-import 'src/tasks/components/TasksPage.scss'
+import {ComponentColor, Button, ComponentStatus} from '@influxdata/clockface'
 
 interface Props {
   title: string

@@ -1,19 +1,25 @@
 // Libraries
 import {Dispatch} from 'redux'
-// APIs
-import {createDashFromProto as createDashFromProtoAJAX, getProtos as getProtosAJAX,} from 'src/protos/apis/'
+
+import {client} from 'src/utils/api'
+
 // Utils
-import {addDashboardIDToCells} from 'src/dashboards/apis/v2/'
-import {addLabelDefaults} from 'src/shared/utils/labels'
+import {addDashboardIDToCells} from 'src/dashboards/apis/'
+
 // Actions
-import {loadDashboard} from 'src/dashboards/actions/v2/'
+import {loadDashboard} from 'src/dashboards/actions/'
 import {notify} from 'src/shared/actions/notifications'
+
 // Types
-import {Dashboard, Proto} from 'src/api'
-import {GetState} from 'src/types/v2'
+import {Proto} from '@influxdata/influx'
+import {GetState, Dashboard} from 'src/types/v2'
 import {ConfigurationState} from 'src/types/v2/dataLoaders'
+
 // Const
-import {ProtoDashboardCreated, ProtoDashboardFailed,} from 'src/shared/copy/notifications'
+import {
+  TelegrafDashboardFailed,
+  TelegrafDashboardCreated,
+} from 'src/shared/copy/notifications'
 
 export enum ActionTypes {
   LoadProto = 'LOAD_PROTO',
@@ -35,7 +41,7 @@ export const loadProto = (proto: Proto): LoadProtoAction => ({
 
 export const getProtos = () => async (dispatch: Dispatch<Action>) => {
   try {
-    const {protos} = await getProtosAJAX()
+    const protos = await client.protos.getAll()
 
     protos.forEach(p => {
       dispatch(loadProto(p))
@@ -50,12 +56,11 @@ export const createDashFromProto = (
   orgID: string
 ) => async dispatch => {
   try {
-    const {dashboards} = await createDashFromProtoAJAX(protoID, orgID)
+    const dashboards = await client.dashboards.createFromProto(protoID, orgID)
 
     dashboards.forEach((d: Dashboard) => {
       const updatedDashboard = {
         ...d,
-        labels: d.labels.map(addLabelDefaults),
         cells: addDashboardIDToCells(d.cells, d.id),
       }
       dispatch(loadDashboard(updatedDashboard))
@@ -91,10 +96,10 @@ export const createDashboardsForPlugins = () => async (
     })
 
     if (plugins.length) {
-      dispatch(notify(ProtoDashboardCreated(plugins)))
+      dispatch(notify(TelegrafDashboardCreated(plugins)))
     }
   } catch (err) {
     console.error(err)
-    dispatch(notify(ProtoDashboardFailed()))
+    dispatch(notify(TelegrafDashboardFailed()))
   }
 }

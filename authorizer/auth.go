@@ -121,17 +121,26 @@ func (s *AuthorizationService) CreateAuthorization(ctx context.Context, a *influ
 		return err
 	}
 
-	for _, p := range a.Permissions {
+	if err := VerifyPermissions(ctx, a.Permissions); err != nil {
+		return err
+	}
+
+	return s.s.CreateAuthorization(ctx, a)
+}
+
+// VerifyPermission ensures that an authorization is allowed all of the appropriate permissions.
+func VerifyPermissions(ctx context.Context, ps []influxdb.Permission) error {
+	for _, p := range ps {
 		if err := IsAllowed(ctx, p); err != nil {
 			return &influxdb.Error{
 				Err:  err,
-				Msg:  fmt.Sprintf("cannot create authorization with permission %s", p),
+				Msg:  fmt.Sprintf("permission %s is not allowed", p),
 				Code: influxdb.EForbidden,
 			}
 		}
 	}
 
-	return s.s.CreateAuthorization(ctx, a)
+	return nil
 }
 
 // SetAuthorizationStatus checks to see if the authorizer on context has write access to the authorization provided.

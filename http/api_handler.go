@@ -24,22 +24,23 @@ type APIHandler struct {
 	ChronografHandler    *ChronografHandler
 	ScraperHandler       *ScraperHandler
 	SourceHandler        *SourceHandler
-	MacroHandler         *MacroHandler
+	VariableHandler      *VariableHandler
 	TaskHandler          *TaskHandler
 	TelegrafHandler      *TelegrafHandler
 	QueryHandler         *FluxHandler
 	ProtoHandler         *ProtoHandler
 	WriteHandler         *WriteHandler
+	DocumentHandler      *DocumentHandler
 	SetupHandler         *SetupHandler
 	SessionHandler       *SessionHandler
-	SwaggerHandler       http.HandlerFunc
+	SwaggerHandler       http.Handler
 }
 
 // APIBackend is all services and associated parameters required to construct
 // an APIHandler.
 type APIBackend struct {
-	DeveloperMode bool
-	Logger        *zap.Logger
+	AssetsPath string // if empty then assets are served from bindata.
+	Logger     *zap.Logger
 
 	NewBucketService func(*influxdb.Source) (influxdb.BucketService, error)
 	NewQueryService  func(*influxdb.Source) (query.ProxyQueryService, error)
@@ -58,10 +59,11 @@ type APIBackend struct {
 	UserOperationLogService         influxdb.UserOperationLogService
 	OrganizationOperationLogService influxdb.OrganizationOperationLogService
 	SourceService                   influxdb.SourceService
-	MacroService                    influxdb.MacroService
-	BasicAuthService                influxdb.BasicAuthService
+	VariableService                 influxdb.VariableService
+	PasswordsService                influxdb.PasswordsService
 	OnboardingService               influxdb.OnboardingService
-	ProxyQueryService               query.ProxyQueryService
+	InfluxQLService                 query.ProxyQueryService
+	FluxService                     query.ProxyQueryService
 	TaskService                     influxdb.TaskService
 	TelegrafService                 influxdb.TelegrafConfigStore
 	ScraperTargetStoreService       influxdb.ScraperTargetStoreService
@@ -70,91 +72,77 @@ type APIBackend struct {
 	ChronografService               *server.Service
 	ProtoService                    influxdb.ProtoService
 	OrgLookupService                authorizer.OrganizationService
+	ViewService                     influxdb.ViewService
+	DocumentService                 influxdb.DocumentService
 }
 
 // NewAPIHandler constructs all api handlers beneath it and returns an APIHandler
 func NewAPIHandler(b *APIBackend) *APIHandler {
 	h := &APIHandler{}
 
-	sessionBackend := NewSessionBackend(b)
-	h.SessionHandler = NewSessionHandler(sessionBackend)
+	internalURM := b.UserResourceMappingService
 	b.UserResourceMappingService = authorizer.NewURMService(b.OrgLookupService, b.UserResourceMappingService)
 
-	h.BucketHandler = NewBucketHandler(b.UserResourceMappingService, b.LabelService, b.UserService)
-	h.BucketHandler.BucketService = authorizer.NewBucketService(b.BucketService)
-	h.BucketHandler.OrganizationService = b.OrganizationService
-	h.BucketHandler.BucketOperationLogService = b.BucketOperationLogService
+	documentBackend := NewDocumentBackend(b)
+	h.DocumentHandler = NewDocumentHandler(documentBackend)
 
-	h.LabelHandler = NewLabelHandler()
-	h.LabelHandler.LabelService = b.LabelService
+	sessionBackend := NewSessionBackend(b)
+	h.SessionHandler = NewSessionHandler(sessionBackend)
 
-	h.OrgHandler = NewOrgHandler(b.UserResourceMappingService, b.LabelService, b.UserService)
-	h.OrgHandler.OrganizationService = authorizer.NewOrgService(b.OrganizationService)
-	h.OrgHandler.OrganizationOperationLogService = b.OrganizationOperationLogService
-	h.OrgHandler.SecretService = b.SecretService
+	bucketBackend := NewBucketBackend(b)
+	bucketBackend.BucketService = authorizer.NewBucketService(b.BucketService)
+	h.BucketHandler = NewBucketHandler(bucketBackend)
 
-	h.UserHandler = NewUserHandler()
-	h.UserHandler.UserService = authorizer.NewUserService(b.UserService)
-	h.UserHandler.BasicAuthService = b.BasicAuthService
-	h.UserHandler.UserOperationLogService = b.UserOperationLogService
+	orgBackend := NewOrgBackend(b)
+	orgBackend.OrganizationService = authorizer.NewOrgService(b.OrganizationService)
+	h.OrgHandler = NewOrgHandler(orgBackend)
 
-	h.DashboardHandler = NewDashboardHandler(b.UserResourceMappingService, b.LabelService, b.UserService)
-	h.DashboardHandler.DashboardService = authorizer.NewDashboardService(b.DashboardService)
-	h.DashboardHandler.DashboardOperationLogService = b.DashboardOperationLogService
+	userBackend := NewUserBackend(b)
+	userBackend.UserService = authorizer.NewUserService(b.UserService)
+	h.UserHandler = NewUserHandler(userBackend)
 
-	h.MacroHandler = NewMacroHandler()
-	h.MacroHandler.MacroService = authorizer.NewMacroService(b.MacroService)
+	dashboardBackend := NewDashboardBackend(b)
+	dashboardBackend.DashboardService = authorizer.NewDashboardService(b.DashboardService)
+	h.DashboardHandler = NewDashboardHandler(dashboardBackend)
 
-	h.AuthorizationHandler = NewAuthorizationHandler(b.UserService)
-	h.AuthorizationHandler.OrganizationService = b.OrganizationService
-	h.AuthorizationHandler.AuthorizationService = authorizer.NewAuthorizationService(b.AuthorizationService)
-	h.AuthorizationHandler.LookupService = b.LookupService
-	h.AuthorizationHandler.Logger = b.Logger.With(zap.String("handler", "auth"))
+	variableBackend := NewVariableBackend(b)
+	variableBackend.VariableService = authorizer.NewVariableService(b.VariableService)
+	h.VariableHandler = NewVariableHandler(variableBackend)
 
-	h.ScraperHandler = NewScraperHandler()
-	h.ScraperHandler.ScraperStorageService = authorizer.NewScraperTargetStoreService(b.ScraperTargetStoreService)
-	h.ScraperHandler.BucketService = b.BucketService
-	h.ScraperHandler.OrganizationService = b.OrganizationService
-	h.ScraperHandler.Logger = b.Logger.With(zap.String("handler", "scraper"))
+	authorizationBackend := NewAuthorizationBackend(b)
+	authorizationBackend.AuthorizationService = authorizer.NewAuthorizationService(b.AuthorizationService)
+	h.AuthorizationHandler = NewAuthorizationHandler(authorizationBackend)
 
-	h.SourceHandler = NewSourceHandler()
-	h.SourceHandler.SourceService = authorizer.NewSourceService(b.SourceService)
-	h.SourceHandler.NewBucketService = b.NewBucketService
-	h.SourceHandler.NewQueryService = b.NewQueryService
+	scraperBackend := NewScraperBackend(b)
+	scraperBackend.ScraperStorageService = authorizer.NewScraperTargetStoreService(b.ScraperTargetStoreService, b.UserResourceMappingService)
+	h.ScraperHandler = NewScraperHandler(scraperBackend)
 
-	h.SetupHandler = NewSetupHandler()
-	h.SetupHandler.OnboardingService = b.OnboardingService
+	sourceBackend := NewSourceBackend(b)
+	sourceBackend.SourceService = authorizer.NewSourceService(b.SourceService)
+	sourceBackend.BucketService = authorizer.NewBucketService(b.BucketService)
+	h.SourceHandler = NewSourceHandler(sourceBackend)
 
-	h.TaskHandler = NewTaskHandler(b.UserResourceMappingService, b.LabelService, b.Logger, b.UserService)
-	h.TaskHandler.TaskService = b.TaskService
-	h.TaskHandler.AuthorizationService = b.AuthorizationService
-	h.TaskHandler.OrganizationService = b.OrganizationService
-	h.TaskHandler.UserResourceMappingService = b.UserResourceMappingService
+	setupBackend := NewSetupBackend(b)
+	h.SetupHandler = NewSetupHandler(setupBackend)
 
-	h.TelegrafHandler = NewTelegrafHandler(
-		b.Logger.With(zap.String("handler", "telegraf")),
-		b.UserResourceMappingService,
-		b.LabelService,
-		authorizer.NewTelegrafConfigService(b.TelegrafService, b.UserResourceMappingService),
-		b.UserService,
-		b.OrganizationService,
-	)
+	taskBackend := NewTaskBackend(b)
+	h.TaskHandler = NewTaskHandler(taskBackend)
+	h.TaskHandler.UserResourceMappingService = internalURM
 
-	h.WriteHandler = NewWriteHandler(b.PointsWriter)
-	h.WriteHandler.OrganizationService = b.OrganizationService
-	h.WriteHandler.BucketService = b.BucketService
-	h.WriteHandler.Logger = b.Logger.With(zap.String("handler", "write"))
+	telegrafBackend := NewTelegrafBackend(b)
+	telegrafBackend.TelegrafService = authorizer.NewTelegrafConfigService(b.TelegrafService, b.UserResourceMappingService)
+	h.TelegrafHandler = NewTelegrafHandler(telegrafBackend)
 
-	h.QueryHandler = NewFluxHandler()
-	h.QueryHandler.OrganizationService = b.OrganizationService
-	h.QueryHandler.Logger = b.Logger.With(zap.String("handler", "query"))
-	h.QueryHandler.ProxyQueryService = b.ProxyQueryService
+	writeBackend := NewWriteBackend(b)
+	h.WriteHandler = NewWriteHandler(writeBackend)
+
+	fluxBackend := NewFluxBackend(b)
+	h.QueryHandler = NewFluxHandler(fluxBackend)
 
 	h.ProtoHandler = NewProtoHandler(NewProtoBackend(b))
-
 	h.ChronografHandler = NewChronografHandler(b.ChronografService)
-
-	h.SwaggerHandler = SwaggerHandler()
+	h.SwaggerHandler = newSwaggerLoader(b.Logger.With(zap.String("service", "swagger-loader")))
+	h.LabelHandler = NewLabelHandler(authorizer.NewLabelService(b.LabelService))
 
 	return h
 }
@@ -168,11 +156,11 @@ var apiLinks = map[string]interface{}{
 	"external": map[string]string{
 		"statusFeed": "https://www.influxdata.com/feed/json",
 	},
-	"labels": "/api/v2/labels",
-	"macros": "/api/v2/macros",
-	"me":     "/api/v2/me",
-	"orgs":   "/api/v2/orgs",
-	"protos": "/api/v2/protos",
+	"labels":    "/api/v2/labels",
+	"variables": "/api/v2/variables",
+	"me":        "/api/v2/me",
+	"orgs":      "/api/v2/orgs",
+	"protos":    "/api/v2/protos",
 	"query": map[string]string{
 		"self":        "/api/v2/query",
 		"ast":         "/api/v2/query/ast",
@@ -293,13 +281,18 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.HasPrefix(r.URL.Path, "/api/v2/macros") {
-		h.MacroHandler.ServeHTTP(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api/v2/variables") {
+		h.VariableHandler.ServeHTTP(w, r)
 		return
 	}
 
 	if strings.HasPrefix(r.URL.Path, "/api/v2/protos") {
 		h.ProtoHandler.ServeHTTP(w, r)
+		return
+	}
+
+	if strings.HasPrefix(r.URL.Path, "/api/v2/documents") {
+		h.DocumentHandler.ServeHTTP(w, r)
 		return
 	}
 

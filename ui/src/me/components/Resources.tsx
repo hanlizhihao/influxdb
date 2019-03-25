@@ -1,24 +1,30 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {Link} from 'react-router'
+
 // Components
 import Support from 'src/me/components/Support'
 import LogoutButton from 'src/me/components/LogoutButton'
 import OrgsList from 'src/me/components/OrgsList'
 import DashboardsList from 'src/me/components/DashboardsList'
 import ResourceFetcher from 'src/shared/components/resource_fetcher'
-import {Panel, Spinner} from 'src/clockface'
+import {Panel} from 'src/clockface'
+import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+import VersionInfo from 'src/shared/components/VersionInfo'
+
 // APIs
-import {getDashboards, getOrganizations} from 'src/organizations/apis'
+import {getDashboards} from 'src/organizations/apis'
+import {client} from 'src/utils/api'
+
 // Types
 import {Dashboard, MeState} from 'src/types/v2'
-import {Organization} from 'src/api'
-
-const VERSION = process.env.npm_package_version
+import {Organization} from '@influxdata/influx'
 
 interface Props {
   me: MeState
 }
+
+const getOrganizations = () => client.organizations.getAll()
 
 class ResourceLists extends PureComponent<Props> {
   public render() {
@@ -44,9 +50,12 @@ class ResourceLists extends PureComponent<Props> {
           <Panel.Body>
             <ResourceFetcher<Organization[]> fetcher={getOrganizations}>
               {(orgs, loading) => (
-                <Spinner loading={loading}>
+                <SpinnerContainer
+                  loading={loading}
+                  spinnerComponent={<TechnoSpinner diameterPixels={50} />}
+                >
                   <OrgsList orgs={orgs} />
-                </Spinner>
+                </SpinnerContainer>
               )}
             </ResourceFetcher>
           </Panel.Body>
@@ -56,9 +65,12 @@ class ResourceLists extends PureComponent<Props> {
           <Panel.Body>
             <ResourceFetcher<Dashboard[]> fetcher={getDashboards}>
               {(dashboards, loading) => (
-                <Spinner loading={loading}>
+                <SpinnerContainer
+                  loading={loading}
+                  spinnerComponent={<TechnoSpinner diameterPixels={50} />}
+                >
                   <DashboardsList dashboards={dashboards} />
-                </Spinner>
+                </SpinnerContainer>
               )}
             </ResourceFetcher>
           </Panel.Body>
@@ -69,7 +81,7 @@ class ResourceLists extends PureComponent<Props> {
             <Support />
           </Panel.Body>
           <Panel.Footer>
-            <p>Version {VERSION}</p>
+            <VersionInfo />
           </Panel.Footer>
         </Panel>
       </>

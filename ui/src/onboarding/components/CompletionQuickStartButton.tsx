@@ -3,10 +3,10 @@ import React, {PureComponent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
 import _ from 'lodash'
 // Components
-import {Button, ComponentColor, ComponentSize} from 'src/clockface'
+import {Button, ComponentColor, ComponentSize} from '@influxdata/clockface'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 // Types
-import {Dashboard} from 'src/api'
+import {Dashboard} from '@influxdata/influx'
 
 interface OwnProps {
   dashboards: Dashboard[]

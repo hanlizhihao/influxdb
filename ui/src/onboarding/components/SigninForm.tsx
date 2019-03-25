@@ -1,18 +1,29 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
 import {connect} from 'react-redux'
-import {get} from 'lodash'
+import _, {get} from 'lodash'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
-import {Button, ButtonType, Columns, ComponentColor, ComponentSize, Form, Grid, Input, InputType,} from 'src/clockface'
+import {
+  Button,
+  ComponentColor,
+  ComponentSize,
+  ButtonType,
+} from '@influxdata/clockface'
+import {Input, InputType, Form, Grid, Columns} from 'src/clockface'
+
 // APIs
-import {signin} from 'src/onboarding/apis'
+import {client} from 'src/utils/api'
+
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
+
 // Constants
 import * as copy from 'src/shared/copy/notifications'
+
 // Types
 import {Links} from 'src/types/v2/links'
 import {Notification, NotificationFunc} from 'src/types'
@@ -45,6 +56,7 @@ class SigninForm extends PureComponent<Props, State> {
             <Grid.Column widthXS={Columns.Twelve}>
               <Form.Element label="Username">
                 <Input
+                  name="username"
                   value={username}
                   onChange={this.handleUsername}
                   size={ComponentSize.Medium}
@@ -55,6 +67,7 @@ class SigninForm extends PureComponent<Props, State> {
             <Grid.Column widthXS={Columns.Twelve}>
               <Form.Element label="Password">
                 <Input
+                  name="password"
                   value={password}
                   onChange={this.handlePassword}
                   size={ComponentSize.Medium}
@@ -92,7 +105,7 @@ class SigninForm extends PureComponent<Props, State> {
     const {username, password} = this.state
 
     try {
-      await signin({username, password})
+      await client.auth.signin(username, password)
       this.handleRedirect()
     } catch (error) {
       const message = get(error, 'response.data.msg', '')

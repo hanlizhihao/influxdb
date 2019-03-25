@@ -1,9 +1,16 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {connect} from 'react-redux'
+
 // Types
 import {MeState} from 'src/types/v2'
-import {Button, Columns, ComponentSize, ComponentStatus, Form, Grid, Input, Panel,} from 'src/clockface'
+import {
+  Button,
+  ComponentSize,
+  ComponentStatus,
+  Columns,
+} from '@influxdata/clockface'
+import {Form, Input, Panel, Grid} from 'src/clockface'
 
 interface StateProps {
   me: MeState
@@ -37,7 +44,7 @@ export class Settings extends PureComponent<StateProps, State> {
                   <Form.Element label="Username">
                     <Input
                       value={me.name}
-                      dataTest="nameInput"
+                      testID="nameInput"
                       titleText="Username"
                       size={ComponentSize.Small}
                       status={ComponentStatus.Disabled}

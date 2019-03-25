@@ -1,11 +1,10 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import _ from 'lodash'
+
 // Components
 import Tags from 'src/shared/components/Tags'
 import {ErrorHandling} from 'src/shared/decorators/errors'
-// Styles
-import 'src/shared/components/TagInput.scss'
 
 export interface Item {
   text?: string

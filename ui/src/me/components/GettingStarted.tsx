@@ -2,15 +2,15 @@
 import React, {PureComponent} from 'react'
 import {Link} from 'react-router'
 import {connect} from 'react-redux'
+
 // Components
 import GradientBorder from 'src/shared/components/cells/GradientBorder'
 import DashboardingGraphic from 'src/me/graphics/DashboardingGraphic'
 import ExploreGraphic from 'src/me/graphics/ExploreGraphic'
 import CollectorGraphic from 'src/me/graphics/CollectorGraphic'
+
 // Types
 import {Organization} from 'src/types/v2'
-// Styles
-import 'src/me/components/GettingStarted.scss'
 
 interface StateProps {
   orgs: Organization[]
@@ -61,10 +61,9 @@ class GettingStarted extends PureComponent<StateProps> {
 
   private get firstOrgCollectorLink(): string {
     const {orgs} = this.props
-
     const firstOrgID = orgs[0].id
 
-    return `/organizations/${firstOrgID}/collectors_tab`
+    return `/organizations/${firstOrgID}/telegrafs`
   }
 }
 

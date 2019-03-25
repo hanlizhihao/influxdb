@@ -3,6 +3,7 @@ package launcher_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -48,6 +49,104 @@ func TestLauncher_Setup(t *testing.T) {
 	}
 }
 
+// This is to mimic chronograf using cookies as sessions
+// rather than authorizations
+func TestLauncher_SetupWithUsers(t *testing.T) {
+	l := RunLauncherOrFail(t, ctx)
+	l.SetupOrFail(t)
+	defer l.ShutdownOrFail(t, ctx)
+
+	r, err := nethttp.NewRequest("POST", l.URL()+"/api/v2/signin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r.SetBasicAuth("USER", "PASSWORD")
+
+	resp, err := nethttp.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != nethttp.StatusNoContent {
+		t.Fatalf("unexpected status code: %d, body: %s, headers: %v", resp.StatusCode, body, resp.Header)
+	}
+
+	cookies := resp.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected 1 cookie but received %d", len(cookies))
+	}
+
+	user2 := &platform.User{
+		Name: "USER2",
+	}
+
+	b, _ := json.Marshal(user2)
+	r = l.NewHTTPRequestOrFail(t, "POST", "/api/v2/users", l.Auth.Token, string(b))
+
+	resp, err = nethttp.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != nethttp.StatusCreated {
+		t.Fatalf("unexpected status code: %d, body: %s, headers: %v", resp.StatusCode, body, resp.Header)
+	}
+
+	r, err = nethttp.NewRequest("GET", l.URL()+"/api/v2/users", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.AddCookie(cookies[0])
+
+	resp, err = nethttp.DefaultClient.Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != nethttp.StatusOK {
+		t.Fatalf("unexpected status code: %d, body: %s, headers: %v", resp.StatusCode, body, resp.Header)
+	}
+
+	exp := struct {
+		Users []platform.User `json:"users"`
+	}{}
+	err = json.Unmarshal(body, &exp)
+	if err != nil {
+		t.Fatalf("unexpected error unmarshaling user: %v", err)
+	}
+	if len(exp.Users) != 2 {
+		t.Fatalf("unexpected 2 users: %#+v", exp)
+	}
+}
+
 func TestLauncher_WriteAndQuery(t *testing.T) {
 	l := RunLauncherOrFail(t, ctx)
 	l.SetupOrFail(t)
@@ -74,16 +173,14 @@ func TestLauncher_WriteAndQuery(t *testing.T) {
 
 	// Query server to ensure write persists.
 	qs := `from(bucket:"BUCKET") |> range(start:2000-01-01T00:00:00Z,stop:2000-01-02T00:00:00Z)`
-	exp := `,result,table,_start,_stop,_time,_value,_field,_measurement,k` + "\r\n" +
-		`,result,table,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,f,m,v` + "\r\n\r\n"
+	exp := `,result,table,_start,_stop,_time,_value,_measurement,k,_field` + "\r\n" +
+		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,m,v,f` + "\r\n\r\n"
 
-	var buf bytes.Buffer
-	req := (http.QueryRequest{Query: qs, Org: l.Org}).WithDefaults()
-	if preq, err := req.ProxyRequest(); err != nil {
-		t.Fatal(err)
-	} else if _, err := l.FluxService().Query(ctx, &buf, preq); err != nil {
-		t.Fatal(err)
-	} else if diff := cmp.Diff(buf.String(), exp); diff != "" {
+	buf, err := http.SimpleQuery(l.URL(), qs, l.Org.Name, l.Auth.Token)
+	if err != nil {
+		t.Fatalf("unexpected error querying server: %v", err)
+	}
+	if diff := cmp.Diff(string(buf), exp); diff != "" {
 		t.Fatal(diff)
 	}
 }
@@ -114,16 +211,14 @@ func TestLauncher_BucketDelete(t *testing.T) {
 
 	// Query server to ensure write persists.
 	qs := `from(bucket:"BUCKET") |> range(start:2000-01-01T00:00:00Z,stop:2000-01-02T00:00:00Z)`
-	exp := `,result,table,_start,_stop,_time,_value,_field,_measurement,k` + "\r\n" +
-		`,result,table,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,f,m,v` + "\r\n\r\n"
+	exp := `,result,table,_start,_stop,_time,_value,_measurement,k,_field` + "\r\n" +
+		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,m,v,f` + "\r\n\r\n"
 
-	var buf bytes.Buffer
-	req := (http.QueryRequest{Query: qs, Org: l.Org}).WithDefaults()
-	if preq, err := req.ProxyRequest(); err != nil {
-		t.Fatal(err)
-	} else if _, err := l.FluxService().Query(ctx, &buf, preq); err != nil {
-		t.Fatal(err)
-	} else if diff := cmp.Diff(buf.String(), exp); diff != "" {
+	buf, err := http.SimpleQuery(l.URL(), qs, l.Org.Name, l.Auth.Token)
+	if err != nil {
+		t.Fatalf("unexpected error querying server: %v", err)
+	}
+	if diff := cmp.Diff(string(buf), exp); diff != "" {
 		t.Fatal(diff)
 	}
 
@@ -231,16 +326,12 @@ func (l *Launcher) ShutdownOrFail(tb testing.TB, ctx context.Context) {
 
 // SetupOrFail creates a new user, bucket, org, and auth token. Fail on error.
 func (l *Launcher) SetupOrFail(tb testing.TB) {
-	svc := &http.SetupService{Addr: l.URL()}
-	results, err := svc.Generate(ctx, &platform.OnboardingRequest{
+	results := l.OnBoardOrFail(tb, &platform.OnboardingRequest{
 		User:     "USER",
 		Password: "PASSWORD",
 		Org:      "ORG",
 		Bucket:   "BUCKET",
 	})
-	if err != nil {
-		tb.Fatal(err)
-	}
 
 	l.User = results.User
 	l.Org = results.Org
@@ -248,8 +339,37 @@ func (l *Launcher) SetupOrFail(tb testing.TB) {
 	l.Auth = results.Auth
 }
 
+// OnBoardOrFail attempts an on-boarding request or fails on error.
+// The on-boarding status is also reset to allow multiple user/org/buckets to be created.
+func (l *Launcher) OnBoardOrFail(tb testing.TB, req *platform.OnboardingRequest) *platform.OnboardingResults {
+	tb.Helper()
+	res, err := l.KeyValueService().Generate(context.Background(), req)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	err = l.KeyValueService().PutOnboardingStatus(context.Background(), false)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	return res
+}
+
 func (l *Launcher) FluxService() *http.FluxService {
 	return &http.FluxService{Addr: l.URL(), Token: l.Auth.Token}
+}
+
+func (l *Launcher) BucketService() *http.BucketService {
+	return &http.BucketService{Addr: l.URL(), Token: l.Auth.Token}
+}
+
+func (l *Launcher) AuthorizationService() *http.AuthorizationService {
+	return &http.AuthorizationService{Addr: l.URL(), Token: l.Auth.Token}
+}
+
+func (l *Launcher) TaskService() *http.TaskService {
+	return &http.TaskService{Addr: l.URL(), Token: l.Auth.Token}
 }
 
 // MustNewHTTPRequest returns a new nethttp.Request with base URL and auth attached. Fail on error.
@@ -260,5 +380,17 @@ func (l *Launcher) MustNewHTTPRequest(method, rawurl, body string) *nethttp.Requ
 	}
 
 	req.Header.Set("Authorization", "Token "+l.Auth.Token)
+	return req
+}
+
+// MustNewHTTPRequest returns a new nethttp.Request with base URL and auth attached. Fail on error.
+func (l *Launcher) NewHTTPRequestOrFail(tb testing.TB, method, rawurl, token string, body string) *nethttp.Request {
+	tb.Helper()
+	req, err := nethttp.NewRequest(method, l.URL()+rawurl, strings.NewReader(body))
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	req.Header.Set("Authorization", "Token "+token)
 	return req
 }

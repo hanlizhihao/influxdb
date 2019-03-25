@@ -14,7 +14,15 @@ import (
 	platformtesting "github.com/influxdata/influxdb/testing"
 )
 
-type CreateRunStoreFunc func(*testing.T) (backend.LogWriter, backend.LogReader)
+// MakeNewAuthorizationFunc is a function that creates a new authorization associated with a valid org and user.
+// The permissions on the authorization should be allowed to do everything (see influxdb.OperPermissions).
+type MakeNewAuthorizationFunc func(context.Context, *testing.T) *platform.Authorization
+
+// CreateRunStoreFunc returns a new LogWriter and LogReader.
+// If the writer and reader are associated with a backend that validates authorizations,
+// it must return a valid MakeNewAuthorizationFunc; otherwise the returned MakeNewAuthorizationFunc may be nil,
+// in which case the tests will use authorizations associated with a random org and user ID.
+type CreateRunStoreFunc func(*testing.T) (backend.LogWriter, backend.LogReader, MakeNewAuthorizationFunc)
 type DestroyRunStoreFunc func(*testing.T, backend.LogWriter, backend.LogReader)
 
 func NewRunStoreTest(name string, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) func(*testing.T) {
@@ -49,7 +57,7 @@ func NewRunStoreTest(name string, crf CreateRunStoreFunc, drf DestroyRunStoreFun
 }
 
 func updateRunState(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
-	writer, reader := crf(t)
+	writer, reader, makeAuthz := crf(t)
 	defer drf(t, writer, reader)
 
 	now := time.Now().UTC()
@@ -71,7 +79,8 @@ func updateRunState(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFun
 		RunScheduledFor: scheduledFor.Unix(),
 	}
 
-	ctx := pcontext.SetAuthorizer(context.Background(), makeNewAuthorization())
+	ctx := context.Background()
+	ctx = pcontext.SetAuthorizer(ctx, makeNewAuthorization(ctx, t, makeAuthz))
 
 	startAt := now.Add(-2 * time.Second)
 	if err := writer.UpdateRunState(ctx, rlb, startAt, backend.RunStarted); err != nil {
@@ -107,7 +116,7 @@ func updateRunState(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFun
 }
 
 func runLogTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
-	writer, reader := crf(t)
+	writer, reader, makeAuthz := crf(t)
 	defer drf(t, writer, reader)
 
 	task := &backend.StoreTask{
@@ -130,7 +139,8 @@ func runLogTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
 		RunScheduledFor: sf.Unix(),
 	}
 
-	ctx := pcontext.SetAuthorizer(context.Background(), makeNewAuthorization())
+	ctx := context.Background()
+	ctx = pcontext.SetAuthorizer(ctx, makeNewAuthorization(ctx, t, makeAuthz))
 
 	if err := writer.UpdateRunState(ctx, rlb, sa, backend.RunStarted); err != nil {
 		t.Fatal(err)
@@ -146,12 +156,11 @@ func runLogTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
 		t.Fatal(err)
 	}
 
-	run.Log = platform.Log(fmt.Sprintf(
-		"%s: first\n%s: second\n%s: third",
-		sa.Add(time.Second).Format(time.RFC3339Nano),
-		sa.Add(2*time.Second).Format(time.RFC3339Nano),
-		sa.Add(3*time.Second).Format(time.RFC3339Nano),
-	))
+	run.Log = []platform.Log{
+		platform.Log{Time: sa.Add(time.Second).Format(time.RFC3339Nano), Message: "first"},
+		platform.Log{Time: sa.Add(2 * time.Second).Format(time.RFC3339Nano), Message: "second"},
+		platform.Log{Time: sa.Add(3 * time.Second).Format(time.RFC3339Nano), Message: "third"},
+	}
 	returnedRun, err := reader.FindRunByID(ctx, task.Org, run.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +172,7 @@ func runLogTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
 }
 
 func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
-	writer, reader := crf(t)
+	writer, reader, makeAuthz := crf(t)
 	defer drf(t, writer, reader)
 
 	task := &backend.StoreTask{
@@ -171,10 +180,27 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 		Org: platformtesting.MustIDBase16("ab01ab01ab01ab05"),
 	}
 
-	ctx := pcontext.SetAuthorizer(context.Background(), makeNewAuthorization())
+	ctx := context.Background()
+	ctx = pcontext.SetAuthorizer(ctx, makeNewAuthorization(ctx, t, makeAuthz))
 
-	if _, err := reader.ListRuns(ctx, platform.RunFilter{Task: &task.ID}); err == nil {
-		t.Fatal("failed to error on bad id")
+	{
+		r, err := reader.ListRuns(ctx, task.ID, platform.RunFilter{Task: task.ID})
+		if err != nil {
+			// TODO(lh): We may get an error here in the future when the system is more aggressive at checking orgID's
+			t.Fatalf("got an error with bad orgID when we should have returned a empty list: %v", err)
+		}
+		if len(r) != 0 {
+			t.Fatalf("expected 0 runs, got: %d", len(r))
+		}
+	}
+	{
+		r, err := reader.ListRuns(ctx, task.Org, platform.RunFilter{Task: task.Org})
+		if err != nil {
+			t.Fatalf("got an error with bad taskID when we should have returned a empty list: %v", err)
+		}
+		if len(r) != 0 {
+			t.Fatalf("expected 0 runs, got: %d", len(r))
+		}
 	}
 
 	now := time.Now().UTC()
@@ -201,13 +227,21 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 		}
 	}
 
-	if _, err := reader.ListRuns(ctx, platform.RunFilter{}); err == nil {
-		t.Fatal("failed to error without any filter")
+	if _, err := reader.ListRuns(ctx, task.Org, platform.RunFilter{}); err == nil {
+		t.Fatal("failed to error with invalid task ID")
+	}
+	{
+		r, err := reader.ListRuns(ctx, 9999999, platform.RunFilter{Task: task.ID})
+		if err != nil {
+			t.Fatalf("got an error with a bad orgID when we should have returned a empty list: %v", err)
+		}
+		if len(r) != 0 {
+			t.Fatalf("expected 0 runs, got: %d", len(r))
+		}
 	}
 
-	listRuns, err := reader.ListRuns(ctx, platform.RunFilter{
-		Task:  &task.ID,
-		Org:   &task.Org,
+	listRuns, err := reader.ListRuns(ctx, task.Org, platform.RunFilter{
+		Task:  task.ID,
 		Limit: 2 * nRuns,
 	})
 	if err != nil {
@@ -219,9 +253,8 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 	}
 
 	const afterIDIdx = 20
-	listRuns, err = reader.ListRuns(ctx, platform.RunFilter{
-		Task:  &task.ID,
-		Org:   &task.Org,
+	listRuns, err = reader.ListRuns(ctx, task.Org, platform.RunFilter{
+		Task:  task.ID,
 		After: &runs[afterIDIdx].ID,
 		Limit: 2 * nRuns,
 	})
@@ -233,9 +266,8 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 		t.Fatalf("retrieved: %d, expected: %d", len(listRuns), len(runs)-(afterIDIdx+1))
 	}
 
-	listRuns, err = reader.ListRuns(ctx, platform.RunFilter{
-		Task:  &task.ID,
-		Org:   &task.Org,
+	listRuns, err = reader.ListRuns(ctx, task.Org, platform.RunFilter{
+		Task:  task.ID,
 		Limit: 30,
 	})
 	if err != nil {
@@ -248,9 +280,8 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 
 	const afterTimeIdx = 34
 	scheduledFor, _ := time.Parse(time.RFC3339, runs[afterTimeIdx].ScheduledFor)
-	listRuns, err = reader.ListRuns(ctx, platform.RunFilter{
-		Task:      &task.ID,
-		Org:       &task.Org,
+	listRuns, err = reader.ListRuns(ctx, task.Org, platform.RunFilter{
+		Task:      task.ID,
 		AfterTime: scheduledFor.Format(time.RFC3339),
 		Limit:     2 * nRuns,
 	})
@@ -264,9 +295,8 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 
 	const beforeTimeIdx = 34
 	scheduledFor, _ = time.Parse(time.RFC3339, runs[beforeTimeIdx].ScheduledFor)
-	listRuns, err = reader.ListRuns(ctx, platform.RunFilter{
-		Task:       &task.ID,
-		Org:        &task.Org,
+	listRuns, err = reader.ListRuns(ctx, task.Org, platform.RunFilter{
+		Task:       task.ID,
 		BeforeTime: scheduledFor.Add(time.Millisecond).Format(time.RFC3339),
 	})
 	if err != nil {
@@ -276,10 +306,41 @@ func listRunsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 	if len(listRuns) != beforeTimeIdx {
 		t.Fatalf("retrieved: %d, expected: %d", len(listRuns), beforeTimeIdx)
 	}
+
+	// add a run and now list again but this time with a requested at
+	scheduledFor = now.Add(time.Duration(-2*(nRuns-len(runs))) * time.Second)
+	run := platform.Run{
+		ID:           platform.ID(len(runs) + 1),
+		Status:       "started",
+		ScheduledFor: scheduledFor.Format(time.RFC3339),
+		RequestedAt:  scheduledFor.Format(time.RFC3339),
+	}
+	runs = append(runs, run)
+	rlb := backend.RunLogBase{
+		Task:            task,
+		RunID:           run.ID,
+		RunScheduledFor: scheduledFor.Unix(),
+		RequestedAt:     scheduledFor.Unix(),
+	}
+
+	if err := writer.UpdateRunState(ctx, rlb, scheduledFor.Add(time.Second), backend.RunStarted); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	listRuns, err = reader.ListRuns(ctx, task.Org, platform.RunFilter{
+		Task:  task.ID,
+		Limit: 2 * nRuns,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listRuns) != len(runs) {
+		t.Fatalf("retrieved: %d, expected: %d", len(listRuns), len(runs))
+	}
 }
 
 func findRunByIDTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
-	writer, reader := crf(t)
+	writer, reader, makeAuthz := crf(t)
 	defer drf(t, writer, reader)
 
 	if _, err := reader.FindRunByID(context.Background(), platform.InvalidID(), platform.InvalidID()); err == nil {
@@ -306,7 +367,8 @@ func findRunByIDTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFu
 		RunScheduledFor: sf.Unix(),
 	}
 
-	ctx := pcontext.SetAuthorizer(context.Background(), makeNewAuthorization())
+	ctx := context.Background()
+	ctx = pcontext.SetAuthorizer(ctx, makeNewAuthorization(ctx, t, makeAuthz))
 	if err := writer.UpdateRunState(ctx, rlb, sa, backend.RunStarted); err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +382,7 @@ func findRunByIDTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFu
 		t.Fatalf("expected:\n%#v, got: \n%#v", run, *returnedRun)
 	}
 
-	returnedRun.Log = "cows"
+	returnedRun.Log = []platform.Log{platform.Log{Message: "cows"}}
 
 	rr2, err := reader.FindRunByID(ctx, task.Org, run.ID)
 	if err != nil {
@@ -330,10 +392,15 @@ func findRunByIDTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFu
 	if reflect.DeepEqual(returnedRun, rr2) {
 		t.Fatalf("updateing returned run modified RunStore data")
 	}
+
+	_, err = reader.FindRunByID(ctx, task.Org, 0xccc)
+	if err != backend.ErrRunNotFound {
+		t.Fatalf("expected finding run with invalid ID to return %v, got %v", backend.ErrRunNotFound, err)
+	}
 }
 
 func listLogsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc) {
-	writer, reader := crf(t)
+	writer, reader, makeAuthz := crf(t)
 	defer drf(t, writer, reader)
 
 	task := &backend.StoreTask{
@@ -341,13 +408,18 @@ func listLogsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 		Org: platformtesting.MustIDBase16("ab01ab01ab01ab05"),
 	}
 
-	ctx := pcontext.SetAuthorizer(context.Background(), makeNewAuthorization())
+	ctx := context.Background()
+	ctx = pcontext.SetAuthorizer(ctx, makeNewAuthorization(ctx, t, makeAuthz))
 
-	if _, err := reader.ListLogs(ctx, platform.LogFilter{}); err == nil {
-		t.Fatal("failed to error with no filter")
+	if _, err := reader.ListLogs(ctx, task.Org, platform.LogFilter{}); err == nil {
+		t.Fatalf("expected error when task ID missing, but got nil")
 	}
-	if _, err := reader.ListLogs(ctx, platform.LogFilter{Run: &task.ID}); err == nil {
-		t.Fatal("failed to error with a non-run-ID")
+	r, err := reader.ListLogs(ctx, 9999999, platform.LogFilter{Task: task.ID})
+	if err != nil {
+		t.Fatalf("with bad org ID, expected no error: %v", err)
+	}
+	if len(r) != 0 {
+		t.Fatalf("with bad org id expected no runs, got: %d", len(r))
 	}
 
 	now := time.Now().UTC()
@@ -376,7 +448,7 @@ func listLogsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 	}
 
 	const targetRun = 4
-	logs, err := reader.ListLogs(ctx, platform.LogFilter{Run: &runs[targetRun].ID, Org: &task.Org})
+	logs, err := reader.ListLogs(ctx, task.Org, platform.LogFilter{Task: task.ID, Run: &runs[targetRun].ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,11 +457,14 @@ func listLogsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 	}
 
 	fmtTimelog := now.Add(time.Duration(targetRun-nRuns)*time.Second + 2*time.Millisecond).Format(time.RFC3339Nano)
-	if fmtTimelog+": log4" != string(logs[0]) {
-		t.Fatalf("expected: %q, got: %q", fmtTimelog+": log4", string(logs[0]))
+	if logs[0].Time != fmtTimelog {
+		t.Fatalf("expected: %q, got: %q", fmtTimelog, logs[0].Time)
+	}
+	if "log4" != logs[0].Message {
+		t.Fatalf("expected: %q, got: %q", "log4", logs[0].Message)
 	}
 
-	logs, err = reader.ListLogs(ctx, platform.LogFilter{Task: &task.ID, Org: &task.Org})
+	logs, err = reader.ListLogs(ctx, task.Org, platform.LogFilter{Task: task.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +474,11 @@ func listLogsTest(t *testing.T, crf CreateRunStoreFunc, drf DestroyRunStoreFunc)
 	}
 }
 
-func makeNewAuthorization() *platform.Authorization {
+func makeNewAuthorization(ctx context.Context, t *testing.T, makeAuthz MakeNewAuthorizationFunc) *platform.Authorization {
+	if makeAuthz != nil {
+		return makeAuthz(ctx, t)
+	}
+
 	return &platform.Authorization{
 		ID:          platformtesting.MustIDBase16("ab01ab01ab01ab01"),
 		UserID:      platformtesting.MustIDBase16("ab01ab01ab01ab01"),

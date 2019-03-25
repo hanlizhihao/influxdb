@@ -9,14 +9,37 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/julienschmidt/httprouter"
+	"go.uber.org/zap"
+
 	platform "github.com/influxdata/influxdb"
 	pcontext "github.com/influxdata/influxdb/context"
+	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/storage"
 	"github.com/influxdata/influxdb/tsdb"
-	"github.com/julienschmidt/httprouter"
-	"go.uber.org/zap"
 )
+
+// WriteBackend is all services and associated parameters required to construct
+// the WriteHandler.
+type WriteBackend struct {
+	Logger *zap.Logger
+
+	PointsWriter        storage.PointsWriter
+	BucketService       platform.BucketService
+	OrganizationService platform.OrganizationService
+}
+
+// NewWriteBackend returns a new instance of WriteBackend.
+func NewWriteBackend(b *APIBackend) *WriteBackend {
+	return &WriteBackend{
+		Logger: b.Logger.With(zap.String("handler", "write")),
+
+		PointsWriter:        b.PointsWriter,
+		BucketService:       b.BucketService,
+		OrganizationService: b.OrganizationService,
+	}
+}
 
 // WriteHandler receives line protocol and sends to a publish function.
 type WriteHandler struct {
@@ -37,11 +60,14 @@ const (
 )
 
 // NewWriteHandler creates a new handler at /api/v2/write to receive line protocol.
-func NewWriteHandler(writer storage.PointsWriter) *WriteHandler {
+func NewWriteHandler(b *WriteBackend) *WriteHandler {
 	h := &WriteHandler{
-		Router:       NewRouter(),
-		Logger:       zap.NewNop(),
-		PointsWriter: writer,
+		Router: NewRouter(),
+		Logger: b.Logger,
+
+		PointsWriter:        b.PointsWriter,
+		BucketService:       b.BucketService,
+		OrganizationService: b.OrganizationService,
 	}
 
 	h.HandlerFunc("POST", writePath, h.handleWrite)
@@ -49,6 +75,9 @@ func NewWriteHandler(writer storage.PointsWriter) *WriteHandler {
 }
 
 func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
+	span, r := tracing.ExtractFromHTTPRequest(r, "WriteHandler")
+	defer span.Finish()
+
 	ctx := r.Context()
 	defer r.Body.Close()
 
@@ -194,7 +223,7 @@ func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.PointsWriter.WritePoints(exploded); err != nil {
+	if err := h.PointsWriter.WritePoints(ctx, exploded); err != nil {
 		logger.Error("Error writing points", zap.Error(err))
 		EncodeError(ctx, &platform.Error{
 			Code: platform.EInternal,
@@ -303,7 +332,7 @@ func (s *WriteService) Write(ctx context.Context, orgID, bucketID platform.ID, r
 	}
 	defer resp.Body.Close()
 
-	return CheckError(resp, true)
+	return CheckError(resp)
 }
 
 func compressWithGzip(data io.Reader) (io.Reader, error) {

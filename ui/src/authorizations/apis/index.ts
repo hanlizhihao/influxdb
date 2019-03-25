@@ -1,15 +1,16 @@
-import {Authorization} from 'src/api'
-import {authorizationsAPI} from 'src/utils/api'
-import {AxiosResponse} from 'axios'
+import AJAX from 'src/utils/ajax'
 
-export const getAuthorizations = async (): Promise<Authorization[]> => {
-  const {data} = await authorizationsAPI.authorizationsGet()
-  return data.authorizations
-}
+export const createAuthorization = async authorization => {
+  try {
+    const {data} = await AJAX({
+      method: 'POST',
+      url: '/api/v2/authorizations',
+      data: authorization,
+    })
 
-export const deleteAuthorization = async (
-  authID: string
-): Promise<AxiosResponse> => {
-  const response = await authorizationsAPI.authorizationsAuthIDDelete(authID)
-  return response
+    return data
+  } catch (error) {
+    console.error(error)
+    throw error
+  }
 }

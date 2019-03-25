@@ -1,33 +1,33 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {getDeep} from 'src/utils/wrappers'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import {
-    Columns,
-    ComponentSize,
-    ComponentStatus,
-    Form,
-    Grid,
-    IconFont,
-    Input,
-    InputType,
-    QuestionMarkTooltip,
+  ComponentSize,
+  Input,
+  InputType,
+  Form,
+  Columns,
+  IconFont,
+  Grid,
+  ComponentStatus,
+  QuestionMarkTooltip,
 } from 'src/clockface'
 import OnboardingButtons from 'src/onboarding/components/OnboardingButtons'
 import FancyScrollbar from 'src/shared/components/fancy_scrollbar/FancyScrollbar'
+
 // Actions
 import {setupAdmin} from 'src/onboarding/actions'
-// Constants
-import * as copy from 'src/shared/copy/notifications'
+
 // Types
 import {StepStatus} from 'src/clockface/constants/wizard'
 import {OnboardingStepProps} from 'src/onboarding/containers/OnboardingWizard'
-import {SetupParams} from 'src/onboarding/apis'
+import {ISetupParams} from '@influxdata/influx'
 
-interface State extends SetupParams {
+interface State extends ISetupParams {
   confirmPassword: string
-  isAlreadySet: boolean
   isPassMismatched: boolean
 }
 
@@ -53,7 +53,6 @@ class AdminStep extends PureComponent<Props, State> {
       confirmPassword,
       org,
       bucket,
-      isAlreadySet: !!username && !!password && !!org && !!bucket,
       isPassMismatched: false,
     }
   }
@@ -193,6 +192,14 @@ class AdminStep extends PureComponent<Props, State> {
     )
   }
 
+  private get isAdminSet(): boolean {
+    const {stepStatuses, currentStepIndex} = this.props
+    if (stepStatuses[currentStepIndex] === StepStatus.Complete) {
+      return true
+    }
+    return false
+  }
+
   private handleUsername = (e: ChangeEvent<HTMLInputElement>): void => {
     const username = e.target.value
     this.setState({username})
@@ -269,8 +276,8 @@ class AdminStep extends PureComponent<Props, State> {
   }
 
   private get passwordStatus(): ComponentStatus {
-    const {isAlreadySet, isPassMismatched} = this.state
-    if (isAlreadySet) {
+    const {isPassMismatched} = this.state
+    if (this.isAdminSet) {
       return ComponentStatus.Disabled
     }
     if (isPassMismatched) {
@@ -280,16 +287,14 @@ class AdminStep extends PureComponent<Props, State> {
   }
 
   private get InputStatus(): ComponentStatus {
-    const {isAlreadySet} = this.state
-    if (isAlreadySet) {
+    if (this.isAdminSet) {
       return ComponentStatus.Disabled
     }
     return ComponentStatus.Default
   }
 
   private get InputIcon(): IconFont {
-    const {isAlreadySet} = this.state
-    if (isAlreadySet) {
+    if (this.isAdminSet) {
       return IconFont.Checkmark
     }
     return null
@@ -297,16 +302,15 @@ class AdminStep extends PureComponent<Props, State> {
 
   private handleNext = async () => {
     const {
-      onSetStepStatus,
-      currentStepIndex,
-      notify,
       onIncrementCurrentStepIndex,
       onSetupAdmin: onSetupAdmin,
+      onSetStepStatus,
+      currentStepIndex,
     } = this.props
 
-    const {username, password, org, bucket, isAlreadySet} = this.state
+    const {username, password, org, bucket} = this.state
 
-    if (isAlreadySet) {
+    if (this.isAdminSet) {
       onSetStepStatus(currentStepIndex, StepStatus.Complete)
       onIncrementCurrentStepIndex()
       return
@@ -319,13 +323,10 @@ class AdminStep extends PureComponent<Props, State> {
       bucket,
     }
 
-    try {
-      await onSetupAdmin(setupParams)
-    } catch (error) {
-      notify(copy.SetupError)
+    const isAdminSet = await onSetupAdmin(setupParams)
+    if (isAdminSet) {
+      onIncrementCurrentStepIndex()
     }
-    onSetStepStatus(currentStepIndex, StepStatus.Complete)
-    onIncrementCurrentStepIndex()
   }
 }
 

@@ -1,20 +1,28 @@
-import {ViewShape, ViewType} from 'src/types/v2'
-import {
-    DashboardQuery,
-    GaugeView,
-    InfluxLanguage,
-    LinePlusSingleStatView,
-    MarkdownView,
-    NewView,
-    QueryEditMode,
-    SingleStatView,
-    TableView,
-    ViewProperties,
-    XYView,
-    XYViewGeom,
-} from 'src/types/v2/dashboards'
-import {DEFAULT_GAUGE_COLORS, DEFAULT_THRESHOLDS_LIST_COLORS,} from 'src/shared/constants/thresholds'
+// Constants
+import {DEFAULT_LINE_COLORS} from 'src/shared/constants/graphColorPalettes'
 import {DEFAULT_CELL_NAME} from 'src/dashboards/constants/index'
+import {
+  DEFAULT_GAUGE_COLORS,
+  DEFAULT_THRESHOLDS_LIST_COLORS,
+} from 'src/shared/constants/thresholds'
+
+// Types
+import {ViewType, ViewShape} from 'src/types/v2'
+import {HistogramPosition} from 'src/minard'
+import {
+  XYView,
+  XYViewGeom,
+  HistogramView,
+  LinePlusSingleStatView,
+  SingleStatView,
+  TableView,
+  GaugeView,
+  MarkdownView,
+  NewView,
+  ViewProperties,
+  DashboardQuery,
+  QueryEditMode,
+} from 'src/types/v2/dashboards'
 
 function defaultView() {
   return {
@@ -24,9 +32,8 @@ function defaultView() {
 
 export function defaultViewQuery(): DashboardQuery {
   return {
+    name: '',
     text: '',
-    type: InfluxLanguage.Flux,
-    sourceID: '',
     editMode: QueryEditMode.Builder,
     builderConfig: {
       buckets: [],
@@ -111,6 +118,23 @@ const NEW_VIEW_CREATORS = {
       type: ViewType.XY,
       shape: ViewShape.ChronografV2,
       geom: XYViewGeom.Line,
+    },
+  }),
+  [ViewType.Histogram]: (): NewView<HistogramView> => ({
+    ...defaultView(),
+    properties: {
+      queries: [],
+      type: ViewType.Histogram,
+      shape: ViewShape.ChronografV2,
+      xColumn: '_value',
+      xDomain: null,
+      xAxisLabel: '',
+      fillColumns: null,
+      position: HistogramPosition.Stacked,
+      binCount: 30,
+      colors: DEFAULT_LINE_COLORS,
+      note: '',
+      showNoteWhenEmpty: false,
     },
   }),
   [ViewType.SingleStat]: (): NewView<SingleStatView> => ({

@@ -1,17 +1,23 @@
 // Libraries
-import React, {PureComponent, ReactElement} from 'react'
+import React, {ReactElement, PureComponent} from 'react'
 import {connect} from 'react-redux'
 import {withRouter, WithRouterProps} from 'react-router'
+
 // APIs
-import {getSetupStatus} from 'src/onboarding/apis'
+import {client} from 'src/utils/api'
+
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import OnboardingWizard from 'src/onboarding/containers/OnboardingWizard'
 import Notifications from 'src/shared/components/notifications/Notifications'
-import {Button, ComponentColor, ComponentSize, EmptyState, Spinner, WizardFullScreen,} from 'src/clockface'
+import {WizardFullScreen, EmptyState} from 'src/clockface'
+import {SpinnerContainer, TechnoSpinner, Button} from '@influxdata/clockface'
+
 // Types
+import {ComponentColor, ComponentSize} from '@influxdata/clockface'
 import {Notification, NotificationFunc, RemoteDataState} from 'src/types'
 import {Links} from 'src/types/v2/links'
 
@@ -54,8 +60,8 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
   public async componentDidMount() {
     this.setState({loading: RemoteDataState.Loading})
     try {
-      const canSetUp = await getSetupStatus()
-      if (!canSetUp) {
+      const {allowed} = await client.setup.status()
+      if (!allowed) {
         this.setState({isSetupComplete: true})
       }
       this.setState({loading: RemoteDataState.Done})
@@ -71,7 +77,10 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
 
     if (isSetupComplete) {
       return (
-        <Spinner loading={this.state.loading}>
+        <SpinnerContainer
+          loading={this.state.loading}
+          spinnerComponent={<TechnoSpinner />}
+        >
           <WizardFullScreen>
             <div className="wizard-contents">
               <div className="wizard-step--container">
@@ -89,12 +98,15 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
               </div>
             </div>
           </WizardFullScreen>
-        </Spinner>
+        </SpinnerContainer>
       )
     }
 
     return (
-      <Spinner loading={this.state.loading}>
+      <SpinnerContainer
+        loading={this.state.loading}
+        spinnerComponent={<TechnoSpinner />}
+      >
         <div className="chronograf-root">
           <Notifications inPresentationMode={true} />
           <OnboardingWizard
@@ -106,7 +118,7 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
             onCompleteSetup={this.handleCompleteSetup}
           />
         </div>
-      </Spinner>
+      </SpinnerContainer>
     )
   }
 

@@ -13,7 +13,7 @@ import {setSetupParams, setStepStatus, setupAdmin} from 'src/onboarding/actions'
 import {StepStatus} from 'src/clockface/constants/wizard'
 // Types
 import {Links} from 'src/types/v2/links'
-import {SetupParams} from 'src/onboarding/apis'
+import {ISetupParams} from '@influxdata/influx'
 import {Notification, NotificationFunc} from 'src/types'
 import {AppState} from 'src/types/v2'
 
@@ -27,8 +27,8 @@ export interface OnboardingStepProps {
   onSetSubstepIndex: (index: number, subStep: number | 'streaming') => void
   stepStatuses: StepStatus[]
   stepTitles: string[]
-  setupParams: SetupParams
-  handleSetSetupParams: (setupParams: SetupParams) => void
+  setupParams: ISetupParams
+  handleSetSetupParams: (setupParams: ISetupParams) => void
   notify: (message: Notification | NotificationFunc) => void
   onCompleteSetup: () => void
   onExit: () => void
@@ -55,7 +55,7 @@ interface DispatchProps {
 interface StateProps {
   links: Links
   stepStatuses: StepStatus[]
-  setupParams: SetupParams
+  setupParams: ISetupParams
   orgID: string
   bucketID: string
 }

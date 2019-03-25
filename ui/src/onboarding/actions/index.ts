@@ -1,10 +1,19 @@
+// Libraries
+import _ from 'lodash'
+
 // Constants
 import {StepStatus} from 'src/clockface/constants/wizard'
-import {SetupError, SetupSuccess} from 'src/shared/copy/notifications'
+import {SetupSuccess, SetupError} from 'src/shared/copy/notifications'
+import {systemTemplate} from 'src/organizations/constants/index'
+
 // Actions
 import {notify} from 'src/shared/actions/notifications'
+
+// APIs
+import {client} from 'src/utils/api'
+
 // Types
-import {setSetupParams as setSetupParamsAJAX, SetupParams, signin as signinAJAX,} from 'src/onboarding/apis'
+import {ISetupParams} from '@influxdata/influx'
 
 export type Action =
   | SetSetupParams
@@ -14,10 +23,10 @@ export type Action =
 
 interface SetSetupParams {
   type: 'SET_SETUP_PARAMS'
-  payload: {setupParams: SetupParams}
+  payload: {setupParams: ISetupParams}
 }
 
-export const setSetupParams = (setupParams: SetupParams): SetSetupParams => ({
+export const setSetupParams = (setupParams: ISetupParams): SetSetupParams => ({
   type: 'SET_SETUP_PARAMS',
   payload: {setupParams},
 })
@@ -58,24 +67,32 @@ export const setBucketID = (bucketID: string): SetBucketID => ({
   payload: {bucketID},
 })
 
-export const setupAdmin = (setupParams: SetupParams) => async dispatch => {
+export const setupAdmin = (params: ISetupParams) => async (
+  dispatch
+): Promise<boolean> => {
   try {
-    dispatch(setSetupParams(setupParams))
-    const onboardingResponse = await setSetupParamsAJAX(setupParams)
+    dispatch(setSetupParams(params))
+    const response = await client.setup.create(params)
 
-    const {id: orgID} = onboardingResponse.org
-    const {id: bucketID} = onboardingResponse.bucket
+    const {id: orgID} = response.org
+    const {id: bucketID} = response.bucket
 
     dispatch(setOrganizationID(orgID))
     dispatch(setBucketID(bucketID))
 
-    await signinAJAX({
-      username: setupParams.username,
-      password: setupParams.password,
-    })
+    const {username, password} = params
+
+    await client.auth.signin(username, password)
+
+    await client.templates.create({...systemTemplate(params.bucket), orgID})
+
     dispatch(notify(SetupSuccess))
+    dispatch(setStepStatus(1, StepStatus.Complete))
+    return true
   } catch (err) {
     console.error(err)
-    dispatch(notify(SetupError))
+    let message = _.get(err, 'response.data.message', '')
+    dispatch(notify(SetupError(message)))
+    dispatch(setStepStatus(1, StepStatus.Error))
   }
 }
