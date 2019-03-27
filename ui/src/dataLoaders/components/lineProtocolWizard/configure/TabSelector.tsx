@@ -1,7 +1,7 @@
 import React, {PureComponent} from 'react'
 
-import {ButtonShape, Radio} from 'src/clockface'
-import {LineProtocolTab} from 'src/types/v2/dataLoaders'
+import {Radio, ButtonShape} from 'src/clockface'
+import {LineProtocolTab} from 'src/types'
 
 import Tab from 'src/dataLoaders/components/lineProtocolWizard/configure/Tab'
 

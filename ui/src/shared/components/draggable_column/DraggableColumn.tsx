@@ -1,22 +1,26 @@
 // Libraries
-import React, {ChangeEvent, Component} from 'react'
+import React, {Component, ChangeEvent} from 'react'
 import {findDOMNode} from 'react-dom'
 import {
-    ConnectDragPreview,
-    ConnectDragSource,
-    ConnectDropTarget,
-    DragSource,
-    DragSourceConnector,
-    DragSourceMonitor,
-    DragSourceSpec,
-    DropTarget,
-    DropTargetConnector,
+  DragSourceSpec,
+  DropTargetConnector,
+  DragSourceMonitor,
+  DragSource,
+  DropTarget,
+  DragSourceConnector,
+  ConnectDragSource,
+  ConnectDropTarget,
+  ConnectDragPreview,
 } from 'react-dnd'
+
 // Components
-import {ComponentStatus, Input} from 'src/clockface'
+import {Input} from '@influxdata/clockface'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
+
 // Types
+import {ComponentStatus} from '@influxdata/clockface'
 import {LogsTableColumn} from 'src/types/logs'
 
 // Constants

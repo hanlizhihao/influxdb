@@ -1,10 +1,13 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {Link} from 'react-router'
+
 // Components
-import {ComponentSize, EmptyState} from 'src/clockface'
+import {EmptyState} from '@influxdata/clockface'
+
 // Types
-import {Organization} from 'src/types/v2'
+import {Organization} from 'src/types'
+import {ComponentSize} from '@influxdata/clockface'
 
 interface Props {
   orgs: Organization[]

@@ -1,9 +1,16 @@
-import React, {ChangeEvent, PureComponent} from 'react'
+// Libraries
+import React, {PureComponent, ChangeEvent} from 'react'
+
 // Components
-import {Columns, Form, Grid, Input, InputType} from 'src/clockface'
+import {Form, Input} from '@influxdata/clockface'
+import {Grid} from 'src/clockface'
+
 // Utils
 import {secondsToDuration} from 'src/utils/formatting'
+
+// Types
 import {BucketRetentionRules} from '@influxdata/influx'
+import {Columns, InputType} from '@influxdata/clockface'
 
 interface Props {
   type: BucketRetentionRules.TypeEnum

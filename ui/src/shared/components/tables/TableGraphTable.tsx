@@ -1,22 +1,30 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import _ from 'lodash'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import TableCell from 'src/shared/components/tables/TableCell'
-import {AutoSizer, ColumnSizer, SizedColumnProps} from 'react-virtualized'
+import {ColumnSizer, SizedColumnProps, AutoSizer} from 'react-virtualized'
 import {MultiGrid, PropsMultiGrid} from 'src/shared/components/MultiGrid'
-// Utils
-import {InjectedHoverProps, withHoverTime} from 'src/dashboards/utils/hoverTime'
-import {findHoverTimeIndex, TransformTableDataReturnType} from 'src/dashboards/utils/tableGraph'
-// Constants
-import {DEFAULT_FIX_FIRST_COLUMN, DEFAULT_VERTICAL_TIME_AXIS, NULL_ARRAY_INDEX,} from 'src/shared/constants/tableGraph'
-import {DEFAULT_TIME_FIELD} from 'src/dashboards/constants'
-// Types
-import {TableView} from 'src/types/v2/dashboards'
 
+// Utils
+import {withHoverTime, InjectedHoverProps} from 'src/dashboards/utils/hoverTime'
+import {findHoverTimeIndex} from 'src/dashboards/utils/tableGraph'
+
+// Constants
+import {
+  NULL_ARRAY_INDEX,
+  DEFAULT_FIX_FIRST_COLUMN,
+  DEFAULT_VERTICAL_TIME_AXIS,
+} from 'src/shared/constants/tableGraph'
+import {DEFAULT_TIME_FIELD} from 'src/dashboards/constants'
 const COLUMN_MIN_WIDTH = 100
 const ROW_HEIGHT = 30
+
+// Types
+import {TableView} from 'src/types'
+import {TransformTableDataReturnType} from 'src/dashboards/utils/tableGraph'
 
 export interface ColumnWidths {
   totalWidths: number

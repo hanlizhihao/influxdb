@@ -1,13 +1,15 @@
 // Libraries
 import React from 'react'
-import {mount, shallow} from 'enzyme'
+import {shallow, mount} from 'enzyme'
+
 // Components
+import {Input, FormElement} from '@influxdata/clockface'
 import ConfigFieldSwitcher from 'src/dataLoaders/components/configureStep/streaming/ConfigFieldSwitcher'
 import ArrayFormElement from 'src/dataLoaders/components/configureStep/streaming/ArrayFormElement'
 import URIFormElement from 'src/shared/components/URIFormElement'
-import {FormElement, Input} from 'src/clockface'
+
 // Types
-import {ConfigFieldType} from 'src/types/v2/dataLoaders'
+import {ConfigFieldType} from 'src/types'
 import {TelegrafPluginInputCpu} from '@influxdata/influx'
 
 const setup = (override = {}, shouldMount = false) => {

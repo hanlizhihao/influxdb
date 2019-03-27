@@ -10,7 +10,9 @@ import {
   createVariableFailed,
   updateVariableFailed,
   deleteVariableFailed,
+  deleteVariableSuccess,
   createVariableSuccess,
+  updateVariableSuccess,
 } from 'src/shared/copy/notifications'
 
 // Utils
@@ -20,7 +22,7 @@ import {WrappedCancelablePromise, CancellationError} from 'src/types/promises'
 // Types
 import {Dispatch} from 'redux-thunk'
 import {RemoteDataState} from 'src/types'
-import {GetState} from 'src/types/v2'
+import {GetState} from 'src/types'
 import {Variable} from '@influxdata/influx'
 import {VariableValuesByID} from 'src/variables/types'
 
@@ -28,6 +30,7 @@ export type Action =
   | SetVariables
   | SetVariable
   | RemoveVariable
+  | MoveVariable
   | SetValues
   | SelectValue
 
@@ -73,6 +76,20 @@ interface RemoveVariable {
 const removeVariable = (id: string): RemoveVariable => ({
   type: 'REMOVE_VARIABLE',
   payload: {id},
+})
+
+interface MoveVariable {
+  type: 'MOVE_VARIABLE'
+  payload: {originalIndex: number; newIndex: number; contextID: string}
+}
+
+export const moveVariable = (
+  originalIndex: number,
+  newIndex: number,
+  contextID: string
+): MoveVariable => ({
+  type: 'MOVE_VARIABLE',
+  payload: {originalIndex, newIndex, contextID},
 })
 
 interface SetValues {
@@ -153,7 +170,7 @@ export const createVariable = (variable: Variable) => async (
     dispatch(notify(createVariableSuccess(variable.name)))
   } catch (e) {
     console.error(e)
-    dispatch(notify(createVariableFailed()))
+    dispatch(notify(createVariableFailed(e.response.data.message)))
   }
 }
 
@@ -166,10 +183,11 @@ export const updateVariable = (id: string, props: Partial<Variable>) => async (
     const variable = await client.variables.update(id, props)
 
     dispatch(setVariable(id, RemoteDataState.Done, variable))
+    dispatch(notify(updateVariableSuccess(variable.name)))
   } catch (e) {
     console.error(e)
     dispatch(setVariable(id, RemoteDataState.Error))
-    dispatch(notify(updateVariableFailed()))
+    dispatch(notify(updateVariableFailed(e.response.data.message)))
   }
 }
 
@@ -178,14 +196,13 @@ export const deleteVariable = (id: string) => async (
 ) => {
   try {
     dispatch(setVariable(id, RemoteDataState.Loading))
-
     await client.variables.delete(id)
-
     dispatch(removeVariable(id))
+    dispatch(notify(deleteVariableSuccess()))
   } catch (e) {
     console.error(e)
     dispatch(setVariable(id, RemoteDataState.Done))
-    dispatch(notify(deleteVariableFailed()))
+    dispatch(notify(deleteVariableFailed(e.response.data.message)))
   }
 }
 

@@ -1,10 +1,12 @@
 // Libraries
-import React, {ChangeEvent, PureComponent} from 'react'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {debounce} from 'lodash'
+
 // Components
-import {IconFont, Input} from 'src/clockface'
+import {Input} from '@influxdata/clockface'
+
 // Types
-import {InputType} from 'src/clockface/components/inputs/Input'
+import {InputType, IconFont} from '@influxdata/clockface'
 
 interface Props {
   onSearch: (s: string) => void

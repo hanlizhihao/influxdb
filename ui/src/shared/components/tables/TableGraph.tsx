@@ -2,9 +2,12 @@ import React, {PureComponent} from 'react'
 import _ from 'lodash'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
-import {ASCENDING, DEFAULT_SORT_DIRECTION, DESCENDING,} from 'src/shared/constants/tableGraph'
-import {FluxTable} from 'src/types'
-import {SortOptions, TableView} from 'src/types/v2/dashboards'
+import {
+  ASCENDING,
+  DESCENDING,
+  DEFAULT_SORT_DIRECTION,
+} from 'src/shared/constants/tableGraph'
+import {TableView, SortOptions, FluxTable} from 'src/types'
 import TableGraphTransform from 'src/shared/components/tables/TableGraphTransform'
 import TableGraphTable from 'src/shared/components/tables/TableGraphTable'
 

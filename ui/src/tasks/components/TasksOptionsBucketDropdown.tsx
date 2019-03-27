@@ -48,11 +48,7 @@ export default class TaskOptionsBucketDropdown extends PureComponent<Props> {
       })
     } else {
       return [
-        <Dropdown.Item
-          id={'no-buckets'}
-          key={'no-buckets'}
-          value={'no-buckets'}
-        >
+        <Dropdown.Item id="no-buckets" key="no-buckets" value="no-buckets">
           {'no buckets found in org'}
         </Dropdown.Item>,
       ]

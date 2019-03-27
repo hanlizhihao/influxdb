@@ -1,9 +1,15 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
-import {ButtonShape, Columns, Form, Grid, Radio} from 'src/clockface'
+import {Form, Radio} from '@influxdata/clockface'
+import {Grid} from 'src/clockface'
+
 // Constants
 import {AXES_SCALE_OPTIONS} from 'src/dashboards/constants/cellEditor'
+
+// Types
+import {Columns, ButtonShape} from '@influxdata/clockface'
 
 interface Props {
   base: string

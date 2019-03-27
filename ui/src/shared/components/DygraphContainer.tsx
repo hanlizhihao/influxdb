@@ -7,7 +7,7 @@ import DygraphTransformation from 'src/shared/components/DygraphTransformation'
 // Utils
 import {geomToDygraphOptions} from 'src/shared/graphs/helpers'
 // Types
-import {XYView} from 'src/types/v2/dashboards'
+import {XYView} from 'src/types/dashboards'
 import {FluxTable, RemoteDataState, TimeRange} from 'src/types'
 
 interface Props {

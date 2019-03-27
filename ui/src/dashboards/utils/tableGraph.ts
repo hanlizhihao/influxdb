@@ -1,11 +1,16 @@
 import _ from 'lodash'
-import {fastFilter, fastMap, fastReduce} from 'src/utils/fast'
+import {fastMap, fastReduce, fastFilter} from 'src/utils/fast'
 
 import {CELL_HORIZONTAL_PADDING} from 'src/shared/constants/tableGraph'
 import {DEFAULT_TIME_FIELD} from 'src/dashboards/constants'
 import {DEFAULT_TIME_FORMAT} from 'src/shared/constants'
 
-import {DecimalPlaces, FieldOption, SortOptions, TableOptions,} from 'src/types/v2/dashboards'
+import {
+  SortOptions,
+  FieldOption,
+  TableOptions,
+  DecimalPlaces,
+} from 'src/types/dashboards'
 
 import {FluxTable} from 'src/types'
 

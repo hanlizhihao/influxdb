@@ -1,11 +1,16 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Constants
 import {AXES_SCALE_OPTIONS} from 'src/dashboards/constants/cellEditor'
-// Components
-import {AutoInput, Columns, Form, Grid} from 'src/clockface'
-
 const {LOG} = AXES_SCALE_OPTIONS
+
+// Components
+import {Form} from '@influxdata/clockface'
+import {Grid, AutoInput} from 'src/clockface'
+
+// Types
+import {Columns} from '@influxdata/clockface'
 
 interface Props {
   label: string

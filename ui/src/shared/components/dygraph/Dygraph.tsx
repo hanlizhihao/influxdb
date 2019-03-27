@@ -20,7 +20,7 @@ import {AXES_SCALE_OPTIONS, DEFAULT_AXIS,} from 'src/dashboards/constants/cellEd
 // Types
 import {Axes, TimeRange} from 'src/types'
 import {Color} from 'src/types/colors'
-import {DashboardQuery} from 'src/types/v2/dashboards'
+import {DashboardQuery} from 'src/types/dashboards'
 import {SeriesDescription} from 'src/shared/parsing/flux/spreadTables'
 
 const getRangeMemoizedY = memoizeOne(getRange)

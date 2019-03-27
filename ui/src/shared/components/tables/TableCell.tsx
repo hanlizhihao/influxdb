@@ -3,13 +3,17 @@ import React, {PureComponent} from 'react'
 import _ from 'lodash'
 import moment from 'moment'
 import classnames from 'classnames'
+
 // Constants
 import {ASCENDING} from 'src/shared/constants/tableGraph'
 import {DEFAULT_TIME_FIELD} from 'src/dashboards/constants'
+
 // Utils
 import {generateThresholdsListHexs} from 'src/shared/constants/colorOperations'
+
 // Types
-import {FieldOption, SortOptions, TableView} from 'src/types/v2/dashboards'
+import {SortOptions, FieldOption} from 'src/types/dashboards'
+import {TableView} from 'src/types/dashboards'
 import {CellRendererProps} from 'src/shared/components/tables/TableGraphTable'
 
 interface Props extends CellRendererProps {

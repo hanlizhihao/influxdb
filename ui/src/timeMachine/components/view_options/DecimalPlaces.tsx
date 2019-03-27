@@ -1,11 +1,17 @@
 // Libraries
 import React, {PureComponent} from 'react'
+
 // Components
-import {AutoInput, Columns, Form, Grid} from 'src/clockface'
+import {Form} from '@influxdata/clockface'
+import {Grid, AutoInput} from 'src/clockface'
+
 // Constants
-import {MAX_DECIMAL_PLACES, MIN_DECIMAL_PLACES} from 'src/dashboards/constants'
+import {MIN_DECIMAL_PLACES, MAX_DECIMAL_PLACES} from 'src/dashboards/constants'
+
 // Types
-import {DecimalPlaces} from 'src/types/v2/dashboards'
+import {DecimalPlaces} from 'src/types'
+import {Columns} from '@influxdata/clockface'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 

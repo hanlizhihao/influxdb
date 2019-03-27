@@ -2,10 +2,13 @@
 import {PureComponent} from 'react'
 import _ from 'lodash'
 import memoizeOne from 'memoize-one'
+
 // Utils
-import {transformTableData, TransformTableDataReturnType} from 'src/dashboards/utils/tableGraph'
+import {transformTableData} from 'src/dashboards/utils/tableGraph'
+
 // Types
-import {SortOptions, TableView} from 'src/types/v2/dashboards'
+import {TableView, SortOptions} from 'src/types/dashboards'
+import {TransformTableDataReturnType} from 'src/dashboards/utils/tableGraph'
 
 interface Props {
   data: string[][]

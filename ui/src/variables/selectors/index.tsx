@@ -8,7 +8,7 @@ import {getVarAssignment} from 'src/variables/utils/getVarAssignment'
 // Types
 import {RemoteDataState} from 'src/types'
 import {VariableAssignment} from 'src/types/ast'
-import {AppState} from 'src/types/v2'
+import {AppState} from 'src/types'
 import {
   VariableValues,
   VariableValuesByID,
@@ -37,12 +37,10 @@ export const getVariablesForOrg = (
 }
 
 const getVariablesForDashboardMemoized = memoizeOne(
-  (variables: VariablesState, values: VariableValuesByID): Variable[] => {
+  (variables: VariablesState, variableIDs: string[]): Variable[] => {
     let variablesForDash = []
 
-    const variablesIDs = Object.keys(values)
-
-    variablesIDs.forEach(variableID => {
+    variableIDs.forEach(variableID => {
       const variable = get(variables, `${variableID}.variable`)
 
       if (variable) {
@@ -58,9 +56,12 @@ export const getVariablesForDashboard = (
   state: AppState,
   dashboardID: string
 ): Variable[] => {
-  const values = get(state, `variables.values.${dashboardID}.values`, {})
+  const variableIDs = get(state, `variables.values.${dashboardID}.order`, [])
 
-  return getVariablesForDashboardMemoized(state.variables.variables, values)
+  return getVariablesForDashboardMemoized(
+    state.variables.variables,
+    variableIDs
+  )
 }
 
 export const getValuesForVariable = (
@@ -151,6 +152,12 @@ export const getTimeMachineValuesStatus = (
   )
 
   return valuesStatus
+}
+
+export const getDashboardVariablesStatus = (
+  state: AppState
+): RemoteDataState => {
+  return get(state, 'variables.status')
 }
 
 export const getDashboardValuesStatus = (

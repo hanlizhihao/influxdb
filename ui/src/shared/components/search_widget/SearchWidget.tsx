@@ -1,8 +1,13 @@
 // Libraries
-import React, {ChangeEvent, Component} from 'react'
+import React, {Component, ChangeEvent} from 'react'
 import _ from 'lodash'
+
 // Components
-import {IconFont, Input} from 'src/clockface'
+import {Input} from '@influxdata/clockface'
+
+// Types
+import {IconFont} from '@influxdata/clockface'
+
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
@@ -54,7 +59,7 @@ class SearchWidget extends Component<Props, State> {
         value={searchTerm}
         onChange={this.handleChange}
         onBlur={this.handleBlur}
-        testID={`search-widget`}
+        testID="search-widget"
       />
     )
   }

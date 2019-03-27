@@ -1,9 +1,11 @@
 // Libraries
 import React, {PureComponent} from 'react'
+import _ from 'lodash'
+
 // Components
 import NavMenuItem from 'src/pageLayout/components/NavMenuItem'
 import NavMenuSubItem from 'src/pageLayout/components/NavMenuSubItem'
-import {Select} from 'src/clockface'
+
 // Types
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
@@ -25,7 +27,7 @@ class NavMenu extends PureComponent<Props> {
 
     return (
       <nav className="nav" data-testid="nav">
-        <Select type={NavMenuItem}>{children}</Select>
+        {children}
       </nav>
     )
   }
