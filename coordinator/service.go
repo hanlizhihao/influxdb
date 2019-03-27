@@ -162,6 +162,10 @@ func (s *Service) Open() error {
 	s.rpcQuery.WithLogger(s.Logger)
 	s.rpcQuery.MetaClient = s.MetaClient
 	err = s.rpcQuery.Open()
+	if err != nil {
+		return err
+	}
+	err = s.checkDataConsistency()
 	return err
 }
 func (s *Service) isLive(clusterId uint64) bool {
@@ -1163,7 +1167,18 @@ func (s *Service) close(wg *sync.WaitGroup) {
 func (s *Service) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	err := s.session.Close()
+	if err != nil {
+		return err
+	}
+	err = s.rpcQuery.Close()
+	if err != nil {
+		return err
+	}
+	err = s.cli.Close()
+	if err != nil {
+		return err
+	}
 	if s.closed {
 		return nil // Already closed.
 	}

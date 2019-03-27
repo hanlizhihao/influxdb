@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"time"
 
 	"archive/tar"
 	"io/ioutil"
@@ -211,4 +213,40 @@ func (c *Client) doRequest(req *Request) ([]byte, error) {
 	_, err = io.Copy(&buf, conn)
 
 	return buf.Bytes(), err
+}
+
+func (c *Client) GetDigestByShardId(id uint64) ([]byte, error) {
+	req := &Request{
+		Type:    RequestShardDigest,
+		ShardID: id,
+	}
+	return c.doRequest(req)
+}
+
+func (c *Client) doRequestGetConn(req *Request) (net.Conn, error) {
+	// Connect to snapshotter service.
+	conn, err := tcp.Dial("tcp", c.host, MuxHeader)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	// Write the request
+	_, err = conn.Write([]byte{byte(req.Type)})
+	if err != nil {
+		return nil, err
+	}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return nil, fmt.Errorf("encode snapshot request: %s", err)
+	}
+	return conn, err
+}
+func (c *Client) PullShardById(id uint64, start, end time.Time) (net.Conn, error) {
+	req := &Request{
+		Type:        RequestShardExport,
+		ShardID:     id,
+		ExportStart: start,
+		ExportEnd:   end,
+	}
+	return c.doRequestGetConn(req)
 }

@@ -12,10 +12,12 @@ import (
 	"github.com/influxdata/influxdb/pkg/slices"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/meta"
+	"github.com/influxdata/influxdb/services/snapshotter"
 	"github.com/influxdata/influxql"
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -749,6 +751,8 @@ func (s *Service) watchSubscriptions() {
 		}
 	}
 }
+
+// not use
 func (s *Service) reportDiagnostics() {
 	timer := time.NewTicker(5 * time.Minute)
 	for {
@@ -866,4 +870,55 @@ func (s *Service) initETCDIDData(key string) {
 	if shardIDResp.Count == 0 {
 		s.cli.Put(context.Background(), meta.TSDBShardId, "0")
 	}
+}
+
+// Check for consistency between the node's digest and master node's digest
+// method execute after meta data consistent, execute this method simultaneously while process master forwarded request
+func (s *Service) checkDataConsistency() error {
+	metaData := s.MetaClient.Data()
+	var wg sync.WaitGroup
+	cli := snapshotter.NewClient(s.masterNode.Host)
+	var err error
+	for _, db := range metaData.Databases {
+		for _, rp := range db.RetentionPolicies {
+			for _, shg := range rp.ShardGroups {
+				for _, sh := range shg.Shards {
+					go func(wg sync.WaitGroup, sh *meta.ShardInfo, cli *snapshotter.Client, resultErr error, shg *meta.ShardGroupInfo) {
+						wg.Add(1)
+						defer wg.Done()
+						shard := s.store.Shard(sh.ID)
+						if shard == nil {
+							s.restoreShard(sh.ID, shg.StartTime, shg.EndTime, cli)
+						}
+						digestReader, _, err := shard.Digest()
+						if err != nil {
+							resultErr = err
+							return
+						}
+						var buf bytes.Buffer
+						_, err = io.Copy(&buf, digestReader)
+						masterDigest, err := cli.GetDigestByShardId(shard.ID())
+						if err != nil {
+							resultErr = err
+							return
+						}
+						if bytes.Equal(buf.Bytes(), masterDigest) {
+							s.restoreShard(sh.ID, shg.StartTime, shg.EndTime, cli)
+						}
+					}(wg, &sh, cli, err, &shg)
+				}
+			}
+		}
+	}
+	s.Logger.Info("Database checking for consistent between self and master ... ...")
+	wg.Wait()
+	s.CheckErrorExit("Parallel Synchronized Data from master node Error", err)
+	return nil
+}
+
+func (s *Service) restoreShard(id uint64, start, end time.Time, cli *snapshotter.Client) {
+	conn, err := cli.PullShardById(id, start, end)
+	s.CheckErrorExit("Check shard data consistent pull shard data from master error", err)
+	err = s.store.RestoreShard(id, conn)
+	s.CheckErrorExit("Restore Shard error", err)
 }

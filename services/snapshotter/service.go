@@ -6,6 +6,7 @@ import (
 	"encoding"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -149,6 +150,8 @@ func (s *Service) handleConn(conn net.Conn) error {
 		return s.writeRetentionPolicyInfo(conn, r.BackupDatabase, r.BackupRetentionPolicy)
 	case RequestMetaStoreUpdate:
 		return s.updateMetaStore(conn, bytes, r.BackupDatabase, r.RestoreDatabase, r.BackupRetentionPolicy, r.RestoreRetentionPolicy)
+	case RequestShardDigest:
+		return s.writeShardFileSize(conn, r.ShardID)
 	default:
 		return fmt.Errorf("request type unknown: %v", r.Type)
 	}
@@ -329,6 +332,31 @@ func (s *Service) writeDatabaseInfo(conn net.Conn, database string) error {
 	return nil
 }
 
+// writeShardDigestInfo will write size of the shard file, its type is int64
+func (s *Service) writeShardFileSize(conn net.Conn, shardId uint64) error {
+	shard := s.TSDBStore.Shard(shardId)
+	if shard == nil {
+		return errors.New("shard don't exist")
+	}
+	reader, _, err := shard.Digest()
+	if err != nil {
+		return err
+	}
+	buffer := make([]byte, 0, 1024)
+	for {
+		_, err = reader.Read(buffer)
+		if err == io.EOF {
+			_, err = conn.Write(buffer)
+			if err != nil {
+				return err
+			}
+			break
+		}
+		_, err = conn.Write(buffer)
+	}
+	return nil
+}
+
 // writeDatabaseInfo will write the relative paths of all shards in the retention policy on
 // this server into the connection
 func (s *Service) writeRetentionPolicyInfo(conn net.Conn, database, retentionPolicy string) error {
@@ -440,6 +468,9 @@ const (
 	// RequestShardUpdate will initiate the upload of a shard data tar file
 	// and have the engine import the data.
 	RequestShardUpdate
+
+	// RequestShardDigest represents a request for shard digest
+	RequestShardDigest
 )
 
 // Request represents a request for a specific backup or for information
