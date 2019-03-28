@@ -267,9 +267,8 @@ func (s *Service) watchUsers() {
 	resp, err := s.cli.Get(context.Background(), TSDBUsers)
 	s.CheckErrorExit("Get users info from etcd failed, stop watch users", err)
 	if resp == nil || resp.Count == 0 {
-		users := make(Users)
-		s.latestUsers = users
-		_, err = s.cli.Put(context.Background(), TSDBUsers, ToJson(users))
+		s.latestUsers = make(Users)
+		_, err = s.cli.Put(context.Background(), TSDBUsers, ToJson(s.latestUsers))
 		s.CheckErrorExit("Update databases failed, stop watch databases, error message", err)
 	} else {
 		var users Users
@@ -293,17 +292,20 @@ func (s *Service) watchUsers() {
 				var user User
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserNew)) {
 					ParseJson(event.Kv.Value, &user)
-					s.MetaClient.CreateUser(user.Name, user.Password, user.Admin)
+					err = s.MetaClient.CreateHashPasswordUser(user.Name, user.Password, user.Admin)
+					s.CheckErrPrintLog("Watch Meta Data User, Local Create Hash Password User", err)
 					continue
 				}
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserAdmin)) {
 					ParseJson(event.Kv.Value, &user)
-					s.MetaClient.SetAdminPrivilege(user.Name, user.Admin)
+					err = s.MetaClient.SetAdminPrivilege(user.Name, user.Admin)
+					s.CheckErrPrintLog("Watch Meta Data User, Local set admin privilege error", err)
 					continue
 				}
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserDel)) {
 					ParseJson(event.Kv.Value, &user)
-					s.MetaClient.DropUser(user.Name)
+					err = s.MetaClient.DropUser(user.Name)
+					s.CheckErrPrintLog("Watch Meta Data User, Local Drop User error", err)
 					continue
 				}
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserGrant)) {
@@ -312,13 +314,15 @@ func (s *Service) watchUsers() {
 						continue
 					}
 					for db, p := range user.Privileges {
-						s.MetaClient.SetPrivilege(user.Name, db, p)
+						err = s.MetaClient.SetPrivilege(user.Name, db, p)
+						s.CheckErrPrintLog("Watch Meta Data User, Local set privilege error", err)
 					}
 					continue
 				}
 				if bytes.Equal(event.Kv.Key, []byte(TSDBUserUpdate)) {
 					ParseJson(event.Kv.Value, &user)
-					s.MetaClient.UpdateUser(user.Name, user.Password)
+					err = s.MetaClient.UpdateHashPasswordUser(user.Name, user.Password)
+					s.CheckErrPrintLog("Watch Meta Data User, Update hash password error", err)
 					continue
 				}
 			}
@@ -910,7 +914,7 @@ func (s *Service) checkDataConsistency() error {
 			}
 		}
 	}
-	s.Logger.Info("Database checking for consistent between self and master ... ...")
+	s.Logger.Info("Database System checking for consistent between self and master ... ...")
 	wg.Wait()
 	s.CheckErrorExit("Parallel Synchronized Data from master node Error", err)
 	return nil

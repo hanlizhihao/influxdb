@@ -34,6 +34,7 @@ Emitter的Emit方法中cursor.Scan方法将得到值，Cursor为数据的来源�
 * engine扩展以及Index扩展的实现方式是通过init函数将index或者engine注册到newIndexFuncs或者newEngineFuncs，在NewEngine和NewIndex函数中通过配置文件解析出的配置，选择特定的索引或者engine创建函数
 * PointsWriter 的mapShards负责在写入没有特定shard的情况下，创建Shard
 * influxDB具有snapshotService用于生成Shard的快照，store与engine具有Digest()，用于生成摘要
+* 如果启动的节点不是master节点，节点会在启动时检查数据一致性
 ### 设计
 ```
 使用key-表示层级
@@ -110,13 +111,12 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 异步EtcdSerivce写入本地失败，暂时未处理
 * 负载均衡连接池与rpc连接池设计
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
-* 弹性Hash算法
+* 弹性Hash算法，加入的节点不应该影响原来数据的存储位置
 * 确定timeRange来源
 * 元数据密码
 * Statement Executor monitor data report
 * index索引只支持全内存 一个tag block表示一个表的所有tag key和tag value，partition 是根据series key分片后的，partition->filedSet->file->logfile(内存)或index_file(硬盘)
 * inmem index 的fieldMap可能与Iterator返回值的值的类型有关
-* 数据库已经运行一段时间了，如何check节点与原节点的数据，
 
 
 ### 没有实现集群化的SQL

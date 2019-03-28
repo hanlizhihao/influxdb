@@ -439,6 +439,23 @@ func (c *Client) CreateUser(name, password string, admin bool) (User, error) {
 	return u, nil
 }
 
+func (c *Client) CreateHashPasswordUser(name, password string, admin bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data := c.cacheData.Clone()
+	if u := data.user(name); u != nil {
+		if u.Hash != password || u.Admin != admin {
+			return ErrUserExists
+		}
+		return nil
+	}
+	if err := data.CreateUser(name, password, admin); err != nil {
+		return err
+	}
+
+	return c.commit(data)
+}
+
 // UpdateUser updates the password of an existing user.
 func (c *Client) UpdateUser(name, password string) error {
 	c.mu.Lock()
@@ -458,6 +475,17 @@ func (c *Client) UpdateUser(name, password string) error {
 
 	delete(c.authCache, name)
 
+	return c.commit(data)
+}
+
+func (c *Client) UpdateHashPasswordUser(name, password string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data := c.cacheData.Clone()
+	if err := data.UpdateUser(name, password); err != nil {
+		return err
+	}
+	delete(c.authCache, name)
 	return c.commit(data)
 }
 

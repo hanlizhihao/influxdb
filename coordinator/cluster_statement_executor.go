@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/influxdata/influxdb/pkg/etcd"
+	"golang.org/x/crypto/bcrypt"
 	"strings"
 	"time"
 
@@ -297,7 +298,7 @@ func (e *ClusterStatementExecutor) executeCreateUserStatement(q *influxql.Create
 Retry:
 	resp, err := e.EtcdService.cli.Get(context.Background(), TSDBUsers)
 	if err != nil {
-		return nil
+		return err
 	}
 	if resp.Count == 0 {
 		return ErrMetaDataDisappear
@@ -306,9 +307,14 @@ Retry:
 	if user := e.EtcdService.latestUsers[q.Name]; &user != nil {
 		return meta.ErrUserExists
 	}
+	// Hash the password before serializing it.
+	hash, err := bcrypt.GenerateFromPassword([]byte(q.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
 	user := User{
 		Name:     q.Name,
-		Password: q.Password,
+		Password: string(hash),
 		Admin:    q.Admin,
 	}
 	lease, err := e.EtcdService.getTimeoutLease()

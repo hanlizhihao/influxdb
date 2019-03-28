@@ -44,9 +44,11 @@ type Service struct {
 		DropRetentionPolicy(database, name string) error
 		DropContinuousQuery(database, name string) error
 		CreateUser(name, password string, admin bool) (meta.User, error)
+		CreateHashPasswordUser(name, password string, admin bool) error
 		SetPrivilege(username, database string, p influxql.Privilege) error
 		SetAdminPrivilege(username string, admin bool) error
 		UpdateUser(name, password string) error
+		UpdateHashPasswordUser(name, password string) error
 		LocalCreateShardGroup(sgi *meta.ShardGroupInfo) (*meta.ShardGroupInfo, error)
 		DeleteShardGroup(database, policy string, id uint64) error
 		DropShard(id uint64) error
@@ -165,7 +167,9 @@ func (s *Service) Open() error {
 	if err != nil {
 		return err
 	}
-	err = s.checkDataConsistency()
+	if s.masterNode.Id != s.MetaClient.Data().NodeID {
+		err = s.checkDataConsistency()
+	}
 	return err
 }
 func (s *Service) isLive(clusterId uint64) bool {
