@@ -978,7 +978,7 @@ RetryAddClasses:
 		}
 	}
 	if err != nil {
-		s.Logger.Error("Create Class for etcd error, error message" + err.Error())
+		s.Logger.Error("Create Class for etcd error, error message: " + err.Error())
 		goto RetryAddClasses
 	}
 	metaData := s.MetaClient.Data()

@@ -100,10 +100,12 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
     (3)基于series分片后数据分散在不同小组，这将影响group by 与其他聚合函数的结果。对sql解析后，get到最底层查询(from 所在语句)，合并各组子查询结果后进行group by以及聚合
     注意select.go中的buildVarRefIterator、callIterator、buildAuxIterator三个方法，它们区分了source，决定调用不同的方法来build iterator
     特别注意coordinator.(*LocalShardMapping).CreateIterator方法，它用于生成复合查询中的最深子查询的Iterator，应当从这里分布式查询
-2.1分布式索引是指，在小组内均衡索引数据，使用每个节点的一定内存来存储索引，通过简单的Http接口小组互相访问索引，以解决内存占用过大，保存在磁盘上响应速度较慢的问题
-2.2分布式索引的均衡可以通过一致性Hash算法来解决，整体的实现方式类似memached
-3.1核心读合并结果集的实现是全组转发，Single Cluster Booster 直接基于time进行分配，将有效加速BigSql查询，提高数倍磁盘IO性能
+2.1 分布式索引是指，在小组内均衡索引数据，使用每个节点的一定内存来存储索引，通过简单的Http接口小组互相访问索引，以解决内存占用过大，保存在磁盘上响应速度较慢的问题
+2.2 分布式索引的均衡可以通过一致性Hash算法来解决，整体的实现方式类似memached
+3.1 核心读合并结果集的实现是全组转发，Single Cluster Booster 直接基于time进行分配，将有效加速BigSql查询，提高数倍磁盘IO性能
 3.2 所有节点的Index数据一致，保证series查询等一致
+3.3 shardIndex实际被用作查询，应当将cli设置在shardIndex上,series的所有信息不能保存在每个shard索引上，因此，
+   元数据中需要维护所有的Shard信息，而且需要确保相同时间段的shard的id相同
 ```
 ## 隐藏问题
 * classIpMap，当ip数组数量小于等于1，重新build，使用map索引时，出现失效，则删除数组元素 - 待验证
@@ -113,7 +115,6 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * 当招募元数据中集群id出现重复时，现在的处理方式是不再添加新的id
 * 弹性Hash算法，加入的节点不应该影响原来数据的存储位置
 * 确定timeRange来源
-* 元数据密码
 * Statement Executor monitor data report
 * index索引只支持全内存 一个tag block表示一个表的所有tag key和tag value，partition 是根据series key分片后的，partition->filedSet->file->logfile(内存)或index_file(硬盘)
 * inmem index 的fieldMap可能与Iterator返回值的值的类型有关
@@ -125,8 +126,6 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * executeExplainStatement          不用管
 * executeShowShardsStatement       实现-待验证
 * executeShowStatsStatement 集群监控再议
-shardIndex实际被用作查询，应当将cli设置在shardIndex上,series的所有信息不能保存在每个shard索引上，因此，
-元数据中需要维护所有的Shard信息，而且需要确保相同时间段的shard的id相同
 ## 使用注意
 * 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 * 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
@@ -139,4 +138,3 @@ listen client url 不能用公网ip?
 * 在初始化、新增和删除表时，应该确保newMeasurement和deleteMeasurement至少不为空
 * 新建measurement 写入失败
 * with lease key disappear
-接下来测试同class不同集群
