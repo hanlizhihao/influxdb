@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/influxdata/influxdb/pkg/etcd"
 	"golang.org/x/crypto/bcrypt"
-	"strings"
-	"time"
 
 	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/models"
@@ -23,7 +24,7 @@ import (
 // ErrDatabaseNameRequired is returned when executing statements that require a database,
 // when a database has not been provided.
 
-// StatementExecutor executes a statement in the query.
+// ClusterStatementExecutor executes a statement in the query.
 type ClusterStatementExecutor struct {
 	StatementExecutor
 }
@@ -231,9 +232,6 @@ func (e *ClusterStatementExecutor) executeCreateContinuousQueryStatement(q *infl
 	// Verify that retention policies exist.
 	var err error
 	verifyRPFn := func(n influxql.Node) {
-		if err != nil {
-			return
-		}
 		switch m := n.(type) {
 		case *influxql.Measurement:
 			var rp *meta.RetentionPolicyInfo
@@ -277,7 +275,6 @@ Retry:
 		return nil
 	}
 	goto Retry
-	// return e.EtcdService.PutMetaDataForEtcd(cqs, TSDBcq)
 }
 
 func (e *ClusterStatementExecutor) executeCreateDatabaseStatement(stmt *influxql.CreateDatabaseStatement) error {

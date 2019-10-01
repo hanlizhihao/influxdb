@@ -4,6 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/mvcc/mvccpb"
@@ -14,11 +20,6 @@ import (
 	"github.com/influxdata/influxdb/services/meta"
 	"github.com/influxdata/influxdb/services/snapshotter"
 	"github.com/influxdata/influxql"
-	"io"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 const (
@@ -40,7 +41,7 @@ const (
 	TSDBClassNode = "tsdb-cla-"
 
 	TSDBDatabase = "tsdb-databases"
-	// map[string]map[string]rp if first value rp exist, only delete rp
+	// TSDBDatabaseDel is map[string]map[string]rp if first value rp exist, only delete rp
 	TSDBDatabaseDel    = "tsdb-databases-del"
 	TSDBDatabaseNew    = "tsdb-databases-new"
 	TSDBDatabaseUpdate = "tsdb-databases-update"
@@ -56,15 +57,14 @@ const (
 	TSDBStatement                = "tsdb-statement-"
 	TSDBStatementAutoIncrementId = "tsdb-auto-increment-statement-id"
 
-	// subscription
 	TSDBSubscription    = "tsdb-subscription"
 	TSDBSubscriptionDel = "tsdb-subscription-del"
 	TSDBSubscriptionNew = "tsdb-subscription-new"
-	// default class limit
+	// DefaultClassLimit is default class limit
 	DefaultClassLimit   = 1
 	DefaultClusterLimit = 1
 
-	// diagnostics
+	// TSDBDiagnostics diagnostics
 	TSDBDiagnostics     = "tsdb-diagnostics"
 	TSDBDiagnosticsLock = "tsdb-diagnostics-lock"
 )

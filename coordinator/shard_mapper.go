@@ -2,11 +2,12 @@ package coordinator
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"io"
 	"net/rpc"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/services/meta"
@@ -270,6 +271,8 @@ func (a *LocalShardMapping) BoosterCreateIterator(ctx context.Context, m *influx
 	}
 	return query.Iterators(itrs).Merge(opt)
 }
+
+// ExecuteCreateIterator execute create iterator
 func (a *LocalShardMapping) ExecuteCreateIterator(ctx context.Context, m *influxql.Measurement, opt query.IteratorOptions) (query.Iterator, error) {
 	resultCh := make(chan *query.Iterator)
 	ctxTimeOut := context.Background()
@@ -283,7 +286,7 @@ func (a *LocalShardMapping) ExecuteCreateIterator(ctx context.Context, m *influx
 			wait.Add(1)
 			go func(resultCh chan *query.Iterator) {
 				defer wait.Done()
-				var resp RpcResponse
+				var resp RPCResponse
 				err = client.Call("QueryExecutor.DistributeQuery", RpcRequest{
 					Source: EncodeSource(m),
 					Opt:    &opt,
@@ -439,7 +442,7 @@ func (qb *DefaultQueryBooster) Query(ctx context.Context, m *influxql.Measuremen
 		wait.Add(1)
 		go func(client *rpc.Client, i chan *query.Iterator, r *RpcRequest) {
 			defer wait.Done()
-			var resp RpcResponse
+			var resp RPCResponse
 			if err := client.Call("QueryExecutor.BoosterQuery", *r, &resp); err == nil {
 				if &resp != nil {
 					it, err := DecodeIterator(opt, &resp)

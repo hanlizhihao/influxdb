@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/influxdata/influxdb/query"
-	"github.com/influxdata/influxdb/services/meta"
-	"github.com/influxdata/influxql"
-	"go.uber.org/zap"
 	"net"
 	"net/rpc"
 	"sort"
 	"time"
+
+	"github.com/influxdata/influxdb/query"
+	"github.com/influxdata/influxdb/services/meta"
+	"github.com/influxdata/influxql"
+	"go.uber.org/zap"
 )
 
 const (
@@ -31,7 +32,6 @@ func NewRpcConfig() RpcConfig {
 	}
 }
 
-// shards, err := shardMapper.MapShards(c.stmt.Sources, TimeRange, sopt)
 type RpcService struct {
 	shardMapper *query.ShardMapper
 	rpcConfig   RpcConfig
@@ -72,6 +72,8 @@ func (rs *RpcService) Close() error {
 func (rs *RpcService) WithLogger(log *zap.Logger) {
 	rs.Logger = log.With(zap.String("RpcQueryService", "Cluster"))
 }
+
+// Open rpc service
 func (rs *RpcService) Open() error {
 	rs.queryExecutor.MetaClient = rs.MetaClient
 	err := rpc.Register(rs.queryExecutor)
@@ -132,20 +134,20 @@ func DecodeSource(measurement *Measurement) *influxql.Measurement {
 	}
 }
 
-type RpcResponse struct {
+type RPCResponse struct {
 	Floats   *floatRpcIterator
-	Strings  *strRpcIterator
+	Strings  *strRPCIterator
 	Booleans *booleanRpcIterator
-	Integers *intRpcIterator
-	Unsigned *unsignedRpcIterator
+	Integers *intRPCIterator
+	Unsigned *unsignedRPCIterator
 }
-type unsignedRpcIterator struct {
+type unsignedRPCIterator struct {
 	UnsignedPoints []Point
 	IteratorStats  query.IteratorStats
 	Enable         bool
 }
 
-func (itr *unsignedRpcIterator) Next() (*query.UnsignedPoint, error) {
+func (itr *unsignedRPCIterator) Next() (*query.UnsignedPoint, error) {
 	if len(itr.UnsignedPoints) > 1 {
 		point := itr.UnsignedPoints[0]
 		itr.UnsignedPoints = itr.UnsignedPoints[1:]
@@ -158,20 +160,20 @@ func (itr *unsignedRpcIterator) Next() (*query.UnsignedPoint, error) {
 	}
 	return nil, nil
 }
-func (itr *unsignedRpcIterator) Close() error {
+func (itr *unsignedRPCIterator) Close() error {
 	return nil
 }
-func (itr *unsignedRpcIterator) Stats() query.IteratorStats {
+func (itr *unsignedRPCIterator) Stats() query.IteratorStats {
 	return itr.IteratorStats
 }
 
-type intRpcIterator struct {
+type intRPCIterator struct {
 	IntegerPoints []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
 
-func (p *intRpcIterator) Next() (*query.IntegerPoint, error) {
+func (p *intRPCIterator) Next() (*query.IntegerPoint, error) {
 	if len(p.IntegerPoints) > 1 {
 		point := p.IntegerPoints[0]
 		p.IntegerPoints = p.IntegerPoints[1:]
@@ -184,10 +186,10 @@ func (p *intRpcIterator) Next() (*query.IntegerPoint, error) {
 	}
 	return nil, nil
 }
-func (p *intRpcIterator) Close() error {
+func (p *intRPCIterator) Close() error {
 	return nil
 }
-func (p *intRpcIterator) Stats() query.IteratorStats {
+func (p *intRPCIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
@@ -217,13 +219,13 @@ func (p *booleanRpcIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
-type strRpcIterator struct {
+type strRPCIterator struct {
 	StringPoints  []Point
 	IteratorStats query.IteratorStats
 	Enable        bool
 }
 
-func (p *strRpcIterator) Next() (*query.StringPoint, error) {
+func (p *strRPCIterator) Next() (*query.StringPoint, error) {
 	if len(p.StringPoints) > 1 {
 		point := p.StringPoints[0]
 		p.StringPoints = p.StringPoints[1:]
@@ -236,10 +238,10 @@ func (p *strRpcIterator) Next() (*query.StringPoint, error) {
 	}
 	return nil, nil
 }
-func (p *strRpcIterator) Close() error {
+func (p *strRPCIterator) Close() error {
 	return nil
 }
-func (p *strRpcIterator) Stats() query.IteratorStats {
+func (p *strRPCIterator) Stats() query.IteratorStats {
 	return p.IteratorStats
 }
 
@@ -480,6 +482,8 @@ func encodeAux(aux []interface{}) []Aux {
 	}
 	return pb
 }
+
+// GetDataType be use get aux data type
 func (m *Aux) GetDataType() int32 {
 	if m != nil && &m.DataType != nil {
 		return m.DataType
@@ -531,21 +535,22 @@ func decodeAux(pb []Aux) []interface{} {
 	return aux
 }
 
-func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
-	resp := &RpcResponse{
+// EncodeIterator be use encode iterator
+func EncodeIterator(it query.Iterator) (*RPCResponse, error) {
+	resp := &RPCResponse{
 		Floats: &floatRpcIterator{
 			FloatPoints: make([]Point, 0),
 		},
-		Strings: &strRpcIterator{
+		Strings: &strRPCIterator{
 			StringPoints: make([]Point, 0),
 		},
-		Integers: &intRpcIterator{
+		Integers: &intRPCIterator{
 			IntegerPoints: make([]Point, 0),
 		},
 		Booleans: &booleanRpcIterator{
 			BooleanPoints: make([]Point, 0),
 		},
-		Unsigned: &unsignedRpcIterator{
+		Unsigned: &unsignedRPCIterator{
 			UnsignedPoints: make([]Point, 0),
 		},
 	}
@@ -636,7 +641,7 @@ func EncodeIterator(it query.Iterator) (*RpcResponse, error) {
 	}
 	return nil, errors.New("Unknown Iterator Type ")
 }
-func DecodeIterator(opt query.IteratorOptions, r *RpcResponse) (query.Iterator, error) {
+func DecodeIterator(opt query.IteratorOptions, r *RPCResponse) (query.Iterator, error) {
 	itrs := make([]query.Iterator, 0)
 	if r.Unsigned.Enable {
 		itrs = append(itrs, r.Unsigned)
@@ -674,7 +679,7 @@ func NewQuery(lsm *query.ShardMapper, n []Node) *QueryExecutor {
 	}
 }
 
-func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) error {
+func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RPCResponse) error {
 	rq.Logger.Debug("DistributeQuery start")
 	sm := *rq.shardMapper
 	source := DecodeSource(r.Source)
@@ -705,7 +710,7 @@ func (rq *QueryExecutor) DistributeQuery(r RpcRequest, iterator *RpcResponse) er
 	}
 	return errors.New("QueryExecutor Query failed")
 }
-func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RpcResponse) error {
+func (rq *QueryExecutor) BoosterQuery(r RpcRequest, iterator *RPCResponse) error {
 	rq.Logger.Debug("Booster query start")
 	sm := *rq.shardMapper
 	source := DecodeSource(r.Source)
