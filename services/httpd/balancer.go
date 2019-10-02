@@ -118,16 +118,16 @@ func (qb *HttpBalance) query(c *int32, r *http.Request, resultChan chan *query.R
 	r.Header.Add("distribute", "distribute")
 	r.Header.Add("balance", "balance")
 	resp, err := qb.transport.RoundTrip(r)
-	defer resp.Body.Close()
-	if err != nil {
-		qb.Logger.Error("Distribute query for ip failed, error message is" + err.Error())
+	if err != nil || resp == nil {
+		qb.Logger.Error("Distribute query for ip failed, error message is" + getErrMessage(err))
 		return
 	}
+	defer resp.Body.Close()
 	var response = Response{}
 	respByte, err := ioutil.ReadAll(resp.Body)
 	err = response.UnmarshalJSON(respByte)
-	if err != nil || resp.StatusCode != http.StatusOK || response.Error() == nil {
-		qb.Logger.Error("Execute distributed query error, host ip:" + ip + "JSON decode error message:" + err.Error() +
+	if err != nil || resp.StatusCode != http.StatusOK || response.Error() != nil {
+		qb.Logger.Error("Execute distributed query error, host ip:" + ip + "JSON decode error message:" + getErrMessage(err) +
 			"response error message:" + response.Error().Error())
 		return
 	}
@@ -135,6 +135,14 @@ func (qb *HttpBalance) query(c *int32, r *http.Request, resultChan chan *query.R
 		resultChan <- result
 	}
 	atomic.AddInt32(c, 1)
+}
+
+func getErrMessage(err error) string {
+	errMessage := ""
+	if err != nil {
+		errMessage = err.Error()
+	}
+	return errMessage
 }
 
 // return true, the request will be forward, return false, the request will not forward
@@ -165,7 +173,7 @@ func (qb *HttpBalance) forwardRequest(db string, measurement string, response *h
 		w.WriteHeader(404)
 		_, err = w.Write([]byte("Measurement don't exist, Please try again later \n"))
 		if err != nil {
-			qb.Logger.Error("Forward Request failed, error message is" + err.Error())
+			qb.Logger.Error("Forward Request failed, error message is" + getErrMessage(err))
 		}
 		return
 	}

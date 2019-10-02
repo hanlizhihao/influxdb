@@ -126,6 +126,7 @@ tagKey检索通过map索引实现，tagValue中检索Value通过b+树索引
 * executeExplainStatement          不用管
 * executeShowShardsStatement       实现-待验证
 * executeShowStatsStatement 集群监控再议
+* continuesQuery找到measurement所在class创建continuesQuery，由measurement所在class执行，新建的表名需更新到元数据
 ## 使用注意
 * 环境变量更改后不及时生效，防火墙不关闭，etcd默认不允许外网连接，只允许本地连接
 * 需要下载配置文件etcd.conf.yml.space修改ETCD_LISTEN_CLIENT_URLS，即添加192.168.3.24来允许连接
@@ -134,7 +135,7 @@ listen client url 不能用公网ip?
 * ETCD_LISTEN_CLIENT_URLS="http://129.28.118.191:2379,http://127.0.0.1:2379"
 * ETCD_INITIAL_ADVERTISE_PEER_URLS="http://129.28.128.191:2380"
 * etcdctl is a command line client for etcd. Make sure to set environment variable ETCDCTL_API=3. For etcdctl v2, please check READMEv2.
-* RP失效后，应该删除元数据，以便全局生效？可能不用
+* RP失效后，应该删除元数据，以便全局生效？数据实际会被删除，元数据应该删除
 * 在初始化、新增和删除表时，应该确保newMeasurement和deleteMeasurement至少不为空
 * 新建measurement 写入失败
 * with lease key disappear
