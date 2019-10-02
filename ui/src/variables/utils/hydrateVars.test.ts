@@ -2,27 +2,11 @@
 import {ValueFetcher} from 'src/variables/utils/ValueFetcher'
 import {hydrateVars} from 'src/variables/utils/hydrateVars'
 
-// Types
-import {Variable} from '@influxdata/influx'
-import {CancellationError} from 'src/types/promises'
+// Mocks
+import {createVariable} from 'src/variables/mocks'
 
-const createVariable = (
-  name: string,
-  query: string,
-  selected?: string
-): Variable => ({
-  name,
-  id: name,
-  orgID: 'howdy',
-  selected: selected ? [selected] : [],
-  arguments: {
-    type: 'query',
-    values: {
-      query,
-      language: 'flux',
-    },
-  },
-})
+// Types
+import {CancellationError} from 'src/types/promises'
 
 class FakeFetcher implements ValueFetcher {
   responses = {}
@@ -199,6 +183,7 @@ describe('hydrate vars', () => {
       id: 'b',
       name: 'b',
       orgID: '',
+      labels: [],
       arguments: {
         type: 'map',
         values: {
@@ -240,6 +225,7 @@ describe('hydrate vars', () => {
       id: 'b',
       name: 'b',
       orgID: '',
+      labels: [],
       arguments: {
         type: 'constant',
         values: ['v1', 'v2'],

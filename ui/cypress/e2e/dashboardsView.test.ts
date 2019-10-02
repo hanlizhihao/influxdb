@@ -1,4 +1,4 @@
-import {Organization} from '@influxdata/influx'
+import {Organization} from '../../src/types'
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -8,26 +8,34 @@ describe('Dashboard', () => {
       cy.wrap(body.org).as('org')
     })
 
-    cy.fixture('routes').then(({dashboards}) => {
-      cy.visit(dashboards)
+    cy.fixture('routes').then(({orgs}) => {
+      cy.get<Organization>('@org').then(({id}) => {
+        cy.visit(`${orgs}/${id}/dashboards`)
+      })
     })
   })
 
   it('can edit a dashboards name', () => {
     cy.get<Organization>('@org').then(({id}) => {
       cy.createDashboard(id).then(({body}) => {
-        cy.visit(`/dashboards/${body.id}`)
+        cy.fixture('routes').then(({orgs}) => {
+          cy.visit(`${orgs}/${id}/dashboards/${body.id}`)
+        })
       })
     })
 
     const newName = 'new 🅱️ashboard'
 
     cy.get('.renamable-page-title--title').click()
-    cy.get('.input-field')
+    cy.get('.cf-input-field')
       .type(newName)
       .type('{enter}')
 
-    cy.visit('/dashboards')
+    cy.fixture('routes').then(({orgs}) => {
+      cy.get<Organization>('@org').then(({id}) => {
+        cy.visit(`${orgs}/${id}/dashboards`)
+      })
+    })
 
     cy.getByTestID('dashboard-card').should('contain', newName)
   })
@@ -35,7 +43,9 @@ describe('Dashboard', () => {
   it('can create a cell', () => {
     cy.get<Organization>('@org').then(({id}) => {
       cy.createDashboard(id).then(({body}) => {
-        cy.visit(`/dashboards/${body.id}`)
+        cy.fixture('routes').then(({orgs}) => {
+          cy.visit(`${orgs}/${id}/dashboards/${body.id}`)
+        })
       })
     })
 

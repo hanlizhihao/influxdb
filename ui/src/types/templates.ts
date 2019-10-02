@@ -1,9 +1,10 @@
 import {
   ILabel,
-  Variable,
+  IVariable as Variable,
   IDashboard,
   DocumentListEntry,
   Document,
+  DocumentMeta,
 } from '@influxdata/influx'
 import {View, Cell} from './index'
 
@@ -20,31 +21,46 @@ interface KeyValuePairs {
   [key: string]: any
 }
 
+interface DocumentMetaWithTemplateID extends DocumentMeta {
+  templateID?: string
+}
+
 // Templates
 export interface TemplateBase extends Document {
+  meta: DocumentMetaWithTemplateID
   content: {data: TemplateData; included: TemplateIncluded[]}
-  labels?: ILabel[]
+  labels: ILabel[]
 }
 
 // TODO: be more specific about what attributes can be
 interface TemplateData {
   type: TemplateType
   attributes: KeyValuePairs
-  relationships: {[key in TemplateType]?: {data: IRelationship[]}}
+  relationships: Relationships
 }
 
 interface TemplateIncluded {
   type: TemplateType
   id: string
   attributes: KeyValuePairs
+  relationships?: Relationships
 }
 
-// Template Relationships
-type IRelationship =
-  | CellRelationship
-  | LabelRelationship
-  | ViewRelationship
-  | VariableRelationship
+// enforces key association with relationship type
+export type Relationships = {
+  [key in keyof RelationshipMap]?: {
+    data: OneOrMany<RelationshipMap[key]>
+  }
+}
+
+type OneOrMany<T> = T | T[]
+
+interface RelationshipMap {
+  [TemplateType.Cell]: CellRelationship
+  [TemplateType.Label]: LabelRelationship
+  [TemplateType.View]: ViewRelationship
+  [TemplateType.Variable]: VariableRelationship
+}
 
 export interface CellRelationship {
   type: TemplateType.Cell
@@ -88,6 +104,9 @@ export interface LabelIncluded extends TemplateIncluded {
 export interface VariableIncluded extends TemplateIncluded {
   type: TemplateType.Variable
   attributes: Variable
+  relationships: {
+    [TemplateType.Label]: {data: LabelRelationship[]}
+  }
 }
 
 export type TaskTemplateIncluded = LabelIncluded
@@ -97,6 +116,8 @@ export type DashboardTemplateIncluded =
   | ViewIncluded
   | LabelIncluded
   | VariableIncluded
+
+export type VariableTemplateIncluded = LabelIncluded | VariableIncluded
 
 // Template Datas
 interface TaskTemplateData extends TemplateData {
@@ -117,6 +138,15 @@ interface DashboardTemplateData extends TemplateData {
   }
 }
 
+interface VariableTemplateData extends TemplateData {
+  type: TemplateType.Variable
+  attributes: Variable
+  relationships: {
+    [TemplateType.Label]: {data: LabelRelationship[]}
+    [TemplateType.Variable]: {data: VariableRelationship[]}
+  }
+}
+
 // Templates
 export interface TaskTemplate extends TemplateBase {
   content: {
@@ -132,7 +162,14 @@ export interface DashboardTemplate extends TemplateBase {
   }
 }
 
-export type Template = TaskTemplate | DashboardTemplate
+export interface VariableTemplate extends TemplateBase {
+  content: {
+    data: VariableTemplateData
+    included: VariableTemplateIncluded[]
+  }
+}
+
+export type Template = TaskTemplate | DashboardTemplate | VariableTemplate
 
 export interface TemplateSummary extends DocumentListEntry {
   labels: ILabel[]

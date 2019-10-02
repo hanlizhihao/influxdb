@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/influxdata/influxdb"
@@ -47,20 +48,6 @@ func (s *Service) bucketsIndexBucket(tx Tx) (Bucket, error) {
 	return b, nil
 }
 
-func (s *Service) setOrganizationOnBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
-	span, ctx := tracing.StartSpanFromContext(ctx)
-	defer span.Finish()
-
-	o, err := s.findOrganizationByID(ctx, tx, b.OrganizationID)
-	if err != nil {
-		return &influxdb.Error{
-			Err: err,
-		}
-	}
-	b.Organization = o.Name
-	return nil
-}
-
 // FindBucketByID retrieves a bucket by id.
 func (s *Service) FindBucketByID(ctx context.Context, id influxdb.ID) (*influxdb.Bucket, error) {
 	span, ctx := tracing.StartSpanFromContext(ctx)
@@ -87,7 +74,7 @@ func (s *Service) FindBucketByID(ctx context.Context, id influxdb.ID) (*influxdb
 }
 
 func (s *Service) findBucketByID(ctx context.Context, tx Tx, id influxdb.ID) (*influxdb.Bucket, error) {
-	span, ctx := tracing.StartSpanFromContext(ctx)
+	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
 	var b influxdb.Bucket
@@ -123,12 +110,6 @@ func (s *Service) findBucketByID(ctx context.Context, tx Tx, id influxdb.ID) (*i
 		}
 	}
 
-	if err := s.setOrganizationOnBucket(ctx, tx, &b); err != nil {
-		return nil, &influxdb.Error{
-			Err: err,
-		}
-	}
-
 	return &b, nil
 }
 
@@ -138,8 +119,14 @@ func (s *Service) FindBucketByName(ctx context.Context, orgID influxdb.ID, n str
 	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
+	internal, err := s.findSystemBucket(n)
+	// if found in our internals list, return mock
+	if err == nil {
+		internal.OrgID = orgID
+		return internal, nil
+	}
+
 	var b *influxdb.Bucket
-	var err error
 
 	err = s.kv.View(ctx, func(tx Tx) error {
 		bkt, pe := s.findBucketByName(ctx, tx, orgID, n)
@@ -154,13 +141,39 @@ func (s *Service) FindBucketByName(ctx context.Context, orgID influxdb.ID, n str
 	return b, err
 }
 
+func (s *Service) findSystemBucket(n string) (*influxdb.Bucket, error) {
+	switch n {
+	case "_tasks":
+		return &influxdb.Bucket{
+			ID:              influxdb.TasksSystemBucketID,
+			Type:            influxdb.BucketTypeSystem,
+			Name:            "_tasks",
+			RetentionPeriod: time.Hour * 24 * 3,
+			Description:     "System bucket for task logs",
+		}, nil
+	case "_monitoring":
+		return &influxdb.Bucket{
+			ID:              influxdb.MonitoringSystemBucketID,
+			Type:            influxdb.BucketTypeSystem,
+			Name:            "_monitoring",
+			RetentionPeriod: time.Hour * 24 * 7,
+			Description:     "System bucket for monitoring logs",
+		}, nil
+	default:
+		return nil, &influxdb.Error{
+			Code: influxdb.ENotFound,
+			Msg:  fmt.Sprintf("system bucket %q not found", n),
+		}
+	}
+}
+
 func (s *Service) findBucketByName(ctx context.Context, tx Tx, orgID influxdb.ID, n string) (*influxdb.Bucket, error) {
 	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
 	b := &influxdb.Bucket{
-		OrganizationID: orgID,
-		Name:           n,
+		OrgID: orgID,
+		Name:  n,
 	}
 	key, err := bucketIndexKey(b)
 	if err != nil {
@@ -179,7 +192,7 @@ func (s *Service) findBucketByName(ctx context.Context, tx Tx, orgID influxdb.ID
 	if IsNotFound(err) {
 		return nil, &influxdb.Error{
 			Code: influxdb.ENotFound,
-			Msg:  "bucket not found",
+			Msg:  fmt.Sprintf("bucket %q not found", n),
 		}
 	}
 
@@ -221,8 +234,8 @@ func (s *Service) FindBucket(ctx context.Context, filter influxdb.BucketFilter) 
 	}
 
 	err = s.kv.View(ctx, func(tx Tx) error {
-		if filter.Organization != nil {
-			o, err := s.findOrganizationByName(ctx, tx, *filter.Organization)
+		if filter.Org != nil {
+			o, err := s.findOrganizationByName(ctx, tx, *filter.Org)
 			if err != nil {
 				return err
 			}
@@ -264,7 +277,7 @@ func filterBucketsFn(filter influxdb.BucketFilter) func(b *influxdb.Bucket) bool
 
 	if filter.Name != nil && filter.OrganizationID != nil {
 		return func(b *influxdb.Bucket) bool {
-			return b.Name == *filter.Name && b.OrganizationID == *filter.OrganizationID
+			return b.Name == *filter.Name && b.OrgID == *filter.OrganizationID
 		}
 	}
 
@@ -276,7 +289,7 @@ func filterBucketsFn(filter influxdb.BucketFilter) func(b *influxdb.Bucket) bool
 
 	if filter.OrganizationID != nil {
 		return func(b *influxdb.Bucket) bool {
-			return b.OrganizationID == *filter.OrganizationID
+			return b.OrgID == *filter.OrganizationID
 		}
 	}
 
@@ -322,6 +335,17 @@ func (s *Service) FindBuckets(ctx context.Context, filter influxdb.BucketFilter,
 		return nil, 0, err
 	}
 
+	tasks, error := s.findSystemBucket("_tasks")
+	if error != nil {
+		return bs, 0, error
+	}
+
+	monitoring, error := s.findSystemBucket("_monitoring")
+	if error != nil {
+		return bs, 0, error
+	}
+	bs = append(bs, tasks, monitoring)
+
 	return bs, len(bs), nil
 }
 
@@ -330,8 +354,8 @@ func (s *Service) findBuckets(ctx context.Context, tx Tx, filter influxdb.Bucket
 	defer span.Finish()
 
 	bs := []*influxdb.Bucket{}
-	if filter.Organization != nil {
-		o, err := s.findOrganizationByName(ctx, tx, *filter.Organization)
+	if filter.Org != nil {
+		o, err := s.findOrganizationByName(ctx, tx, *filter.Org)
 		if err != nil {
 			return nil, &influxdb.Error{
 				Err: err,
@@ -383,34 +407,29 @@ func (s *Service) CreateBucket(ctx context.Context, b *influxdb.Bucket) error {
 	})
 }
 
-func (s *Service) createBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
-	if b.OrganizationID.Valid() {
+func (s *Service) createBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) (err error) {
+	if b.OrgID.Valid() {
 		span, ctx := tracing.StartSpanFromContext(ctx)
 		defer span.Finish()
 
-		_, pe := s.findOrganizationByID(ctx, tx, b.OrganizationID)
+		_, pe := s.findOrganizationByID(ctx, tx, b.OrgID)
 		if pe != nil {
 			return &influxdb.Error{
 				Err: pe,
 			}
 		}
-	} else {
-		o, pe := s.findOrganizationByName(ctx, tx, b.Organization)
-		if pe != nil {
-			return &influxdb.Error{
-				Err: pe,
-			}
-		}
-		b.OrganizationID = o.ID
 	}
 
-	// if the bucket name is not unique for this organization, then, do not
-	// allow creation.
-	if err := s.uniqueBucketName(ctx, tx, b); err != nil {
+	if err := s.validBucketName(ctx, tx, b); err != nil {
 		return err
 	}
 
-	b.ID = s.IDGenerator.ID()
+	if b.ID, err = s.generateBucketID(ctx, tx); err != nil {
+		return err
+	}
+
+	b.CreatedAt = s.Now()
+	b.UpdatedAt = s.Now()
 
 	if err := s.appendBucketEventToLog(ctx, tx, b.ID, bucketCreatedEvent); err != nil {
 		return &influxdb.Error{
@@ -426,6 +445,10 @@ func (s *Service) createBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) e
 		return err
 	}
 	return nil
+}
+
+func (s *Service) generateBucketID(ctx context.Context, tx Tx) (influxdb.ID, error) {
+	return s.generateSafeID(ctx, tx, bucketBucket)
 }
 
 // PutBucket will put a bucket without setting an ID.
@@ -446,7 +469,7 @@ func (s *Service) createBucketUserResourceMappings(ctx context.Context, tx Tx, b
 
 	ms, err := s.findUserResourceMappings(ctx, tx, influxdb.UserResourceMappingFilter{
 		ResourceType: influxdb.OrgsResourceType,
-		ResourceID:   b.OrganizationID,
+		ResourceID:   b.OrgID,
 	})
 	if err != nil {
 		return &influxdb.Error{
@@ -471,10 +494,12 @@ func (s *Service) createBucketUserResourceMappings(ctx context.Context, tx Tx, b
 }
 
 func (s *Service) putBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
-	span, ctx := tracing.StartSpanFromContext(ctx)
+	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	b.Organization = ""
+	// TODO(jade): remove this after we support storing system buckets
+	b.Type = influxdb.BucketTypeUser
+
 	v, err := json.Marshal(b)
 	if err != nil {
 		return &influxdb.Error{
@@ -510,12 +535,12 @@ func (s *Service) putBucket(ctx context.Context, tx Tx, b *influxdb.Bucket) erro
 			Err: err,
 		}
 	}
-	return s.setOrganizationOnBucket(ctx, tx, b)
+	return nil
 }
 
 // bucketIndexKey is a combination of the orgID and the bucket name.
 func bucketIndexKey(b *influxdb.Bucket) ([]byte, error) {
-	orgID, err := b.OrganizationID.Encode()
+	orgID, err := b.OrgID.Encode()
 	if err != nil {
 		return nil, &influxdb.Error{
 			Code: influxdb.EInvalid,
@@ -530,7 +555,7 @@ func bucketIndexKey(b *influxdb.Bucket) ([]byte, error) {
 
 // forEachBucket will iterate through all buckets while fn returns true.
 func (s *Service) forEachBucket(ctx context.Context, tx Tx, descending bool, fn func(*influxdb.Bucket) bool) error {
-	span, ctx := tracing.StartSpanFromContext(ctx)
+	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
 	bkt, err := s.bucketsBucket(tx)
@@ -555,9 +580,6 @@ func (s *Service) forEachBucket(ctx context.Context, tx Tx, descending bool, fn 
 		if err := json.Unmarshal(v, b); err != nil {
 			return err
 		}
-		if err := s.setOrganizationOnBucket(ctx, tx, b); err != nil {
-			return err
-		}
 		if !fn(b) {
 			break
 		}
@@ -572,7 +594,7 @@ func (s *Service) forEachBucket(ctx context.Context, tx Tx, descending bool, fn 
 	return nil
 }
 
-func (s *Service) uniqueBucketName(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
+func (s *Service) validBucketName(ctx context.Context, tx Tx, b *influxdb.Bucket) error {
 	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
@@ -587,6 +609,12 @@ func (s *Service) uniqueBucketName(ctx context.Context, tx Tx, b *influxdb.Bucke
 	if err == NotUniqueError {
 		return BucketAlreadyExistsError(b)
 	}
+
+	// names starting with an underscore are reserved for system buckets
+	if strings.HasPrefix(b.Name, "_") {
+		return ReservedBucketNameError(b)
+	}
+
 	return err
 }
 
@@ -621,8 +649,12 @@ func (s *Service) updateBucket(ctx context.Context, tx Tx, id influxdb.ID, upd i
 		b.RetentionPeriod = *upd.RetentionPeriod
 	}
 
+	if upd.Description != nil {
+		b.Description = *upd.Description
+	}
+
 	if upd.Name != nil {
-		b0, err := s.findBucketByName(ctx, tx, b.OrganizationID, *upd.Name)
+		b0, err := s.findBucketByName(ctx, tx, b.OrgID, *upd.Name)
 		if err == nil && b0.ID != id {
 			return nil, &influxdb.Error{
 				Code: influxdb.EConflict,
@@ -644,15 +676,13 @@ func (s *Service) updateBucket(ctx context.Context, tx Tx, id influxdb.ID, upd i
 		b.Name = *upd.Name
 	}
 
+	b.UpdatedAt = s.Now()
+
 	if err := s.appendBucketEventToLog(ctx, tx, b.ID, bucketUpdatedEvent); err != nil {
 		return nil, err
 	}
 
 	if err := s.putBucket(ctx, tx, b); err != nil {
-		return nil, err
-	}
-
-	if err := s.setOrganizationOnBucket(ctx, tx, b); err != nil {
 		return nil, err
 	}
 
@@ -791,7 +821,7 @@ func (s *Service) appendBucketEventToLog(ctx context.Context, tx Tx, id influxdb
 		return err
 	}
 
-	return s.addLogEntry(ctx, tx, k, v, s.time())
+	return s.addLogEntry(ctx, tx, k, v, s.Now())
 }
 
 // UnexpectedBucketError is used when the error comes from an internal system.
@@ -819,5 +849,15 @@ func BucketAlreadyExistsError(b *influxdb.Bucket) error {
 		Code: influxdb.EConflict,
 		Op:   "kv/bucket",
 		Msg:  fmt.Sprintf("bucket with name %s already exists", b.Name),
+	}
+}
+
+// ReservedBucketNameError is used when creating a bucket with a name that
+// starts with an underscore.
+func ReservedBucketNameError(b *influxdb.Bucket) error {
+	return &influxdb.Error{
+		Code: influxdb.EInvalid,
+		Op:   "kv/bucket",
+		Msg:  fmt.Sprintf("bucket name %s is invalid. Buckets may not start with underscore", b.Name),
 	}
 }

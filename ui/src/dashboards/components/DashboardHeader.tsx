@@ -1,17 +1,21 @@
 // Libraries
 import React, {Component} from 'react'
+import _ from 'lodash'
 
 // Components
-import {Page} from 'src/pageLayout'
 import AutoRefreshDropdown from 'src/shared/components/dropdown_auto_refresh/AutoRefreshDropdown'
-import TimeRangeDropdown from 'src/shared/components/TimeRangeDropdown'
+import TimeRangeDropdown, {
+  RangeType,
+} from 'src/shared/components/TimeRangeDropdown'
 import GraphTips from 'src/shared/components/graph_tips/GraphTips'
 import RenamablePageTitle from 'src/pageLayout/components/RenamablePageTitle'
+import TimeZoneDropdown from 'src/shared/components/TimeZoneDropdown'
 import {
+  SquareButton,
   Button,
   IconFont,
-  ButtonShape,
   ComponentColor,
+  Page,
 } from '@influxdata/clockface'
 
 // Constants
@@ -24,30 +28,29 @@ import {
 import * as AppActions from 'src/types/actions/app'
 import * as QueriesModels from 'src/types/queries'
 import {Dashboard} from '@influxdata/influx'
+import {AutoRefresh, AutoRefreshStatus, Organization} from 'src/types'
 
-interface DefaultProps {
-  zoomedTimeRange: QueriesModels.TimeRange
-}
-
-interface Props extends DefaultProps {
+interface Props {
+  org: Organization
   activeDashboard: string
   dashboard: Dashboard
   timeRange: QueriesModels.TimeRange
-  autoRefresh: number
+  autoRefresh: AutoRefresh
   handleChooseTimeRange: (timeRange: QueriesModels.TimeRange) => void
-  handleChooseAutoRefresh: AppActions.SetAutoRefreshActionCreator
+  handleChooseAutoRefresh: (autoRefreshInterval: number) => void
+  onSetAutoRefreshStatus: (status: AutoRefreshStatus) => void
   onManualRefresh: () => void
   handleClickPresentationButton: AppActions.DelayEnablePresentationModeDispatcher
   onAddCell: () => void
   onRenameDashboard: (name: string) => Promise<void>
   toggleVariablesControlBar: () => void
   isShowingVariablesControlBar: boolean
-  isHidden: boolean
   onAddNote: () => void
+  zoomedTimeRange: QueriesModels.TimeRange
 }
 
 export default class DashboardHeader extends Component<Props> {
-  public static defaultProps: DefaultProps = {
+  public static defaultProps = {
     zoomedTimeRange: {
       upper: null,
       lower: null,
@@ -56,24 +59,25 @@ export default class DashboardHeader extends Component<Props> {
 
   public render() {
     const {
+      org,
       handleChooseAutoRefresh,
       onManualRefresh,
-      autoRefresh,
-      handleChooseTimeRange,
+      timeRange,
       timeRange: {upper, lower},
       zoomedTimeRange: {upper: zoomedUpper, lower: zoomedLower},
-      isHidden,
       toggleVariablesControlBar,
       isShowingVariablesControlBar,
       onAddCell,
       onRenameDashboard,
       activeDashboard,
+      autoRefresh,
     } = this.props
 
     return (
-      <Page.Header fullWidth={true} inPresentationMode={isHidden}>
+      <Page.Header fullWidth={true}>
         <Page.Header.Left>
           <RenamablePageTitle
+            prefix={_.get(org, 'name', '')}
             maxLength={DASHBOARD_NAME_MAX_LENGTH}
             onRename={onRenameDashboard}
             name={activeDashboard}
@@ -94,31 +98,33 @@ export default class DashboardHeader extends Component<Props> {
             text="Add Note"
             onClick={this.handleAddNote}
           />
+          <TimeZoneDropdown />
           <AutoRefreshDropdown
             onChoose={handleChooseAutoRefresh}
             onManualRefresh={onManualRefresh}
             selected={autoRefresh}
           />
           <TimeRangeDropdown
-            onSetTimeRange={handleChooseTimeRange}
+            onSetTimeRange={this.handleChooseTimeRange}
             timeRange={{
+              ...timeRange,
               upper: zoomedUpper || upper,
               lower: zoomedLower || lower,
             }}
           />
           <Button
+            icon={IconFont.Cube}
             text="Variables"
             onClick={toggleVariablesControlBar}
             color={
               isShowingVariablesControlBar
-                ? ComponentColor.Primary
+                ? ComponentColor.Secondary
                 : ComponentColor.Default
             }
           />
-          <Button
+          <SquareButton
             icon={IconFont.ExpandA}
             titleText="Enter Presentation Mode"
-            shape={ButtonShape.Square}
             onClick={this.handleClickPresentationButton}
           />
         </Page.Header.Right>
@@ -132,5 +138,32 @@ export default class DashboardHeader extends Component<Props> {
 
   private handleClickPresentationButton = (): void => {
     this.props.handleClickPresentationButton()
+  }
+
+  private handleChooseTimeRange = (
+    timeRange: QueriesModels.TimeRange,
+    rangeType: RangeType = RangeType.Relative
+  ) => {
+    const {
+      autoRefresh,
+      onSetAutoRefreshStatus,
+      handleChooseTimeRange,
+    } = this.props
+
+    handleChooseTimeRange(timeRange)
+
+    if (rangeType === RangeType.Absolute) {
+      onSetAutoRefreshStatus(AutoRefreshStatus.Disabled)
+      return
+    }
+
+    if (autoRefresh.status === AutoRefreshStatus.Disabled) {
+      if (autoRefresh.interval === 0) {
+        onSetAutoRefreshStatus(AutoRefreshStatus.Paused)
+        return
+      }
+
+      onSetAutoRefreshStatus(AutoRefreshStatus.Active)
+    }
   }
 }

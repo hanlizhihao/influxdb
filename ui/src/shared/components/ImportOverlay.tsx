@@ -1,18 +1,12 @@
 // Libraries
-import React, {PureComponent} from 'react'
-import {get} from 'lodash'
+import React, {PureComponent, ChangeEvent} from 'react'
 import {withRouter, WithRouterProps} from 'react-router'
-import {connect} from 'react-redux'
 
 // Components
-import {Form, Radio, Button} from '@influxdata/clockface'
-import {Overlay} from 'src/clockface'
+import {Form, Radio, Button, TextArea, Overlay} from '@influxdata/clockface'
 import DragAndDrop from 'src/shared/components/DragAndDrop'
-import OrgDropdown from 'src/shared/components/OrgDropdown'
-import TextArea from 'src/clockface/components/inputs/TextArea'
 
 // Types
-import {AppState, Organization} from 'src/types'
 import {
   ButtonType,
   ComponentColor,
@@ -24,24 +18,19 @@ enum ImportOption {
   Paste = 'paste',
 }
 
-interface OwnProps extends WithRouterProps {
+interface OwnProps {
   onDismissOverlay: () => void
   resourceName: string
   onSubmit: (importString: string, orgID: string) => void
   isVisible?: boolean
 }
 
-interface StateProps {
-  orgs: Organization[]
-}
-
 interface State {
   selectedImportOption: ImportOption
   importContent: string
-  orgID: string
 }
 
-type Props = StateProps & OwnProps
+type Props = OwnProps & WithRouterProps
 
 class ImportOverlay extends PureComponent<Props, State> {
   public static defaultProps: {isVisible: boolean} = {
@@ -51,18 +40,17 @@ class ImportOverlay extends PureComponent<Props, State> {
   public state: State = {
     selectedImportOption: ImportOption.Upload,
     importContent: '',
-    orgID: this.startingOrgID,
   }
 
   public render() {
     const {isVisible, resourceName} = this.props
-    const {orgID, selectedImportOption} = this.state
+    const {selectedImportOption} = this.state
 
     return (
       <Overlay visible={isVisible}>
         <Overlay.Container maxWidth={800}>
           <Form onSubmit={this.submit}>
-            <Overlay.Heading
+            <Overlay.Header
               title={`Import ${resourceName}`}
               onDismiss={this.onDismiss}
             />
@@ -90,28 +78,12 @@ class ImportOverlay extends PureComponent<Props, State> {
                 </Radio>
               </div>
               {this.importBody}
-              <div className="import--dropdown">
-                <Form.Element label="Destination Organization">
-                  <OrgDropdown
-                    selectedOrgID={orgID}
-                    onSelectOrg={this.handleSelectOrg}
-                  />
-                </Form.Element>
-              </div>
             </Overlay.Body>
             <Overlay.Footer>{this.submitButton}</Overlay.Footer>
           </Form>
         </Overlay.Container>
       </Overlay>
     )
-  }
-
-  private get startingOrgID(): string {
-    return get(this.props.params, 'orgID', '') || this.firstOrgID
-  }
-
-  private get firstOrgID(): string {
-    return get(this.props.orgs, '0.id', '')
   }
 
   private get importBody(): JSX.Element {
@@ -130,12 +102,16 @@ class ImportOverlay extends PureComponent<Props, State> {
     }
     if (selectedImportOption === ImportOption.Paste) {
       return (
-        <TextArea
-          value={importContent}
-          onChange={this.handleSetImportContent}
-        />
+        <TextArea value={importContent} onChange={this.handleChangeTextArea} />
       )
     }
+  }
+
+  private handleChangeTextArea = (
+    e: ChangeEvent<HTMLTextAreaElement>
+  ): void => {
+    const importContent = e.target.value
+    this.handleSetImportContent(importContent)
   }
 
   private get submitButton(): JSX.Element {
@@ -158,16 +134,19 @@ class ImportOverlay extends PureComponent<Props, State> {
     )
   }
 
-  private submit = () => {
-    const {importContent, orgID} = this.state
-    const {onSubmit} = this.props
+  private submit = async () => {
+    const {importContent} = this.state
+    const {
+      onSubmit,
+      params: {orgID},
+    } = this.props
 
-    onSubmit(importContent, orgID)
+    await onSubmit(importContent, orgID)
     this.clearImportContent()
   }
+
   private clearImportContent = () => {
-    this.handleSetImportContent('')
-    this.handleSelectOrg(this.startingOrgID)
+    this.setState({importContent: ''})
   }
 
   private onDismiss = () => {
@@ -181,18 +160,9 @@ class ImportOverlay extends PureComponent<Props, State> {
     this.setState({selectedImportOption})
   }
 
-  private handleSetImportContent = (importContent: string): void => {
+  private handleSetImportContent = (importContent: string) => {
     this.setState({importContent})
-  }
-
-  private handleSelectOrg = (orgID: string) => {
-    this.setState({orgID})
   }
 }
 
-const mstp = ({orgs}: AppState): StateProps => ({orgs})
-
-export default connect<StateProps, {}, OwnProps>(
-  mstp,
-  null
-)(withRouter(ImportOverlay))
+export default withRouter<OwnProps>(ImportOverlay)

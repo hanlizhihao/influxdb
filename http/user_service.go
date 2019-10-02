@@ -17,6 +17,7 @@ import (
 // UserBackend is all services and associated parameters required to construct
 // the UserHandler.
 type UserBackend struct {
+	influxdb.HTTPErrorHandler
 	Logger                  *zap.Logger
 	UserService             influxdb.UserService
 	UserOperationLogService influxdb.UserOperationLogService
@@ -26,6 +27,7 @@ type UserBackend struct {
 // NewUserBackend creates a UserBackend using information in the APIBackend.
 func NewUserBackend(b *APIBackend) *UserBackend {
 	return &UserBackend{
+		HTTPErrorHandler:        b.HTTPErrorHandler,
 		Logger:                  b.Logger.With(zap.String("handler", "user")),
 		UserService:             b.UserService,
 		UserOperationLogService: b.UserOperationLogService,
@@ -36,6 +38,7 @@ func NewUserBackend(b *APIBackend) *UserBackend {
 // UserHandler represents an HTTP API handler for users.
 type UserHandler struct {
 	*httprouter.Router
+	influxdb.HTTPErrorHandler
 	Logger                  *zap.Logger
 	UserService             influxdb.UserService
 	UserOperationLogService influxdb.UserOperationLogService
@@ -54,8 +57,9 @@ const (
 // NewUserHandler returns a new instance of UserHandler.
 func NewUserHandler(b *UserBackend) *UserHandler {
 	h := &UserHandler{
-		Router: NewRouter(),
-		Logger: b.Logger,
+		Router:           NewRouter(b.HTTPErrorHandler),
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		Logger:           b.Logger,
 
 		UserService:             b.UserService,
 		UserOperationLogService: b.UserOperationLogService,
@@ -95,10 +99,10 @@ func (h *UserHandler) handlePutUserPassword(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	_, err := h.putPassword(ctx, w, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
+	h.Logger.Debug("user password updated")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -137,20 +141,24 @@ func decodePasswordResetRequest(ctx context.Context, r *http.Request) (*password
 // handlePostUser is the HTTP handler for the POST /api/v2/users route.
 func (h *UserHandler) handlePostUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodePostUserRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
+	}
+
+	if req.User.Status == "" {
+		req.User.Status = influxdb.Active
 	}
 
 	if err := h.UserService.CreateUser(ctx, req.User); err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
+	h.Logger.Debug("user created", zap.String("user", fmt.Sprint(req.User)))
 
 	if err := encodeResponse(ctx, w, http.StatusCreated, newUserResponse(req.User)); err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 }
@@ -176,48 +184,41 @@ func (h *UserHandler) handleGetMe(w http.ResponseWriter, r *http.Request) {
 
 	a, err := icontext.GetAuthorizer(ctx)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	var id influxdb.ID
-	switch s := a.(type) {
-	case *influxdb.Session:
-		id = s.UserID
-	case *influxdb.Authorization:
-		id = s.UserID
-	}
+	id := a.GetUserID()
+	user, err := h.UserService.FindUserByID(ctx, id)
 
-	b, err := h.UserService.FindUserByID(ctx, id)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	if err := encodeResponse(ctx, w, http.StatusOK, newUserResponse(b)); err != nil {
-		EncodeError(ctx, err, w)
-		return
+	if err := encodeResponse(ctx, w, http.StatusOK, newUserResponse(user)); err != nil {
+		h.HandleHTTPError(ctx, err, w)
 	}
 }
 
 // handleGetUser is the HTTP handler for the GET /api/v2/users/:id route.
 func (h *UserHandler) handleGetUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeGetUserRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	b, err := h.UserService.FindUserByID(ctx, req.UserID)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
+	h.Logger.Debug("user retrieved", zap.String("user", fmt.Sprint(b)))
 
 	if err := encodeResponse(ctx, w, http.StatusOK, newUserResponse(b)); err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 }
@@ -251,17 +252,17 @@ func decodeGetUserRequest(ctx context.Context, r *http.Request) (*getUserRequest
 // handleDeleteUser is the HTTP handler for the DELETE /api/v2/users/:id route.
 func (h *UserHandler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeDeleteUserRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	if err := h.UserService.DeleteUser(ctx, req.UserID); err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
+	h.Logger.Debug("user deleted", zap.String("userID", fmt.Sprint(req.UserID)))
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -334,22 +335,22 @@ func newUserResponse(u *influxdb.User) *userResponse {
 // handleGetUsers is the HTTP handler for the GET /api/v2/users route.
 func (h *UserHandler) handleGetUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeGetUsersRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	users, _, err := h.UserService.FindUsers(ctx, req.filter)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
+	h.Logger.Debug("users retrieved", zap.String("users", fmt.Sprint(users)))
 
 	err = encodeResponse(ctx, w, http.StatusOK, newUsersResponse(users))
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 }
@@ -380,21 +381,21 @@ func decodeGetUsersRequest(ctx context.Context, r *http.Request) (*getUsersReque
 // handlePatchUser is the HTTP handler for the PATCH /api/v2/users/:id route.
 func (h *UserHandler) handlePatchUser(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodePatchUserRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	b, err := h.UserService.UpdateUser(ctx, req.UserID, req.Update)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
+	h.Logger.Debug("users updated", zap.String("user", fmt.Sprint(b)))
 
 	if err := encodeResponse(ctx, w, http.StatusOK, newUserResponse(b)); err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 }
@@ -424,6 +425,10 @@ func decodePatchUserRequest(ctx context.Context, r *http.Request) (*patchUserReq
 		return nil, err
 	}
 
+	if err := upd.Valid(); err != nil {
+		return nil, err
+	}
+
 	return &patchUserRequest{
 		Update: upd,
 		UserID: i,
@@ -441,7 +446,7 @@ type UserService struct {
 
 // FindMe returns user information about the owner of the token
 func (s *UserService) FindMe(ctx context.Context, id influxdb.ID) (*influxdb.User, error) {
-	url, err := newURL(s.Addr, mePath)
+	url, err := NewURL(s.Addr, mePath)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +457,7 @@ func (s *UserService) FindMe(ctx context.Context, id influxdb.ID) (*influxdb.Use
 	}
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
@@ -472,7 +477,7 @@ func (s *UserService) FindMe(ctx context.Context, id influxdb.ID) (*influxdb.Use
 
 // FindUserByID returns a single user by ID.
 func (s *UserService) FindUserByID(ctx context.Context, id influxdb.ID) (*influxdb.User, error) {
-	url, err := newURL(s.Addr, userIDPath(id))
+	url, err := NewURL(s.Addr, userIDPath(id))
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +488,7 @@ func (s *UserService) FindUserByID(ctx context.Context, id influxdb.ID) (*influx
 	}
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
@@ -532,7 +537,7 @@ func (s *UserService) FindUser(ctx context.Context, filter influxdb.UserFilter) 
 // FindUsers returns a list of users that match filter and the total count of matching users.
 // Additional options provide pagination & sorting.
 func (s *UserService) FindUsers(ctx context.Context, filter influxdb.UserFilter, opt ...influxdb.FindOptions) ([]*influxdb.User, int, error) {
-	url, err := newURL(s.Addr, usersPath)
+	url, err := NewURL(s.Addr, usersPath)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -553,7 +558,7 @@ func (s *UserService) FindUsers(ctx context.Context, filter influxdb.UserFilter,
 	req.URL.RawQuery = query.Encode()
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -575,7 +580,7 @@ func (s *UserService) FindUsers(ctx context.Context, filter influxdb.UserFilter,
 
 // CreateUser creates a new user and sets u.ID with the new identifier.
 func (s *UserService) CreateUser(ctx context.Context, u *influxdb.User) error {
-	url, err := newURL(s.Addr, usersPath)
+	url, err := NewURL(s.Addr, usersPath)
 	if err != nil {
 		return err
 	}
@@ -593,7 +598,7 @@ func (s *UserService) CreateUser(ctx context.Context, u *influxdb.User) error {
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -616,7 +621,7 @@ func (s *UserService) CreateUser(ctx context.Context, u *influxdb.User) error {
 // UpdateUser updates a single user with changeset.
 // Returns the new user state after update.
 func (s *UserService) UpdateUser(ctx context.Context, id influxdb.ID, upd influxdb.UserUpdate) (*influxdb.User, error) {
-	url, err := newURL(s.Addr, userIDPath(id))
+	url, err := NewURL(s.Addr, userIDPath(id))
 	if err != nil {
 		return nil, err
 	}
@@ -634,7 +639,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id influxdb.ID, upd influx
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -656,7 +661,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id influxdb.ID, upd influx
 
 // DeleteUser removes a user by ID.
 func (s *UserService) DeleteUser(ctx context.Context, id influxdb.ID) error {
-	url, err := newURL(s.Addr, userIDPath(id))
+	url, err := NewURL(s.Addr, userIDPath(id))
 	if err != nil {
 		return err
 	}
@@ -667,7 +672,7 @@ func (s *UserService) DeleteUser(ctx context.Context, id influxdb.ID) error {
 	}
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return err
@@ -684,21 +689,21 @@ func userIDPath(id influxdb.ID) string {
 // hanldeGetUserLog retrieves a user log by the users ID.
 func (h *UserHandler) handleGetUserLog(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeGetUserLogRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	log, _, err := h.UserOperationLogService.GetUserOperationLog(ctx, req.UserID, req.opts)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
+	h.Logger.Debug("user log retrieved", zap.String("log", fmt.Sprint(log)))
 
 	if err := encodeResponse(ctx, w, http.StatusOK, newUserLogResponse(req.UserID, log)); err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 }

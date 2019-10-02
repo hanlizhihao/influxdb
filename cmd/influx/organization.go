@@ -6,10 +6,8 @@ import (
 	"os"
 
 	platform "github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/bolt"
 	"github.com/influxdata/influxdb/cmd/influx/internal"
 	"github.com/influxdata/influxdb/http"
-	"github.com/influxdata/influxdb/internal/fs"
 	"github.com/spf13/cobra"
 )
 
@@ -47,17 +45,7 @@ func init() {
 
 func newOrganizationService(f Flags) (platform.OrganizationService, error) {
 	if flags.local {
-		boltFile, err := fs.BoltFile()
-		if err != nil {
-			return nil, err
-		}
-		c := bolt.NewClient()
-		c.Path = boltFile
-		if err := c.Open(context.Background()); err != nil {
-			return nil, err
-		}
-
-		return c, nil
+		return newLocalKVService()
 	}
 	return &http.OrganizationService{
 		Addr:  flags.host,
@@ -358,7 +346,7 @@ func init() {
 	organizationMembersCmd.AddCommand(organizationMembersListCmd)
 }
 
-// Add Member
+// OrganizationMembersAddFlags includes flags to add a member
 type OrganizationMembersAddFlags struct {
 	name     string
 	id       string
@@ -376,14 +364,9 @@ func organizationMembersAddF(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("must specify exactly one of id and name")
 	}
 
-	orgSvc := &http.OrganizationService{
-		Addr:  flags.host,
-		Token: flags.token,
-	}
-
-	mappingS := &http.UserResourceMappingService{
-		Addr:  flags.host,
-		Token: flags.token,
+	orgSvc, err := newOrganizationService(flags)
+	if err != nil {
+		return fmt.Errorf("failed to initialize org service client: %v", err)
 	}
 
 	filter := platform.OrganizationFilter{}
@@ -411,17 +394,13 @@ func organizationMembersAddF(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to decode member id %s: %v", organizationMembersAddFlags.memberID, err)
 	}
 
-	mapping := &platform.UserResourceMapping{
-		ResourceID: organization.ID,
-		UserID:     memberID,
-		UserType:   platform.Member,
-	}
-
-	if err = mappingS.CreateUserResourceMapping(context.Background(), mapping); err != nil {
-		return fmt.Errorf("failed to add member: %v", err)
-	}
-
-	return nil
+	return membersAddF(platform.UserResourceMapping{
+		ResourceID:   organization.ID,
+		ResourceType: platform.OrgsResourceType,
+		MappingType:  platform.UserMappingType,
+		UserID:       memberID,
+		UserType:     platform.Member,
+	}, flags)
 }
 
 func init() {
@@ -439,7 +418,7 @@ func init() {
 	organizationMembersCmd.AddCommand(organizationMembersAddCmd)
 }
 
-// Remove Member
+// OrganizationMembersRemoveFlags includes flags to remove a Member
 type OrganizationMembersRemoveFlags struct {
 	name     string
 	id       string
@@ -457,14 +436,9 @@ func organizationMembersRemoveF(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("must specify exactly one of id and name")
 	}
 
-	orgSvc := &http.OrganizationService{
-		Addr:  flags.host,
-		Token: flags.token,
-	}
-
-	mappingS := &http.UserResourceMappingService{
-		Addr:  flags.host,
-		Token: flags.token,
+	orgSvc, err := newOrganizationService(flags)
+	if err != nil {
+		return fmt.Errorf("failed to initialize org service client: %v", err)
 	}
 
 	filter := platform.OrganizationFilter{}
@@ -492,11 +466,7 @@ func organizationMembersRemoveF(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to decode member id %s: %v", organizationMembersRemoveFlags.memberID, err)
 	}
 
-	if err = mappingS.DeleteUserResourceMapping(context.Background(), organization.ID, memberID); err != nil {
-		return fmt.Errorf("failed to remove member: %v", err)
-	}
-
-	return nil
+	return membersRemoveF(organization.ID, memberID, flags)
 }
 
 func init() {

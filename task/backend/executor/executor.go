@@ -11,6 +11,7 @@ import (
 	"github.com/influxdata/flux/lang"
 	"github.com/influxdata/influxdb"
 	icontext "github.com/influxdata/influxdb/context"
+	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/task/backend"
@@ -21,7 +22,7 @@ import (
 type queryServiceExecutor struct {
 	qs     query.QueryService
 	as     influxdb.AuthorizationService
-	st     backend.Store
+	ts     influxdb.TaskService
 	logger *zap.Logger
 	wg     sync.WaitGroup
 }
@@ -31,23 +32,32 @@ var _ backend.Executor = (*queryServiceExecutor)(nil)
 // NewQueryServiceExecutor returns a new executor based on the given QueryService.
 // In general, you should prefer NewAsyncQueryServiceExecutor, as that code is smaller and simpler,
 // because asynchronous queries are more in line with the Executor interface.
-func NewQueryServiceExecutor(logger *zap.Logger, qs query.QueryService, as influxdb.AuthorizationService, st backend.Store) backend.Executor {
-	return &queryServiceExecutor{logger: logger, qs: qs, as: as, st: st}
+func NewQueryServiceExecutor(logger *zap.Logger, qs query.QueryService, as influxdb.AuthorizationService, ts influxdb.TaskService) *queryServiceExecutor {
+	return &queryServiceExecutor{logger: logger, qs: qs, as: as, ts: ts}
+}
+
+// AddTaskService is a temporary solution to a chicken and egg problem. It takes a executor and sets the task service.
+// This is required because the platform adaptor requires a executor but the executor requires a task service.
+// TODO(lh): Remove this function once we are no longer using the PlatformAdaptor
+func AddTaskService(e backend.Executor, ts influxdb.TaskService) {
+	qe, ok := e.(*queryServiceExecutor)
+	if ok {
+		qe.ts = ts
+	}
+	ae, ok := e.(*asyncQueryServiceExecutor)
+	if ok {
+		ae.ts = ts
+	}
 }
 
 func (e *queryServiceExecutor) Execute(ctx context.Context, run backend.QueuedRun) (backend.RunPromise, error) {
-	t, m, err := e.st.FindTaskByIDWithMeta(ctx, run.TaskID)
-	if err != nil {
-		return nil, err
-	}
-
-	auth, err := e.as.FindAuthorizationByID(ctx, influxdb.ID(m.AuthorizationID))
+	t, err := e.ts.FindTaskByID(ctx, run.TaskID)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO(goller): remove need for context authorization.
-	return newSyncRunPromise(icontext.SetAuthorizer(ctx, auth), auth, run, e, t), nil
+	return newSyncRunPromise(icontext.SetAuthorizer(ctx, t.Authorization), t.Authorization, run, e, t), nil
 }
 
 func (e *queryServiceExecutor) Wait() {
@@ -59,7 +69,7 @@ type syncRunPromise struct {
 	qr     backend.QueuedRun
 	auth   *influxdb.Authorization
 	qs     query.QueryService
-	t      *backend.StoreTask
+	t      *influxdb.Task
 	ctx    context.Context
 	cancel context.CancelFunc
 	logger *zap.Logger
@@ -73,10 +83,10 @@ type syncRunPromise struct {
 
 var _ backend.RunPromise = (*syncRunPromise)(nil)
 
-func newSyncRunPromise(ctx context.Context, auth *influxdb.Authorization, qr backend.QueuedRun, e *queryServiceExecutor, t *backend.StoreTask) *syncRunPromise {
+func newSyncRunPromise(ctx context.Context, auth *influxdb.Authorization, qr backend.QueuedRun, e *queryServiceExecutor, t *influxdb.Task) *syncRunPromise {
 	ctx, cancel := context.WithCancel(ctx)
 	opLogger := e.logger.With(zap.Stringer("task_id", qr.TaskID), zap.Stringer("run_id", qr.RunID))
-	log, logEnd := logger.NewOperation(opLogger, "Executing task", "execute")
+	log, logEnd := logger.NewOperation(ctx, opLogger, "Executing task", "execute")
 	rp := &syncRunPromise{
 		qr:     qr,
 		auth:   auth,
@@ -111,7 +121,7 @@ func (p *syncRunPromise) Wait() (backend.RunResult, error) {
 }
 
 func (p *syncRunPromise) Cancel() {
-	p.finish(nil, backend.ErrRunCanceled)
+	p.finish(nil, influxdb.ErrRunCanceled)
 }
 
 func (p *syncRunPromise) finish(res *runResult, err error) {
@@ -127,11 +137,11 @@ func (p *syncRunPromise) finish(res *runResult, err error) {
 		close(p.ready)
 
 		if err != nil {
-			p.logger.Info("Execution failed to get result", zap.Error(err))
+			p.logger.Debug("Execution failed to get result", zap.Error(err))
 		} else if res.err != nil {
-			p.logger.Info("Got result with error", zap.Error(res.err))
+			p.logger.Debug("Got result with error", zap.Error(res.err))
 		} else {
-			p.logger.Info("Completed successfully")
+			p.logger.Debug("Completed successfully")
 		}
 	})
 }
@@ -139,7 +149,7 @@ func (p *syncRunPromise) finish(res *runResult, err error) {
 func (p *syncRunPromise) doQuery(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	spec, err := flux.Compile(p.ctx, p.t.Script, time.Unix(p.qr.Now, 0))
+	pkg, err := flux.Parse(p.t.Flux)
 	if err != nil {
 		p.finish(nil, err)
 		return
@@ -147,9 +157,10 @@ func (p *syncRunPromise) doQuery(wg *sync.WaitGroup) {
 
 	req := &query.Request{
 		Authorization:  p.auth,
-		OrganizationID: p.t.Org,
-		Compiler: lang.SpecCompiler{
-			Spec: spec,
+		OrganizationID: p.t.OrganizationID,
+		Compiler: lang.ASTCompiler{
+			AST: pkg,
+			Now: time.Unix(p.qr.Now, 0),
 		},
 	}
 	it, err := p.qs.Query(p.ctx, req)
@@ -164,7 +175,7 @@ func (p *syncRunPromise) doQuery(wg *sync.WaitGroup) {
 	for it.More() {
 		// Consume the full iterator so that we don't leak outstanding iterators.
 		res := it.Next()
-		if err := exhaustResultIterators(res); err != nil {
+		if err = exhaustResultIterators(res); err != nil {
 			p.logger.Info("Error exhausting result iterator", zap.Error(err), zap.String("name", res.Name()))
 		}
 	}
@@ -173,8 +184,12 @@ func (p *syncRunPromise) doQuery(wg *sync.WaitGroup) {
 	// It's safe for Release to be called multiple times.
 	it.Release()
 
+	if err == nil {
+		err = it.Err()
+	}
+
 	// Is it okay to assume it.Err will be set if the query context is canceled?
-	p.finish(&runResult{err: it.Err(), statistics: it.Statistics()}, nil)
+	p.finish(&runResult{err: err, statistics: it.Statistics()}, nil)
 }
 
 func (p *syncRunPromise) cancelOnContextDone(wg *sync.WaitGroup) {
@@ -195,7 +210,7 @@ func (p *syncRunPromise) cancelOnContextDone(wg *sync.WaitGroup) {
 type asyncQueryServiceExecutor struct {
 	qs     query.AsyncQueryService
 	as     influxdb.AuthorizationService
-	st     backend.Store
+	ts     influxdb.TaskService
 	logger *zap.Logger
 	wg     sync.WaitGroup
 }
@@ -203,40 +218,17 @@ type asyncQueryServiceExecutor struct {
 var _ backend.Executor = (*asyncQueryServiceExecutor)(nil)
 
 // NewAsyncQueryServiceExecutor returns a new executor based on the given AsyncQueryService.
-func NewAsyncQueryServiceExecutor(logger *zap.Logger, qs query.AsyncQueryService, as influxdb.AuthorizationService, st backend.Store) backend.Executor {
-	return &asyncQueryServiceExecutor{logger: logger, qs: qs, as: as, st: st}
+func NewAsyncQueryServiceExecutor(logger *zap.Logger, qs query.AsyncQueryService, as influxdb.AuthorizationService, ts influxdb.TaskService) backend.Executor {
+	return &asyncQueryServiceExecutor{logger: logger, qs: qs, as: as, ts: ts}
 }
 
 func (e *asyncQueryServiceExecutor) Execute(ctx context.Context, run backend.QueuedRun) (backend.RunPromise, error) {
-	t, m, err := e.st.FindTaskByIDWithMeta(ctx, run.TaskID)
+	t, err := e.ts.FindTaskByID(ctx, run.TaskID)
 	if err != nil {
 		return nil, err
 	}
 
-	auth, err := e.as.FindAuthorizationByID(ctx, influxdb.ID(m.AuthorizationID))
-	if err != nil {
-		return nil, err
-	}
-
-	spec, err := flux.Compile(ctx, t.Script, time.Unix(run.Now, 0))
-	if err != nil {
-		return nil, err
-	}
-
-	req := &query.Request{
-		Authorization:  auth,
-		OrganizationID: t.Org,
-		Compiler: lang.SpecCompiler{
-			Spec: spec,
-		},
-	}
-	// Only set the authorizer on the context where we need it here.
-	q, err := e.qs.Query(icontext.SetAuthorizer(ctx, auth), req)
-	if err != nil {
-		return nil, err
-	}
-
-	return newAsyncRunPromise(run, q, e), nil
+	return newAsyncRunPromise(icontext.SetAuthorizer(ctx, t.Authorization), t.Authorization, run, e, t), nil
 }
 
 func (e *asyncQueryServiceExecutor) Wait() {
@@ -245,8 +237,11 @@ func (e *asyncQueryServiceExecutor) Wait() {
 
 // asyncRunPromise implements backend.RunPromise for an AsyncQueryService.
 type asyncRunPromise struct {
-	qr backend.QueuedRun
-	q  flux.Query
+	qr   backend.QueuedRun
+	auth *influxdb.Authorization
+	qs   query.AsyncQueryService
+	t    *influxdb.Task
+	ctx  context.Context
 
 	logger *zap.Logger
 	logEnd func() // Called to log the end of the run operation.
@@ -259,21 +254,26 @@ type asyncRunPromise struct {
 
 var _ backend.RunPromise = (*asyncRunPromise)(nil)
 
-func newAsyncRunPromise(qr backend.QueuedRun, q flux.Query, e *asyncQueryServiceExecutor) *asyncRunPromise {
+func newAsyncRunPromise(ctx context.Context, auth *influxdb.Authorization, qr backend.QueuedRun, e *asyncQueryServiceExecutor, t *influxdb.Task) *asyncRunPromise {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	opLogger := e.logger.With(zap.Stringer("task_id", qr.TaskID), zap.Stringer("run_id", qr.RunID))
-	log, logEnd := logger.NewOperation(opLogger, "Executing task", "execute")
+	log, logEnd := logger.NewOperation(ctx, opLogger, "Executing task", "execute")
 
 	p := &asyncRunPromise{
-		qr:    qr,
-		q:     q,
-		ready: make(chan struct{}),
-
+		qr:     qr,
+		auth:   auth,
+		qs:     e.qs,
+		t:      t,
 		logger: log,
 		logEnd: logEnd,
+		ctx:    ctx,
+		ready:  make(chan struct{}),
 	}
 
 	e.wg.Add(1)
-	go p.followQuery(&e.wg)
+	go p.doQuery(&e.wg)
 	return p
 }
 
@@ -292,49 +292,75 @@ func (p *asyncRunPromise) Wait() (backend.RunResult, error) {
 }
 
 func (p *asyncRunPromise) Cancel() {
-	p.finish(nil, backend.ErrRunCanceled)
+	p.finish(nil, influxdb.ErrRunCanceled)
 }
 
-// followQuery waits for the query to become ready and sets p's results.
+// doQuery waits for the query to become ready and sets p's results.
 // If the promise is finished somewhere else first, such as if it is canceled,
-// followQuery will return.
-func (p *asyncRunPromise) followQuery(wg *sync.WaitGroup) {
+// doQuery will return.
+func (p *asyncRunPromise) doQuery(wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	pkg, err := flux.Parse(p.t.Flux)
+	if err != nil {
+		p.finish(nil, err)
+		return
+	}
+
+	req := &query.Request{
+		Authorization:  p.t.Authorization,
+		OrganizationID: p.t.OrganizationID,
+		Compiler: lang.ASTCompiler{
+			AST: pkg,
+			Now: time.Unix(p.qr.Now, 0),
+		},
+	}
+	q, err := p.qs.Query(p.ctx, req)
+	if err != nil {
+		// Assume the error should not be part of the runResult.
+		p.finish(nil, err)
+		return
+	}
 	// Always need to call Done after query is finished.
-	defer p.q.Done()
+	defer q.Done()
 
-	select {
-	case <-p.ready:
-		// The promise was finished somewhere else, so we don't need to call p.finish.
-		// But we do need to cancel the flux. This could be a no-op.
-		p.q.Cancel()
-	case results, ok := <-p.q.Ready():
-		if !ok {
-			// Something went wrong with the flux. Set the error in the run result.
-			rr := &runResult{err: p.q.Err()}
-			p.finish(rr, nil)
+	var rwg sync.WaitGroup
+SelectLoop:
+	for {
+		select {
+		case <-p.ready:
+			// The promise was finished somewhere else, so we don't need to call p.finish.
+			// But we do need to cancel the flux. This could be a no-op.
+			q.Cancel()
 			return
-		}
+		case r, ok := <-q.Results():
+			if !ok {
+				break SelectLoop
+			}
 
-		// Exhaust the results so we don't leave unfinished iterators around.
-		var wg sync.WaitGroup
-		wg.Add(len(results))
-		for _, res := range results {
-			r := res
+			rwg.Add(1)
 			go func() {
-				defer wg.Done()
+				defer rwg.Done()
 				if err := exhaustResultIterators(r); err != nil {
 					p.logger.Info("Error exhausting result iterator", zap.Error(err), zap.String("name", r.Name()))
 				}
 			}()
 		}
-		wg.Wait()
-
-		// Otherwise, query was successful.
-		// Must call query.Done before collecting statistics. It's safe to call multiple times.
-		p.q.Done()
-		p.finish(&runResult{statistics: p.q.Statistics()}, nil)
 	}
+
+	rwg.Wait()
+
+	if q.Err() != nil {
+		// Something went wrong with the flux. Set the error in the run result.
+		rr := &runResult{err: q.Err()}
+		p.finish(rr, nil)
+		return
+	}
+
+	// Otherwise, query was successful.
+	// Must call query.Done before collecting statistics. It's safe to call multiple times.
+	q.Done()
+	p.finish(&runResult{statistics: q.Statistics()}, nil)
 }
 
 func (p *asyncRunPromise) finish(res *runResult, err error) {
@@ -349,7 +375,7 @@ func (p *asyncRunPromise) finish(res *runResult, err error) {
 		} else if res.err != nil {
 			p.logger.Info("Got result with error", zap.Error(res.err))
 		} else {
-			p.logger.Info("Completed successfully")
+			p.logger.Debug("Completed successfully")
 		}
 	})
 }

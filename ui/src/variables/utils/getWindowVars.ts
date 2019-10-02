@@ -1,5 +1,5 @@
 // APIs
-import {getAST} from 'src/shared/apis/ast'
+import {parse} from '@influxdata/flux-parser'
 
 // Utils
 import {getMinDurationFromAST} from 'src/shared/utils/getMinDurationFromAST'
@@ -7,36 +7,26 @@ import {buildVarsOption} from 'src/variables/utils/buildVarsOption'
 
 // Constants
 import {WINDOW_PERIOD} from 'src/variables/constants'
-import {DEFAULT_DURATION_MS} from 'src/shared/constants'
 
 // Types
-import {VariableAssignment} from 'src/types/ast'
+import {VariableAssignment, Package} from 'src/types/ast'
 
 const DESIRED_POINTS_PER_GRAPH = 360
 const FALLBACK_WINDOW_PERIOD = 15000
 
-export const getWindowVars = async (
+/*
+  Compute the `v.windowPeriod` variable assignment for a query.
+*/
+export const getWindowVars = (
   query: string,
   variables: VariableAssignment[]
-): Promise<VariableAssignment[]> => {
+): VariableAssignment[] => {
   if (!query.includes(WINDOW_PERIOD)) {
     return []
   }
 
-  const ast = await getAST(query)
-
-  const substitutedAST = {
-    ...ast,
-    files: [...ast.files, buildVarsOption(variables)],
-  }
-
-  let windowPeriod: number
-
-  try {
-    windowPeriod = getWindowInterval(getMinDurationFromAST(substitutedAST))
-  } catch {
-    windowPeriod = FALLBACK_WINDOW_PERIOD
-  }
+  const windowPeriod =
+    getWindowPeriod(query, variables) || FALLBACK_WINDOW_PERIOD
 
   return [
     {
@@ -53,8 +43,27 @@ export const getWindowVars = async (
   ]
 }
 
-const getWindowInterval = (
-  durationMilliseconds: number = DEFAULT_DURATION_MS
-) => {
-  return Math.round(durationMilliseconds / DESIRED_POINTS_PER_GRAPH)
+/*
+  Compute the duration (in milliseconds) to use for the `v.windowPeriod`
+  variable assignment for a query.
+*/
+export const getWindowPeriod = (
+  query: string,
+  variables: VariableAssignment[]
+): number | null => {
+  try {
+    const ast = parse(query)
+
+    const substitutedAST: Package = {
+      package: '',
+      type: 'Package',
+      files: [ast, buildVarsOption(variables)],
+    }
+
+    const queryDuration = getMinDurationFromAST(substitutedAST)
+
+    return Math.round(queryDuration / DESIRED_POINTS_PER_GRAPH)
+  } catch (error) {
+    return null
+  }
 }

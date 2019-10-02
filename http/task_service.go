@@ -13,15 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/influxdata/flux"
-	platform "github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/authorizer"
+	"github.com/influxdata/influxdb"
 	pcontext "github.com/influxdata/influxdb/context"
 	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/kv"
-	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/task/backend"
-	"github.com/influxdata/influxdb/task/options"
 	"github.com/julienschmidt/httprouter"
 	"go.uber.org/zap"
 )
@@ -29,20 +25,22 @@ import (
 // TaskBackend is all services and associated parameters required to construct
 // the TaskHandler.
 type TaskBackend struct {
+	influxdb.HTTPErrorHandler
 	Logger *zap.Logger
 
-	TaskService                platform.TaskService
-	AuthorizationService       platform.AuthorizationService
-	OrganizationService        platform.OrganizationService
-	UserResourceMappingService platform.UserResourceMappingService
-	LabelService               platform.LabelService
-	UserService                platform.UserService
-	BucketService              platform.BucketService
+	TaskService                influxdb.TaskService
+	AuthorizationService       influxdb.AuthorizationService
+	OrganizationService        influxdb.OrganizationService
+	UserResourceMappingService influxdb.UserResourceMappingService
+	LabelService               influxdb.LabelService
+	UserService                influxdb.UserService
+	BucketService              influxdb.BucketService
 }
 
 // NewTaskBackend returns a new instance of TaskBackend.
 func NewTaskBackend(b *APIBackend) *TaskBackend {
 	return &TaskBackend{
+		HTTPErrorHandler:           b.HTTPErrorHandler,
 		Logger:                     b.Logger.With(zap.String("handler", "task")),
 		TaskService:                b.TaskService,
 		AuthorizationService:       b.AuthorizationService,
@@ -57,15 +55,16 @@ func NewTaskBackend(b *APIBackend) *TaskBackend {
 // TaskHandler represents an HTTP API handler for tasks.
 type TaskHandler struct {
 	*httprouter.Router
+	influxdb.HTTPErrorHandler
 	logger *zap.Logger
 
-	TaskService                platform.TaskService
-	AuthorizationService       platform.AuthorizationService
-	OrganizationService        platform.OrganizationService
-	UserResourceMappingService platform.UserResourceMappingService
-	LabelService               platform.LabelService
-	UserService                platform.UserService
-	BucketService              platform.BucketService
+	TaskService                influxdb.TaskService
+	AuthorizationService       influxdb.AuthorizationService
+	OrganizationService        influxdb.OrganizationService
+	UserResourceMappingService influxdb.UserResourceMappingService
+	LabelService               influxdb.LabelService
+	UserService                influxdb.UserService
+	BucketService              influxdb.BucketService
 }
 
 const (
@@ -87,8 +86,9 @@ const (
 // NewTaskHandler returns a new instance of TaskHandler.
 func NewTaskHandler(b *TaskBackend) *TaskHandler {
 	h := &TaskHandler{
-		Router: NewRouter(),
-		logger: b.Logger,
+		Router:           NewRouter(b.HTTPErrorHandler),
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		logger:           b.Logger,
 
 		TaskService:                b.TaskService,
 		AuthorizationService:       b.AuthorizationService,
@@ -110,9 +110,10 @@ func NewTaskHandler(b *TaskBackend) *TaskHandler {
 	h.HandlerFunc("GET", tasksIDRunsIDLogsPath, h.handleGetLogs)
 
 	memberBackend := MemberBackend{
+		HTTPErrorHandler:           b.HTTPErrorHandler,
 		Logger:                     b.Logger.With(zap.String("handler", "member")),
-		ResourceType:               platform.TasksResourceType,
-		UserType:                   platform.Member,
+		ResourceType:               influxdb.TasksResourceType,
+		UserType:                   influxdb.Member,
 		UserResourceMappingService: b.UserResourceMappingService,
 		UserService:                b.UserService,
 	}
@@ -121,9 +122,10 @@ func NewTaskHandler(b *TaskBackend) *TaskHandler {
 	h.HandlerFunc("DELETE", tasksIDMembersIDPath, newDeleteMemberHandler(memberBackend))
 
 	ownerBackend := MemberBackend{
+		HTTPErrorHandler:           b.HTTPErrorHandler,
 		Logger:                     b.Logger.With(zap.String("handler", "member")),
-		ResourceType:               platform.TasksResourceType,
-		UserType:                   platform.Owner,
+		ResourceType:               influxdb.TasksResourceType,
+		UserType:                   influxdb.Owner,
 		UserResourceMappingService: b.UserResourceMappingService,
 		UserService:                b.UserService,
 	}
@@ -138,25 +140,25 @@ func NewTaskHandler(b *TaskBackend) *TaskHandler {
 	h.HandlerFunc("DELETE", tasksIDRunsIDPath, h.handleCancelRun)
 
 	labelBackend := &LabelBackend{
-		Logger:       b.Logger.With(zap.String("handler", "label")),
-		LabelService: b.LabelService,
-		ResourceType: platform.TasksResourceType,
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		Logger:           b.Logger.With(zap.String("handler", "label")),
+		LabelService:     b.LabelService,
+		ResourceType:     influxdb.TasksResourceType,
 	}
 	h.HandlerFunc("GET", tasksIDLabelsPath, newGetLabelsHandler(labelBackend))
 	h.HandlerFunc("POST", tasksIDLabelsPath, newPostLabelHandler(labelBackend))
 	h.HandlerFunc("DELETE", tasksIDLabelsIDPath, newDeleteLabelHandler(labelBackend))
-	h.HandlerFunc("PATCH", tasksIDLabelsIDPath, newPatchLabelHandler(labelBackend))
 
 	return h
 }
 
 type taskResponse struct {
 	Links  map[string]string `json:"links"`
-	Labels []platform.Label  `json:"labels"`
-	platform.Task
+	Labels []influxdb.Label  `json:"labels"`
+	influxdb.Task
 }
 
-func newTaskResponse(t platform.Task, labels []*platform.Label) taskResponse {
+func newTaskResponse(t influxdb.Task, labels []*influxdb.Label) taskResponse {
 	response := taskResponse{
 		Links: map[string]string{
 			"self":    fmt.Sprintf("/api/v2/tasks/%s", t.ID),
@@ -167,7 +169,7 @@ func newTaskResponse(t platform.Task, labels []*platform.Label) taskResponse {
 			"logs":    fmt.Sprintf("/api/v2/tasks/%s/logs", t.ID),
 		},
 		Task:   t,
-		Labels: []platform.Label{},
+		Labels: []influxdb.Label{},
 	}
 
 	for _, l := range labels {
@@ -177,7 +179,7 @@ func newTaskResponse(t platform.Task, labels []*platform.Label) taskResponse {
 	return response
 }
 
-func newTasksPagingLinks(basePath string, ts []*platform.Task, f platform.TaskFilter) *platform.PagingLinks {
+func newTasksPagingLinks(basePath string, ts []*influxdb.Task, f influxdb.TaskFilter) *influxdb.PagingLinks {
 	var self, next string
 	u := url.URL{
 		Path: basePath,
@@ -201,7 +203,7 @@ func newTasksPagingLinks(basePath string, ts []*platform.Task, f platform.TaskFi
 		next = u.String()
 	}
 
-	links := &platform.PagingLinks{
+	links := &influxdb.PagingLinks{
 		Self: self,
 		Next: next,
 	}
@@ -210,18 +212,18 @@ func newTasksPagingLinks(basePath string, ts []*platform.Task, f platform.TaskFi
 }
 
 type tasksResponse struct {
-	Links *platform.PagingLinks `json:"links"`
+	Links *influxdb.PagingLinks `json:"links"`
 	Tasks []taskResponse        `json:"tasks"`
 }
 
-func newTasksResponse(ctx context.Context, ts []*platform.Task, f platform.TaskFilter, labelService platform.LabelService) tasksResponse {
+func newTasksResponse(ctx context.Context, ts []*influxdb.Task, f influxdb.TaskFilter, labelService influxdb.LabelService) tasksResponse {
 	rs := tasksResponse{
 		Links: newTasksPagingLinks(tasksPath, ts, f),
 		Tasks: make([]taskResponse, len(ts)),
 	}
 
 	for i := range ts {
-		labels, _ := labelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: ts[i].ID})
+		labels, _ := labelService.FindResourceLabels(ctx, influxdb.LabelMappingFilter{ResourceID: ts[i].ID})
 		rs.Tasks[i] = newTaskResponse(*ts[i], labels)
 	}
 	return rs
@@ -229,10 +231,10 @@ func newTasksResponse(ctx context.Context, ts []*platform.Task, f platform.TaskF
 
 type runResponse struct {
 	Links map[string]string `json:"links,omitempty"`
-	platform.Run
+	influxdb.Run
 }
 
-func newRunResponse(r platform.Run) runResponse {
+func newRunResponse(r influxdb.Run) runResponse {
 	return runResponse{
 		Links: map[string]string{
 			"self":  fmt.Sprintf("/api/v2/tasks/%s/runs/%s", r.TaskID, r.ID),
@@ -249,7 +251,7 @@ type runsResponse struct {
 	Runs  []*runResponse    `json:"runs"`
 }
 
-func newRunsResponse(rs []*platform.Run, taskID platform.ID) runsResponse {
+func newRunsResponse(rs []*influxdb.Run, taskID influxdb.ID) runsResponse {
 	r := runsResponse{
 		Links: map[string]string{
 			"self": fmt.Sprintf("/api/v2/tasks/%s/runs", taskID),
@@ -267,28 +269,23 @@ func newRunsResponse(rs []*platform.Run, taskID platform.ID) runsResponse {
 
 func (h *TaskHandler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeGetTasksRequest(ctx, r, h.OrganizationService)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	tasks, _, err := h.TaskService.FindTasks(ctx, req.filter)
 	if err != nil {
-		err = &platform.Error{
-			Err: err,
-			Msg: "failed to find tasks",
-		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
+	h.logger.Debug("tasks retrived", zap.String("tasks", fmt.Sprint(tasks)))
 	if err := encodeResponse(ctx, w, http.StatusOK, newTasksResponse(ctx, tasks, req.filter, h.LabelService)); err != nil {
 		logEncodingError(h.logger, r, err)
 		return
@@ -296,15 +293,15 @@ func (h *TaskHandler) handleGetTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 type getTasksRequest struct {
-	filter platform.TaskFilter
+	filter influxdb.TaskFilter
 }
 
-func decodeGetTasksRequest(ctx context.Context, r *http.Request, orgs platform.OrganizationService) (*getTasksRequest, error) {
+func decodeGetTasksRequest(ctx context.Context, r *http.Request, orgs influxdb.OrganizationService) (*getTasksRequest, error) {
 	qp := r.URL.Query()
 	req := &getTasksRequest{}
 
 	if after := qp.Get("after"); after != "" {
-		id, err := platform.IDFromString(after)
+		id, err := influxdb.IDFromString(after)
 		if err != nil {
 			return nil, err
 		}
@@ -312,11 +309,11 @@ func decodeGetTasksRequest(ctx context.Context, r *http.Request, orgs platform.O
 	}
 
 	if orgName := qp.Get("org"); orgName != "" {
-		o, err := orgs.FindOrganization(ctx, platform.OrganizationFilter{Name: &orgName})
+		o, err := orgs.FindOrganization(ctx, influxdb.OrganizationFilter{Name: &orgName})
 		if err != nil {
-			if pErr, ok := err.(*platform.Error); ok && pErr != nil {
-				if kv.IsNotFound(err) || pErr.Code == platform.EUnauthorized {
-					return nil, &platform.Error{
+			if pErr, ok := err.(*influxdb.Error); ok && pErr != nil {
+				if kv.IsNotFound(err) || pErr.Code == influxdb.EUnauthorized {
+					return nil, &influxdb.Error{
 						Err: errors.New("org not found or unauthorized"),
 						Msg: "org " + orgName + " not found or unauthorized",
 					}
@@ -328,7 +325,7 @@ func decodeGetTasksRequest(ctx context.Context, r *http.Request, orgs platform.O
 		req.filter.OrganizationID = &o.ID
 	}
 	if oid := qp.Get("orgID"); oid != "" {
-		orgID, err := platform.IDFromString(oid)
+		orgID, err := influxdb.IDFromString(oid)
 		if err != nil {
 			return nil, err
 		}
@@ -336,7 +333,7 @@ func decodeGetTasksRequest(ctx context.Context, r *http.Request, orgs platform.O
 	}
 
 	if userID := qp.Get("user"); userID != "" {
-		id, err := platform.IDFromString(userID)
+		id, err := influxdb.IDFromString(userID)
 		if err != nil {
 			return nil, err
 		}
@@ -348,161 +345,61 @@ func decodeGetTasksRequest(ctx context.Context, r *http.Request, orgs platform.O
 		if err != nil {
 			return nil, err
 		}
-		if lim < 1 || lim > platform.TaskMaxPageSize {
-			return nil, &platform.Error{
-				Code: platform.EUnprocessableEntity,
-				Msg:  fmt.Sprintf("limit must be between 1 and %d", platform.TaskMaxPageSize),
+		if lim < 1 || lim > influxdb.TaskMaxPageSize {
+			return nil, &influxdb.Error{
+				Code: influxdb.EUnprocessableEntity,
+				Msg:  fmt.Sprintf("limit must be between 1 and %d", influxdb.TaskMaxPageSize),
 			}
 		}
 		req.filter.Limit = lim
 	} else {
-		req.filter.Limit = platform.TaskDefaultPageSize
+		req.filter.Limit = influxdb.TaskDefaultPageSize
+	}
+
+	if ttype := qp.Get("type"); ttype != "" {
+		req.filter.Type = &ttype
+	}
+
+	if name := qp.Get("name"); name != "" {
+		req.filter.Name = &name
 	}
 
 	return req, nil
 }
 
-// createBootstrapTaskAuthorizationIfNotExists checks if a the task create request hasn't specified a token, and if the request came from a session,
-// and if both of those are true, it creates an authorization and return it.
-//
-// Note that the created authorization will have permissions required for the task,
-// but it won't have permissions to read the task, as we don't have the task ID yet.
-//
-// This method may return a nil error and a nil authorization, if there wasn't a need to create an authorization.
-func (h *TaskHandler) createBootstrapTaskAuthorizationIfNotExists(ctx context.Context, a platform.Authorizer, t *platform.TaskCreate) (*platform.Authorization, error) {
-	if t.Token != "" {
-		return nil, nil
-	}
-
-	s, ok := a.(*platform.Session)
-	if !ok {
-		// If an authorization was used continue
-		return nil, nil
-	}
-
-	spec, err := flux.Compile(ctx, t.Flux, time.Now())
-	if err != nil {
-		return nil, err
-	}
-
-	preAuthorizer := query.NewPreAuthorizer(h.BucketService)
-	ps, err := preAuthorizer.RequiredPermissions(ctx, spec, &t.OrganizationID)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := authorizer.VerifyPermissions(ctx, ps); err != nil {
-		return nil, err
-	}
-
-	opts, err := options.FromScript(t.Flux)
-	if err != nil {
-		return nil, err
-	}
-
-	auth := &platform.Authorization{
-		OrgID:       t.OrganizationID,
-		UserID:      s.UserID,
-		Permissions: ps,
-		Description: fmt.Sprintf("bootstrap authorization for task %q", opts.Name),
-	}
-
-	if err := h.AuthorizationService.CreateAuthorization(ctx, auth); err != nil {
-		return nil, err
-	}
-
-	t.Token = auth.Token
-
-	return auth, nil
-}
-
-func (h *TaskHandler) finalizeBootstrappedTaskAuthorization(ctx context.Context, bootstrap *platform.Authorization, task *platform.Task) error {
-	// If we created a bootstrapped authorization for a task,
-	// we need to replace it with a new authorization that allows read access on the task.
-	// Unfortunately for this case, updating authorizations is not allowed.
-	readTaskPerm, err := platform.NewPermissionAtID(task.ID, platform.ReadAction, platform.TasksResourceType, bootstrap.OrgID)
-	if err != nil {
-		// We should never fail to create a new permission like this.
-		return err
-	}
-	authzWithTask := &platform.Authorization{
-		UserID:      bootstrap.UserID,
-		OrgID:       bootstrap.OrgID,
-		Permissions: append([]platform.Permission{*readTaskPerm}, bootstrap.Permissions...),
-		Description: fmt.Sprintf("auto-generated authorization for task %q", task.Name),
-	}
-
-	if err := h.AuthorizationService.CreateAuthorization(ctx, authzWithTask); err != nil {
-		h.logger.Warn("Failed to finalize bootstrap authorization", zap.String("taskID", task.ID.String()))
-		// The task exists with an authorization that can't read the task.
-		return err
-	}
-
-	// Assign the new authorization...
-	u, err := h.TaskService.UpdateTask(ctx, task.ID, platform.TaskUpdate{Token: authzWithTask.Token})
-	if err != nil {
-		h.logger.Warn("Failed to assign finalized authorization", zap.String("authorizationID", bootstrap.ID.String()), zap.String("taskID", task.ID.String()))
-		// The task exists with an authorization that can't read the task,
-		// and we've created a new authorization for the task but not assigned it.
-		return err
-	}
-	*task = *u
-
-	// .. and delete the old one.
-	if err := h.AuthorizationService.DeleteAuthorization(ctx, bootstrap.ID); err != nil {
-		// Since this is the last thing we're doing, just log it if we fail to delete for some reason.
-		h.logger.Warn("Failed to delete bootstrap authorization", zap.String("authorizationID", bootstrap.ID.String()), zap.String("taskID", task.ID.String()))
-	}
-
-	return nil
-}
-
 func (h *TaskHandler) handlePostTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
-	auth, err := pcontext.GetAuthorizer(ctx)
-	if err != nil {
-		err = &platform.Error{
-			Err:  err,
-			Code: platform.EUnauthorized,
-			Msg:  "failed to get authorizer",
-		}
-		EncodeError(ctx, err, w)
-		return
-	}
-
 	req, err := decodePostTaskRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	if err := h.populateTaskCreateOrg(ctx, &req.TaskCreate); err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err: err,
 			Msg: "could not identify organization",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	if !req.TaskCreate.OrganizationID.Valid() {
-		err := &platform.Error{
-			Code: platform.EInvalid,
+		err := &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "invalid organization id",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	bootstrapAuthz, err := h.createBootstrapTaskAuthorizationIfNotExists(ctx, auth, &req.TaskCreate)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
@@ -511,43 +408,42 @@ func (h *TaskHandler) handlePostTask(w http.ResponseWriter, r *http.Request) {
 		if e, ok := err.(AuthzError); ok {
 			h.logger.Error("failed authentication", zap.Errors("error messages", []error{err, e.AuthzError()}))
 		}
-		err = &platform.Error{
-			Err: err,
-			Msg: "failed to create task",
+
+		// if the error is not already a influxdb.error then make it into one
+		if _, ok := err.(*influxdb.Error); !ok {
+			err = &influxdb.Error{
+				Err:  err,
+				Code: influxdb.EInternal,
+				Msg:  "failed to create task",
+			}
 		}
-		EncodeError(ctx, err, w)
+
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	if bootstrapAuthz != nil {
-		// There was a bootstrapped authorization for this task.
-		// Now we need to apply the final authorization for the task.
-		if err := h.finalizeBootstrappedTaskAuthorization(ctx, bootstrapAuthz, task); err != nil {
-			err = &platform.Error{
-				Err:  err,
-				Msg:  fmt.Sprintf("successfully created task with ID %s, but failed to finalize bootstrap token for task", task.ID.String()),
-				Code: platform.EInternal,
-			}
-			EncodeError(ctx, err, w)
-			return
-		}
-	}
-
-	if err := encodeResponse(ctx, w, http.StatusCreated, newTaskResponse(*task, []*platform.Label{})); err != nil {
+	if err := encodeResponse(ctx, w, http.StatusCreated, newTaskResponse(*task, []*influxdb.Label{})); err != nil {
 		logEncodingError(h.logger, r, err)
 		return
 	}
 }
 
 type postTaskRequest struct {
-	TaskCreate platform.TaskCreate
+	TaskCreate influxdb.TaskCreate
 }
 
 func decodePostTaskRequest(ctx context.Context, r *http.Request) (*postTaskRequest, error) {
-	var tc platform.TaskCreate
+	var tc influxdb.TaskCreate
 	if err := json.NewDecoder(r.Body).Decode(&tc); err != nil {
 		return nil, err
 	}
+
+	// pull auth from ctx, populate OwnerID
+	auth, err := pcontext.GetAuthorizer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tc.OwnerID = auth.GetUserID()
 
 	if err := tc.Validate(); err != nil {
 		return nil, err
@@ -560,39 +456,38 @@ func decodePostTaskRequest(ctx context.Context, r *http.Request) (*postTaskReque
 
 func (h *TaskHandler) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeGetTaskRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	task, err := h.TaskService.FindTaskByID(ctx, req.TaskID)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.ENotFound,
+			Code: influxdb.ENotFound,
 			Msg:  "failed to find task",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	labels, err := h.LabelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: task.ID})
+	labels, err := h.LabelService.FindResourceLabels(ctx, influxdb.LabelMappingFilter{ResourceID: task.ID})
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err: err,
 			Msg: "failed to find resource labels",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
+	h.logger.Debug("task retrived", zap.String("tasks", fmt.Sprint(task)))
 	if err := encodeResponse(ctx, w, http.StatusOK, newTaskResponse(*task, labels)); err != nil {
 		logEncodingError(h.logger, r, err)
 		return
@@ -600,20 +495,20 @@ func (h *TaskHandler) handleGetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 type getTaskRequest struct {
-	TaskID platform.ID
+	TaskID influxdb.ID
 }
 
 func decodeGetTaskRequest(ctx context.Context, r *http.Request) (*getTaskRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "url missing id",
 		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -627,40 +522,39 @@ func decodeGetTaskRequest(ctx context.Context, r *http.Request) (*getTaskRequest
 
 func (h *TaskHandler) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeUpdateTaskRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 	task, err := h.TaskService.UpdateTask(ctx, req.TaskID, req.Update)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to update task",
 		}
-		if err.Err == backend.ErrTaskNotFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	labels, err := h.LabelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: task.ID})
+	labels, err := h.LabelService.FindResourceLabels(ctx, influxdb.LabelMappingFilter{ResourceID: task.ID})
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err: err,
 			Msg: "failed to find resource labels",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
+	h.logger.Debug("tasks updated", zap.String("task", fmt.Sprint(task)))
 	if err := encodeResponse(ctx, w, http.StatusOK, newTaskResponse(*task, labels)); err != nil {
 		logEncodingError(h.logger, r, err)
 		return
@@ -668,26 +562,26 @@ func (h *TaskHandler) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateTaskRequest struct {
-	Update platform.TaskUpdate
-	TaskID platform.ID
+	Update influxdb.TaskUpdate
+	TaskID influxdb.ID
 }
 
 func decodeUpdateTaskRequest(ctx context.Context, r *http.Request) (*updateTaskRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
 
-	var upd platform.TaskUpdate
+	var upd influxdb.TaskUpdate
 	if err := json.NewDecoder(r.Body).Decode(&upd); err != nil {
 		return nil, err
 	}
@@ -704,48 +598,47 @@ func decodeUpdateTaskRequest(ctx context.Context, r *http.Request) (*updateTaskR
 
 func (h *TaskHandler) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeDeleteTaskRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	if err := h.TaskService.DeleteTask(ctx, req.TaskID); err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to delete task",
 		}
-		if err.Err == backend.ErrTaskNotFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
+	h.logger.Debug("tasks deleted", zap.String("taskID", fmt.Sprint(req.TaskID)))
 	w.WriteHeader(http.StatusNoContent)
 }
 
 type deleteTaskRequest struct {
-	TaskID platform.ID
+	TaskID influxdb.ID
 }
 
 func decodeDeleteTaskRequest(ctx context.Context, r *http.Request) (*deleteTaskRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(id); err != nil {
 		return nil, err
 	}
@@ -760,31 +653,31 @@ func (h *TaskHandler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	req, err := decodeGetLogsRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	auth, err := pcontext.GetAuthorizer(ctx)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EUnauthorized,
+			Code: influxdb.EUnauthorized,
 			Msg:  "failed to get authorizer",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	if k := auth.Kind(); k != platform.AuthorizationKind {
+	if k := auth.Kind(); k != influxdb.AuthorizationKind {
 		// Get the authorization for the task, if allowed.
-		authz, err := h.getAuthorizationForTask(ctx, req.filter.Task)
+		authz, err := h.getAuthorizationForTask(ctx, auth, req.filter.Task)
 		if err != nil {
-			EncodeError(ctx, err, w)
+			h.HandleHTTPError(ctx, err, w)
 			return
 		}
 
@@ -794,14 +687,14 @@ func (h *TaskHandler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs, _, err := h.TaskService.FindLogs(ctx, req.filter)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to find task logs",
 		}
-		if err.Err == backend.ErrTaskNotFound || err.Err == backend.ErrNoRunsFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound || err.Err == influxdb.ErrNoRunsFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
@@ -812,32 +705,32 @@ func (h *TaskHandler) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 type getLogsRequest struct {
-	filter platform.LogFilter
+	filter influxdb.LogFilter
 }
 
 type getLogsResponse struct {
-	Events []*platform.Log `json:"events"`
+	Events []*influxdb.Log `json:"events"`
 }
 
 func decodeGetLogsRequest(ctx context.Context, r *http.Request) (*getLogsRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 
 	req := &getLogsRequest{}
-	taskID, err := platform.IDFromString(id)
+	taskID, err := influxdb.IDFromString(id)
 	if err != nil {
 		return nil, err
 	}
 	req.filter.Task = *taskID
 
 	if runID := params.ByName("rid"); runID != "" {
-		id, err := platform.IDFromString(runID)
+		id, err := influxdb.IDFromString(runID)
 		if err != nil {
 			return nil, err
 		}
@@ -852,31 +745,31 @@ func (h *TaskHandler) handleGetRuns(w http.ResponseWriter, r *http.Request) {
 
 	req, err := decodeGetRunsRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	auth, err := pcontext.GetAuthorizer(ctx)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EUnauthorized,
+			Code: influxdb.EUnauthorized,
 			Msg:  "failed to get authorizer",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	if k := auth.Kind(); k != platform.AuthorizationKind {
+	if k := auth.Kind(); k != influxdb.AuthorizationKind {
 		// Get the authorization for the task, if allowed.
-		authz, err := h.getAuthorizationForTask(ctx, req.filter.Task)
+		authz, err := h.getAuthorizationForTask(ctx, auth, req.filter.Task)
 		if err != nil {
-			EncodeError(ctx, err, w)
+			h.HandleHTTPError(ctx, err, w)
 			return
 		}
 
@@ -886,14 +779,14 @@ func (h *TaskHandler) handleGetRuns(w http.ResponseWriter, r *http.Request) {
 
 	runs, _, err := h.TaskService.FindRuns(ctx, req.filter)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to find runs",
 		}
-		if err.Err == backend.ErrTaskNotFound || err.Err == backend.ErrNoRunsFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound || err.Err == influxdb.ErrNoRunsFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
@@ -904,21 +797,21 @@ func (h *TaskHandler) handleGetRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 type getRunsRequest struct {
-	filter platform.RunFilter
+	filter influxdb.RunFilter
 }
 
 func decodeGetRunsRequest(ctx context.Context, r *http.Request) (*getRunsRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	id := params.ByName("id")
 	if id == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 
 	req := &getRunsRequest{}
-	taskID, err := platform.IDFromString(id)
+	taskID, err := influxdb.IDFromString(id)
 	if err != nil {
 		return nil, err
 	}
@@ -927,7 +820,7 @@ func decodeGetRunsRequest(ctx context.Context, r *http.Request) (*getRunsRequest
 	qp := r.URL.Query()
 
 	if id := qp.Get("after"); id != "" {
-		afterID, err := platform.IDFromString(id)
+		afterID, err := influxdb.IDFromString(id)
 		if err != nil {
 			return nil, err
 		}
@@ -940,13 +833,9 @@ func decodeGetRunsRequest(ctx context.Context, r *http.Request) (*getRunsRequest
 			return nil, err
 		}
 
-		if i < 1 || i > 100 {
-			return nil, &platform.Error{
-				Code: platform.EUnprocessableEntity,
-				Msg:  "limit must be between 1 and 100",
-			}
+		if i < 1 || i > influxdb.TaskMaxPageSize {
+			return nil, influxdb.ErrOutOfBoundsLimit
 		}
-
 		req.filter.Limit = i
 	}
 
@@ -969,8 +858,8 @@ func decodeGetRunsRequest(ctx context.Context, r *http.Request) (*getRunsRequest
 	}
 
 	if at != "" && bt != "" && !beforeTime.After(afterTime) {
-		return nil, &platform.Error{
-			Code: platform.EUnprocessableEntity,
+		return nil, &influxdb.Error{
+			Code: influxdb.EUnprocessableEntity,
 			Msg:  "beforeTime must be later than afterTime",
 		}
 	}
@@ -983,25 +872,25 @@ func (h *TaskHandler) handleForceRun(w http.ResponseWriter, r *http.Request) {
 
 	req, err := decodeForceRunRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	run, err := h.TaskService.ForceRun(ctx, req.TaskID, req.Timestamp)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to force run",
 		}
-		if err.Err == backend.ErrTaskNotFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 	if err := encodeResponse(ctx, w, http.StatusOK, newRunResponse(*run)); err != nil {
@@ -1011,7 +900,7 @@ func (h *TaskHandler) handleForceRun(w http.ResponseWriter, r *http.Request) {
 }
 
 type forceRunRequest struct {
-	TaskID    platform.ID
+	TaskID    influxdb.ID
 	Timestamp int64
 }
 
@@ -1019,13 +908,13 @@ func decodeForceRunRequest(ctx context.Context, r *http.Request) (forceRunReques
 	params := httprouter.ParamsFromContext(ctx)
 	tid := params.ByName("id")
 	if tid == "" {
-		return forceRunRequest{}, &platform.Error{
-			Code: platform.EInvalid,
+		return forceRunRequest{}, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 
-	var ti platform.ID
+	var ti influxdb.ID
 	if err := ti.DecodeFromString(tid); err != nil {
 		return forceRunRequest{}, err
 	}
@@ -1059,31 +948,31 @@ func (h *TaskHandler) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 	req, err := decodeGetRunRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	auth, err := pcontext.GetAuthorizer(ctx)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EUnauthorized,
+			Code: influxdb.EUnauthorized,
 			Msg:  "failed to get authorizer",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	if k := auth.Kind(); k != platform.AuthorizationKind {
+	if k := auth.Kind(); k != influxdb.AuthorizationKind {
 		// Get the authorization for the task, if allowed.
-		authz, err := h.getAuthorizationForTask(ctx, req.TaskID)
+		authz, err := h.getAuthorizationForTask(ctx, auth, req.TaskID)
 		if err != nil {
-			EncodeError(ctx, err, w)
+			h.HandleHTTPError(ctx, err, w)
 			return
 		}
 
@@ -1093,14 +982,14 @@ func (h *TaskHandler) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 	run, err := h.TaskService.FindRunByID(ctx, req.TaskID, req.RunID)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to find run",
 		}
-		if err.Err == backend.ErrTaskNotFound || err.Err == backend.ErrRunNotFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound || err.Err == influxdb.ErrRunNotFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
@@ -1111,28 +1000,28 @@ func (h *TaskHandler) handleGetRun(w http.ResponseWriter, r *http.Request) {
 }
 
 type getRunRequest struct {
-	TaskID platform.ID
-	RunID  platform.ID
+	TaskID influxdb.ID
+	RunID  influxdb.ID
 }
 
 func decodeGetRunRequest(ctx context.Context, r *http.Request) (*getRunRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	tid := params.ByName("id")
 	if tid == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 	rid := params.ByName("rid")
 	if rid == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a run ID",
 		}
 	}
 
-	var ti, ri platform.ID
+	var ti, ri influxdb.ID
 	if err := ti.DecodeFromString(tid); err != nil {
 		return nil, err
 	}
@@ -1147,32 +1036,32 @@ func decodeGetRunRequest(ctx context.Context, r *http.Request) (*getRunRequest, 
 }
 
 type cancelRunRequest struct {
-	RunID  platform.ID
-	TaskID platform.ID
+	RunID  influxdb.ID
+	TaskID influxdb.ID
 }
 
 func decodeCancelRunRequest(ctx context.Context, r *http.Request) (*cancelRunRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	rid := params.ByName("rid")
 	if rid == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a run ID",
 		}
 	}
 	tid := params.ByName("id")
 	if tid == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 
-	var i platform.ID
+	var i influxdb.ID
 	if err := i.DecodeFromString(rid); err != nil {
 		return nil, err
 	}
-	var t platform.ID
+	var t influxdb.ID
 	if err := t.DecodeFromString(tid); err != nil {
 		return nil, err
 	}
@@ -1188,25 +1077,25 @@ func (h *TaskHandler) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 
 	req, err := decodeCancelRunRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	err = h.TaskService.CancelRun(ctx, req.TaskID, req.RunID)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to cancel run",
 		}
-		if err.Err == backend.ErrTaskNotFound || err.Err == backend.ErrRunNotFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound || err.Err == influxdb.ErrRunNotFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 }
@@ -1216,31 +1105,31 @@ func (h *TaskHandler) handleRetryRun(w http.ResponseWriter, r *http.Request) {
 
 	req, err := decodeRetryRunRequest(ctx, r)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EInvalid,
+			Code: influxdb.EInvalid,
 			Msg:  "failed to decode request",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	auth, err := pcontext.GetAuthorizer(ctx)
 	if err != nil {
-		err = &platform.Error{
+		err = &influxdb.Error{
 			Err:  err,
-			Code: platform.EUnauthorized,
+			Code: influxdb.EUnauthorized,
 			Msg:  "failed to get authorizer",
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	if k := auth.Kind(); k != platform.AuthorizationKind {
+	if k := auth.Kind(); k != influxdb.AuthorizationKind {
 		// Get the authorization for the task, if allowed.
-		authz, err := h.getAuthorizationForTask(ctx, req.TaskID)
+		authz, err := h.getAuthorizationForTask(ctx, auth, req.TaskID)
 		if err != nil {
-			EncodeError(ctx, err, w)
+			h.HandleHTTPError(ctx, err, w)
 			return
 		}
 
@@ -1250,14 +1139,14 @@ func (h *TaskHandler) handleRetryRun(w http.ResponseWriter, r *http.Request) {
 
 	run, err := h.TaskService.RetryRun(ctx, req.TaskID, req.RunID)
 	if err != nil {
-		err := &platform.Error{
+		err := &influxdb.Error{
 			Err: err,
 			Msg: "failed to retry run",
 		}
-		if err.Err == backend.ErrTaskNotFound || err.Err == backend.ErrRunNotFound {
-			err.Code = platform.ENotFound
+		if err.Err == influxdb.ErrTaskNotFound || err.Err == influxdb.ErrRunNotFound {
+			err.Code = influxdb.ENotFound
 		}
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 	if err := encodeResponse(ctx, w, http.StatusOK, newRunResponse(*run)); err != nil {
@@ -1267,27 +1156,27 @@ func (h *TaskHandler) handleRetryRun(w http.ResponseWriter, r *http.Request) {
 }
 
 type retryRunRequest struct {
-	RunID, TaskID platform.ID
+	RunID, TaskID influxdb.ID
 }
 
 func decodeRetryRunRequest(ctx context.Context, r *http.Request) (*retryRunRequest, error) {
 	params := httprouter.ParamsFromContext(ctx)
 	tid := params.ByName("id")
 	if tid == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a task ID",
 		}
 	}
 	rid := params.ByName("rid")
 	if rid == "" {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Msg:  "you must provide a run ID",
 		}
 	}
 
-	var ti, ri platform.ID
+	var ti, ri influxdb.ID
 	if err := ti.DecodeFromString(tid); err != nil {
 		return nil, err
 	}
@@ -1301,7 +1190,7 @@ func decodeRetryRunRequest(ctx context.Context, r *http.Request) (*retryRunReque
 	}, nil
 }
 
-func (h *TaskHandler) populateTaskCreateOrg(ctx context.Context, tc *platform.TaskCreate) error {
+func (h *TaskHandler) populateTaskCreateOrg(ctx context.Context, tc *influxdb.TaskCreate) error {
 	if tc.OrganizationID.Valid() && tc.Organization != "" {
 		return nil
 	}
@@ -1317,7 +1206,7 @@ func (h *TaskHandler) populateTaskCreateOrg(ctx context.Context, tc *platform.Ta
 		}
 		tc.Organization = o.Name
 	} else {
-		o, err := h.OrganizationService.FindOrganization(ctx, platform.OrganizationFilter{Name: &tc.Organization})
+		o, err := h.OrganizationService.FindOrganization(ctx, influxdb.OrganizationFilter{Name: &tc.Organization})
 		if err != nil {
 			return err
 		}
@@ -1329,30 +1218,27 @@ func (h *TaskHandler) populateTaskCreateOrg(ctx context.Context, tc *platform.Ta
 // getAuthorizationForTask looks up the authorization associated with taskID,
 // ensuring that the authorizer on ctx is allowed to view the task and the authorization.
 //
-// This method returns a *platform.Error, suitable for directly passing to EncodeError.
-func (h *TaskHandler) getAuthorizationForTask(ctx context.Context, taskID platform.ID) (*platform.Authorization, *platform.Error) {
+// This method returns a *influxdb.Error, suitable for directly passing to h.HandleHTTPError.
+func (h *TaskHandler) getAuthorizationForTask(ctx context.Context, auth influxdb.Authorizer, taskID influxdb.ID) (*influxdb.Authorization, *influxdb.Error) {
+	sess, ok := auth.(*influxdb.Session)
+	if !ok {
+		return nil, &influxdb.Error{
+			Code: influxdb.EUnauthorized,
+			Msg:  "unable to authorize session",
+		}
+	}
 	// First look up the task, if we're allowed.
 	// This assumes h.TaskService validates access.
 	t, err := h.TaskService.FindTaskByID(ctx, taskID)
 	if err != nil {
-		return nil, &platform.Error{
+		return nil, &influxdb.Error{
 			Err:  err,
-			Code: platform.EUnauthorized,
+			Code: influxdb.EUnauthorized,
 			Msg:  "task ID unknown or unauthorized",
 		}
 	}
 
-	// Explicitly check against an authorized authorization service.
-	authz, err := authorizer.NewAuthorizationService(h.AuthorizationService).FindAuthorizationByID(ctx, t.AuthorizationID)
-	if err != nil {
-		return nil, &platform.Error{
-			Err:  err,
-			Code: platform.EUnauthorized,
-			Msg:  "unable to access task authorization",
-		}
-	}
-
-	return authz, nil
+	return sess.EphemeralAuth(t.OrganizationID), nil
 }
 
 // TaskService connects to Influx via HTTP using tokens to manage tasks.
@@ -1363,11 +1249,11 @@ type TaskService struct {
 }
 
 // FindTaskByID returns a single task
-func (t TaskService) FindTaskByID(ctx context.Context, id platform.ID) (*platform.Task, error) {
+func (t TaskService) FindTaskByID(ctx context.Context, id influxdb.ID) (*influxdb.Task, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, taskIDPath(id))
+	u, err := NewURL(t.Addr, taskIDPath(id))
 	if err != nil {
 		return nil, err
 	}
@@ -1377,9 +1263,8 @@ func (t TaskService) FindTaskByID(ctx context.Context, id platform.ID) (*platfor
 		return nil, err
 	}
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
@@ -1387,11 +1272,11 @@ func (t TaskService) FindTaskByID(ctx context.Context, id platform.ID) (*platfor
 	defer resp.Body.Close()
 
 	if err := CheckError(resp); err != nil {
-		if platform.ErrorCode(err) == platform.ENotFound {
+		if influxdb.ErrorCode(err) == influxdb.ENotFound {
 			// ErrTaskNotFound is expected as part of the FindTaskByID contract,
 			// so return that actual error instead of a different error that looks like it.
 			// TODO cleanup backend task service error implementation
-			return nil, backend.ErrTaskNotFound
+			return nil, influxdb.ErrTaskNotFound
 		}
 		return nil, err
 	}
@@ -1406,11 +1291,11 @@ func (t TaskService) FindTaskByID(ctx context.Context, id platform.ID) (*platfor
 
 // FindTasks returns a list of tasks that match a filter (limit 100) and the total count
 // of matching tasks.
-func (t TaskService) FindTasks(ctx context.Context, filter platform.TaskFilter) ([]*platform.Task, int, error) {
+func (t TaskService) FindTasks(ctx context.Context, filter influxdb.TaskFilter) ([]*influxdb.Task, int, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, tasksPath)
+	u, err := NewURL(t.Addr, tasksPath)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1432,6 +1317,10 @@ func (t TaskService) FindTasks(ctx context.Context, filter platform.TaskFilter) 
 		val.Add("limit", strconv.Itoa(filter.Limit))
 	}
 
+	if filter.Type != nil {
+		val.Add("type", *filter.Type)
+	}
+
 	u.RawQuery = val.Encode()
 
 	req, err := http.NewRequest("GET", u.String(), nil)
@@ -1439,9 +1328,8 @@ func (t TaskService) FindTasks(ctx context.Context, filter platform.TaskFilter) 
 		return nil, 0, err
 	}
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -1457,7 +1345,7 @@ func (t TaskService) FindTasks(ctx context.Context, filter platform.TaskFilter) 
 		return nil, 0, err
 	}
 
-	tasks := make([]*platform.Task, len(tr.Tasks))
+	tasks := make([]*influxdb.Task, len(tr.Tasks))
 	for i := range tr.Tasks {
 		tasks[i] = &tr.Tasks[i].Task
 	}
@@ -1465,11 +1353,11 @@ func (t TaskService) FindTasks(ctx context.Context, filter platform.TaskFilter) 
 }
 
 // CreateTask creates a new task.
-func (t TaskService) CreateTask(ctx context.Context, tc platform.TaskCreate) (*platform.Task, error) {
+func (t TaskService) CreateTask(ctx context.Context, tc influxdb.TaskCreate) (*influxdb.Task, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, tasksPath)
+	u, err := NewURL(t.Addr, tasksPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1486,9 +1374,8 @@ func (t TaskService) CreateTask(ctx context.Context, tc platform.TaskCreate) (*p
 
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1508,11 +1395,11 @@ func (t TaskService) CreateTask(ctx context.Context, tc platform.TaskCreate) (*p
 }
 
 // UpdateTask updates a single task with changeset.
-func (t TaskService) UpdateTask(ctx context.Context, id platform.ID, upd platform.TaskUpdate) (*platform.Task, error) {
+func (t TaskService) UpdateTask(ctx context.Context, id influxdb.ID, upd influxdb.TaskUpdate) (*influxdb.Task, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, taskIDPath(id))
+	u, err := NewURL(t.Addr, taskIDPath(id))
 	if err != nil {
 		return nil, err
 	}
@@ -1529,9 +1416,8 @@ func (t TaskService) UpdateTask(ctx context.Context, id platform.ID, upd platfor
 
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1552,11 +1438,11 @@ func (t TaskService) UpdateTask(ctx context.Context, id platform.ID, upd platfor
 }
 
 // DeleteTask removes a task by ID and purges all associated data and scheduled runs.
-func (t TaskService) DeleteTask(ctx context.Context, id platform.ID) error {
+func (t TaskService) DeleteTask(ctx context.Context, id influxdb.ID) error {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, taskIDPath(id))
+	u, err := NewURL(t.Addr, taskIDPath(id))
 	if err != nil {
 		return err
 	}
@@ -1568,9 +1454,8 @@ func (t TaskService) DeleteTask(ctx context.Context, id platform.ID) error {
 
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1582,7 +1467,7 @@ func (t TaskService) DeleteTask(ctx context.Context, id platform.ID) error {
 }
 
 // FindLogs returns logs for a run.
-func (t TaskService) FindLogs(ctx context.Context, filter platform.LogFilter) ([]*platform.Log, int, error) {
+func (t TaskService) FindLogs(ctx context.Context, filter influxdb.LogFilter) ([]*influxdb.Log, int, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
@@ -1597,7 +1482,7 @@ func (t TaskService) FindLogs(ctx context.Context, filter platform.LogFilter) ([
 		urlPath = path.Join(taskIDRunIDPath(filter.Task, *filter.Run), "logs")
 	}
 
-	u, err := newURL(t.Addr, urlPath)
+	u, err := NewURL(t.Addr, urlPath)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1607,9 +1492,8 @@ func (t TaskService) FindLogs(ctx context.Context, filter platform.LogFilter) ([
 		return nil, 0, err
 	}
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1630,7 +1514,7 @@ func (t TaskService) FindLogs(ctx context.Context, filter platform.LogFilter) ([
 }
 
 // FindRuns returns a list of runs that match a filter and the total count of returned runs.
-func (t TaskService) FindRuns(ctx context.Context, filter platform.RunFilter) ([]*platform.Run, int, error) {
+func (t TaskService) FindRuns(ctx context.Context, filter influxdb.RunFilter) ([]*influxdb.Run, int, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
@@ -1638,7 +1522,7 @@ func (t TaskService) FindRuns(ctx context.Context, filter platform.RunFilter) ([
 		return nil, 0, errors.New("task ID required")
 	}
 
-	u, err := newURL(t.Addr, taskIDRunsPath(filter.Task))
+	u, err := NewURL(t.Addr, taskIDRunsPath(filter.Task))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1647,9 +1531,12 @@ func (t TaskService) FindRuns(ctx context.Context, filter platform.RunFilter) ([
 	if filter.After != nil {
 		val.Set("after", filter.After.String())
 	}
-	if filter.Limit > 0 {
-		val.Set("limit", strconv.Itoa(filter.Limit))
+
+	if filter.Limit < 0 || filter.Limit > influxdb.TaskMaxPageSize {
+		return nil, 0, influxdb.ErrOutOfBoundsLimit
 	}
+	val.Set("limit", strconv.Itoa(filter.Limit))
+
 	u.RawQuery = val.Encode()
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
@@ -1658,9 +1545,8 @@ func (t TaskService) FindRuns(ctx context.Context, filter platform.RunFilter) ([
 
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1677,7 +1563,7 @@ func (t TaskService) FindRuns(ctx context.Context, filter platform.RunFilter) ([
 		return nil, 0, err
 	}
 
-	runs := make([]*platform.Run, len(rs.Runs))
+	runs := make([]*influxdb.Run, len(rs.Runs))
 	for i := range rs.Runs {
 		runs[i] = &rs.Runs[i].Run
 	}
@@ -1686,11 +1572,11 @@ func (t TaskService) FindRuns(ctx context.Context, filter platform.RunFilter) ([
 }
 
 // FindRunByID returns a single run of a specific task.
-func (t TaskService) FindRunByID(ctx context.Context, taskID, runID platform.ID) (*platform.Run, error) {
+func (t TaskService) FindRunByID(ctx context.Context, taskID, runID influxdb.ID) (*influxdb.Run, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, taskIDRunIDPath(taskID, runID))
+	u, err := NewURL(t.Addr, taskIDRunIDPath(taskID, runID))
 	if err != nil {
 		return nil, err
 	}
@@ -1701,9 +1587,8 @@ func (t TaskService) FindRunByID(ctx context.Context, taskID, runID platform.ID)
 	}
 
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1712,11 +1597,11 @@ func (t TaskService) FindRunByID(ctx context.Context, taskID, runID platform.ID)
 	defer resp.Body.Close()
 
 	if err := CheckError(resp); err != nil {
-		if platform.ErrorCode(err) == platform.ENotFound {
+		if influxdb.ErrorCode(err) == influxdb.ENotFound {
 			// ErrRunNotFound is expected as part of the FindRunByID contract,
 			// so return that actual error instead of a different error that looks like it.
 			// TODO cleanup backend error implementation
-			return nil, backend.ErrRunNotFound
+			return nil, influxdb.ErrRunNotFound
 		}
 
 		return nil, err
@@ -1729,12 +1614,12 @@ func (t TaskService) FindRunByID(ctx context.Context, taskID, runID platform.ID)
 }
 
 // RetryRun creates and returns a new run (which is a retry of another run).
-func (t TaskService) RetryRun(ctx context.Context, taskID, runID platform.ID) (*platform.Run, error) {
+func (t TaskService) RetryRun(ctx context.Context, taskID, runID influxdb.ID) (*influxdb.Run, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
 	p := path.Join(taskIDRunIDPath(taskID, runID), "retry")
-	u, err := newURL(t.Addr, p)
+	u, err := NewURL(t.Addr, p)
 	if err != nil {
 		return nil, err
 	}
@@ -1745,9 +1630,8 @@ func (t TaskService) RetryRun(ctx context.Context, taskID, runID platform.ID) (*
 	}
 
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1756,11 +1640,11 @@ func (t TaskService) RetryRun(ctx context.Context, taskID, runID platform.ID) (*
 	defer resp.Body.Close()
 
 	if err := CheckError(resp); err != nil {
-		if platform.ErrorCode(err) == platform.ENotFound {
+		if influxdb.ErrorCode(err) == influxdb.ENotFound {
 			// ErrRunNotFound is expected as part of the RetryRun contract,
 			// so return that actual error instead of a different error that looks like it.
 			// TODO cleanup backend task error implementation
-			return nil, backend.ErrRunNotFound
+			return nil, influxdb.ErrRunNotFound
 		}
 		// RequestStillQueuedError is also part of the contract.
 		if e := backend.ParseRequestStillQueuedError(err.Error()); e != nil {
@@ -1777,11 +1661,12 @@ func (t TaskService) RetryRun(ctx context.Context, taskID, runID platform.ID) (*
 	return &rs.Run, nil
 }
 
-func (t TaskService) ForceRun(ctx context.Context, taskID platform.ID, scheduledFor int64) (*platform.Run, error) {
+// ForceRun starts a run manually right now.
+func (t TaskService) ForceRun(ctx context.Context, taskID influxdb.ID, scheduledFor int64) (*influxdb.Run, error) {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, taskIDRunsPath(taskID))
+	u, err := NewURL(t.Addr, taskIDRunsPath(taskID))
 	if err != nil {
 		return nil, err
 	}
@@ -1793,9 +1678,8 @@ func (t TaskService) ForceRun(ctx context.Context, taskID platform.ID, scheduled
 	}
 
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1804,10 +1688,10 @@ func (t TaskService) ForceRun(ctx context.Context, taskID platform.ID, scheduled
 	defer resp.Body.Close()
 
 	if err := CheckError(resp); err != nil {
-		if platform.ErrorCode(err) == platform.ENotFound {
+		if influxdb.ErrorCode(err) == influxdb.ENotFound {
 			// ErrRunNotFound is expected as part of the RetryRun contract,
 			// so return that actual error instead of a different error that looks like it.
-			return nil, backend.ErrRunNotFound
+			return nil, influxdb.ErrRunNotFound
 		}
 
 		// RequestStillQueuedError is also part of the contract.
@@ -1825,15 +1709,16 @@ func (t TaskService) ForceRun(ctx context.Context, taskID platform.ID, scheduled
 	return &rs.Run, nil
 }
 
-func cancelPath(taskID, runID platform.ID) string {
+func cancelPath(taskID, runID influxdb.ID) string {
 	return path.Join(taskID.String(), runID.String())
 }
 
-func (t TaskService) CancelRun(ctx context.Context, taskID, runID platform.ID) error {
+// CancelRun stops a longer running run.
+func (t TaskService) CancelRun(ctx context.Context, taskID, runID influxdb.ID) error {
 	span, _ := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
-	u, err := newURL(t.Addr, cancelPath(taskID, runID))
+	u, err := NewURL(t.Addr, cancelPath(taskID, runID))
 	if err != nil {
 		return err
 	}
@@ -1844,9 +1729,8 @@ func (t TaskService) CancelRun(ctx context.Context, taskID, runID platform.ID) e
 	}
 
 	SetToken(t.Token, req)
-	tracing.InjectToHTTPRequest(span, req)
 
-	hc := newClient(u.Scheme, t.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, t.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -1861,14 +1745,14 @@ func (t TaskService) CancelRun(ctx context.Context, taskID, runID platform.ID) e
 	return nil
 }
 
-func taskIDPath(id platform.ID) string {
+func taskIDPath(id influxdb.ID) string {
 	return path.Join(tasksPath, id.String())
 }
 
-func taskIDRunsPath(id platform.ID) string {
+func taskIDRunsPath(id influxdb.ID) string {
 	return path.Join(tasksPath, id.String(), "runs")
 }
 
-func taskIDRunIDPath(taskID, runID platform.ID) string {
+func taskIDRunIDPath(taskID, runID influxdb.ID) string {
 	return path.Join(tasksPath, taskID.String(), "runs", runID.String())
 }

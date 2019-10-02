@@ -1,62 +1,96 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import _ from 'lodash'
-// Components
-import {ComponentStatus, Dropdown} from 'src/clockface'
-// Types
-import {Bucket} from '@influxdata/influx'
-import {RemoteDataState} from 'src/types'
+import {connect} from 'react-redux'
 
-interface Props {
-  buckets: Bucket[]
+// Components
+import {Dropdown, ComponentStatus} from '@influxdata/clockface'
+
+// Utils
+import {isSystemBucket} from 'src/buckets/constants/index'
+
+// Types
+import {RemoteDataState, AppState, Bucket} from 'src/types'
+
+interface OwnProps {
   onChangeBucketName: (selectedBucketName: string) => void
   selectedBucketName: string
-  loading: RemoteDataState
 }
 
-export default class TaskOptionsBucketDropdown extends PureComponent<Props> {
+interface StateProps {
+  buckets: Bucket[]
+  status: RemoteDataState
+}
+
+type Props = OwnProps & StateProps
+
+class TaskOptionsBucketDropdown extends PureComponent<Props> {
   public componentDidMount() {
     this.setSelectedToFirst()
   }
+
   public componentDidUpdate(prevProps: Props) {
     if (this.props.buckets !== prevProps.buckets) {
       this.setSelectedToFirst()
     }
   }
+
   public render() {
+    const {selectedBucketName} = this.props
+
     return (
       <Dropdown
-        selectedID={this.selectedName}
-        onChange={this.props.onChangeBucketName}
-        status={this.status}
-      >
-        {this.dropdownItems}
-      </Dropdown>
+        button={(active, onClick) => (
+          <Dropdown.Button
+            active={active}
+            onClick={onClick}
+            status={this.status}
+          >
+            {selectedBucketName}
+          </Dropdown.Button>
+        )}
+        menu={onCollapse => (
+          <Dropdown.Menu onCollapse={onCollapse}>
+            {this.dropdownItems}
+          </Dropdown.Menu>
+        )}
+      />
     )
   }
 
   private get dropdownItems(): JSX.Element[] {
     const {buckets} = this.props
 
-    if (buckets && buckets.length) {
-      return buckets.map(bucket => {
-        return (
-          <Dropdown.Item id={bucket.name} key={bucket.name} value={bucket.name}>
-            {bucket.name}
-          </Dropdown.Item>
-        )
-      })
-    } else {
+    if (!buckets || !buckets.length) {
       return [
         <Dropdown.Item id="no-buckets" key="no-buckets" value="no-buckets">
-          {'no buckets found in org'}
+          No Buckets found in Org
         </Dropdown.Item>,
       ]
     }
+
+    const nonSystemBuckets = buckets.filter(
+      bucket => !isSystemBucket(bucket.name)
+    )
+
+    return nonSystemBuckets.map(bucket => {
+      return (
+        <Dropdown.Item
+          id={bucket.name}
+          key={bucket.name}
+          value={bucket.name}
+          onClick={this.props.onChangeBucketName}
+          selected={bucket.id === this.selectedName}
+        >
+          {bucket.name}
+        </Dropdown.Item>
+      )
+    })
   }
+
   private get status(): ComponentStatus {
-    const {loading, buckets} = this.props
-    if (loading === RemoteDataState.Loading) {
+    const {status, buckets} = this.props
+    if (status === RemoteDataState.Loading) {
       return ComponentStatus.Loading
     }
     if (!buckets || !buckets.length) {
@@ -83,3 +117,15 @@ export default class TaskOptionsBucketDropdown extends PureComponent<Props> {
     onChangeBucketName(firstBucketNameInList)
   }
 }
+
+const mstp = ({buckets}: AppState): StateProps => {
+  return {
+    buckets: buckets.list,
+    status: buckets.status,
+  }
+}
+
+export default connect<StateProps, {}, OwnProps>(
+  mstp,
+  null
+)(TaskOptionsBucketDropdown)

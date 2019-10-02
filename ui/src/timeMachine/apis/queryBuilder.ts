@@ -2,7 +2,7 @@
 import {get} from 'lodash'
 
 // APIs
-import {executeQuery, ExecuteFluxQueryResult} from 'src/shared/apis/query'
+import {runQuery, RunQueryResult} from 'src/shared/apis/query'
 import {parseResponse} from 'src/shared/parsing/flux/response'
 
 // Utils
@@ -11,29 +11,22 @@ import {formatExpression} from 'src/variables/utils/formatExpression'
 
 // Types
 import {TimeRange, BuilderConfig} from 'src/types'
-import {WrappedCancelablePromise} from 'src/types/promises'
+import {CancelBox} from 'src/types/promises'
 
 const DEFAULT_TIME_RANGE: TimeRange = {lower: 'now() - 30d'}
 const DEFAULT_LIMIT = 200
-
-type CancelableQuery = WrappedCancelablePromise<string[]>
 
 export interface FindBucketsOptions {
   url: string
   orgID: string
 }
 
-export function findBuckets({url, orgID}: FindBucketsOptions): CancelableQuery {
+export function findBuckets({orgID}: FindBucketsOptions): CancelBox<string[]> {
   const query = `buckets()
   |> sort(columns: ["name"])
   |> limit(n: ${DEFAULT_LIMIT})`
 
-  const {promise, cancel} = executeQuery(url, orgID, query)
-
-  return {
-    promise: promise.then(resp => extractCol(resp, 'name')),
-    cancel,
-  }
+  return extractBoxedCol(runQuery(orgID, query), 'name')
 }
 
 export interface FindKeysOptions {
@@ -47,14 +40,13 @@ export interface FindKeysOptions {
 }
 
 export function findKeys({
-  url,
   orgID,
   bucket,
   tagsSelections,
   searchTerm = '',
   timeRange = DEFAULT_TIME_RANGE,
   limit = DEFAULT_LIMIT,
-}: FindKeysOptions): CancelableQuery {
+}: FindKeysOptions): CancelBox<string[]> {
   const tagFilters = formatTagFilterPredicate(tagsSelections)
   const searchFilter = formatSearchFilterCall(searchTerm)
   const previousKeyFilter = formatTagKeyFilterCall(tagsSelections)
@@ -66,18 +58,13 @@ export function findKeys({
   |> range(${timeRangeArguments})
   |> filter(fn: ${tagFilters})
   |> keys()
-  |> keep(columns: ["_value"])${searchFilter}${previousKeyFilter}
+  |> keep(columns: ["_value"])
+  |> distinct()${searchFilter}${previousKeyFilter}
   |> filter(fn: (r) => r._value != "_time" and r._value != "_start" and r._value !=  "_stop" and r._value != "_value")
-  |> distinct()
   |> sort()
   |> limit(n: ${limit})`
 
-  const {promise, cancel} = executeQuery(url, orgID, query)
-
-  return {
-    promise: promise.then(resp => extractCol(resp, '_value')),
-    cancel,
-  }
+  return extractBoxedCol(runQuery(orgID, query), '_value')
 }
 
 export interface FindValuesOptions {
@@ -92,7 +79,6 @@ export interface FindValuesOptions {
 }
 
 export function findValues({
-  url,
   orgID,
   bucket,
   tagsSelections,
@@ -100,7 +86,7 @@ export function findValues({
   searchTerm = '',
   timeRange = DEFAULT_TIME_RANGE,
   limit = DEFAULT_LIMIT,
-}: FindValuesOptions): CancelableQuery {
+}: FindValuesOptions): CancelBox<string[]> {
   const tagFilters = formatTagFilterPredicate(tagsSelections)
   const searchFilter = formatSearchFilterCall(searchTerm)
   const timeRangeArguments = formatTimeRangeArguments(timeRange)
@@ -110,25 +96,32 @@ export function findValues({
   const query = `from(bucket: "${bucket}")
   |> range(${timeRangeArguments})
   |> filter(fn: ${tagFilters})
-  |> group(columns: ["${key}"])
-  |> distinct(column: "${key}")
-  |> keep(columns: ["_value"])${searchFilter}
+  |> keep(columns: ["${key}"])
+  |> group()
+  |> distinct(column: "${key}")${searchFilter}
   |> limit(n: ${limit})
   |> sort()`
 
-  const {promise, cancel} = executeQuery(url, orgID, query)
-
-  return {
-    promise: promise.then(resp => extractCol(resp, '_value')),
-    cancel,
-  }
+  return extractBoxedCol(runQuery(orgID, query), '_value')
 }
 
-export function extractCol(
-  resp: ExecuteFluxQueryResult,
+function extractBoxedCol(
+  resp: CancelBox<RunQueryResult>,
   colName: string
-): string[] {
-  const tables = parseResponse(resp.csv)
+): CancelBox<string[]> {
+  const promise = resp.promise.then<string[]>(result => {
+    if (result.type !== 'SUCCESS') {
+      return Promise.reject(new Error(result.message))
+    }
+
+    return extractCol(result.csv, colName)
+  })
+
+  return {promise, cancel: resp.cancel}
+}
+
+function extractCol(csv: string, colName: string): string[] {
+  const tables = parseResponse(csv)
   const data = get(tables, '0.data', [])
 
   if (!data.length) {
@@ -141,7 +134,7 @@ export function extractCol(
     throw new Error(`could not find column "${colName}" in response`)
   }
 
-  const colValues = []
+  const colValues: string[] = []
 
   for (let i = 1; i < data.length; i++) {
     colValues.push(data[i][colIndex])

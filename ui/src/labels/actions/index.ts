@@ -3,7 +3,7 @@ import {client} from 'src/utils/api'
 
 // Types
 import {RemoteDataState} from 'src/types'
-import {ILabel} from '@influxdata/influx'
+import {ILabel, ILabelProperties} from '@influxdata/influx'
 import {LabelProperties} from 'src/types/labels'
 import {Dispatch} from 'redux-thunk'
 
@@ -15,6 +15,7 @@ import {
   updateLabelFailed,
   deleteLabelFailed,
 } from 'src/shared/copy/notifications'
+import {GetState} from 'src/types'
 
 export type Action = SetLabels | AddLabel | EditLabel | RemoveLabel
 
@@ -66,11 +67,17 @@ export const removeLabel = (id: string): RemoveLabel => ({
   payload: {id},
 })
 
-export const getLabels = () => async (dispatch: Dispatch<Action>) => {
+export const getLabels = () => async (
+  dispatch: Dispatch<Action>,
+  getState: GetState
+) => {
   try {
+    const {
+      orgs: {org},
+    } = getState()
     dispatch(setLabels(RemoteDataState.Loading))
 
-    const labels = await client.labels.getAll()
+    const labels = await client.labels.getAll(org.id)
 
     dispatch(setLabels(RemoteDataState.Done, labels))
   } catch (e) {
@@ -81,12 +88,19 @@ export const getLabels = () => async (dispatch: Dispatch<Action>) => {
 }
 
 export const createLabel = (
-  orgID: string,
   name: string,
   properties: LabelProperties
-) => async (dispatch: Dispatch<Action>) => {
+) => async (dispatch: Dispatch<Action>, getState: GetState) => {
+  const {
+    orgs: {org},
+  } = getState()
+
   try {
-    const createdLabel = await client.labels.create({orgID, name, properties})
+    const createdLabel = await client.labels.create({
+      orgID: org.id,
+      name,
+      properties: properties as ILabelProperties,
+    })
 
     dispatch(addLabel(createdLabel))
   } catch (e) {

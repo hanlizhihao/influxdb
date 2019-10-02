@@ -3,7 +3,6 @@ import {
   Cell,
   Color,
   Dashboard,
-  TableOptions,
   FieldOption,
   DecimalPlaces,
   Service,
@@ -11,7 +10,7 @@ import {
   SourceAuthenticationMethod,
   SourceLinks,
   TimeRange,
-  QueryConfig,
+  TableOptions,
 } from 'src/types'
 
 export const dashboard: Dashboard = {
@@ -81,48 +80,6 @@ export const service: Service = {
     self: '/chronograf/v1/sources/1/services/1',
     source: '/chronograf/v1/sources/1',
   },
-}
-
-export const queryConfig: QueryConfig = {
-  database: 'telegraf',
-  measurement: 'cpu',
-  retentionPolicy: 'autogen',
-  fields: [
-    {
-      value: 'mean',
-      type: 'func',
-      alias: 'mean_usage_idle',
-      args: [
-        {
-          value: 'usage_idle',
-          type: 'field',
-          alias: '',
-        },
-      ],
-    },
-    {
-      value: 'mean',
-      type: 'func',
-      alias: 'mean_usage_user',
-      args: [
-        {
-          value: 'usage_user',
-          type: 'field',
-          alias: '',
-        },
-      ],
-    },
-  ],
-  tags: {},
-  groupBy: {
-    time: 'auto',
-    tags: [],
-  },
-  areTagsAccepted: false,
-  fill: 'null',
-  rawText: null,
-  range: null,
-  shifts: null,
 }
 
 export const axes: Axes = {

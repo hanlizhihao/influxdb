@@ -3,8 +3,12 @@ import React, {Component} from 'react'
 import classnames from 'classnames'
 
 // Components
-import {Dropdown} from 'src/clockface'
-import {Button, ButtonShape, IconFont} from '@influxdata/clockface'
+import {
+  SquareButton,
+  IconFont,
+  ComponentStatus,
+  Dropdown,
+} from '@influxdata/clockface'
 
 // Constants
 import autoRefreshOptions, {
@@ -12,18 +16,24 @@ import autoRefreshOptions, {
   AutoRefreshOptionType,
 } from 'src/shared/data/autoRefreshes'
 
+// Types
+import {AutoRefresh, AutoRefreshStatus} from 'src/types'
+
+const DROPDOWN_WIDTH_COLLAPSED = 50
+const DROPDOWN_WIDTH_FULL = 84
+
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
-  selected: number
+  selected: AutoRefresh
   onChoose: (milliseconds: number) => void
-  showManualRefresh?: boolean
+  showManualRefresh: boolean
   onManualRefresh?: () => void
 }
 
 @ErrorHandling
-class AutoRefreshDropdown extends Component<Props> {
-  public static defaultProps: Partial<Props> = {
+export default class AutoRefreshDropdown extends Component<Props> {
+  public static defaultProps = {
     showManualRefresh: true,
   }
 
@@ -39,29 +49,48 @@ class AutoRefreshDropdown extends Component<Props> {
     return (
       <div className={this.className}>
         <Dropdown
-          icon={this.dropdownIcon}
           widthPixels={this.dropdownWidthPixels}
-          onChange={this.handleDropdownChange}
-          selectedID={this.selectedID}
-        >
-          {autoRefreshOptions.map(option => {
-            if (option.type === AutoRefreshOptionType.Header) {
-              return (
-                <Dropdown.Divider
-                  key={option.id}
-                  id={option.id}
-                  text={option.label}
-                />
-              )
-            }
+          button={(active, onClick) => (
+            <Dropdown.Button
+              active={active}
+              onClick={onClick}
+              status={this.dropdownStatus}
+              icon={this.dropdownIcon}
+            >
+              {this.selectedOptionLabel}
+            </Dropdown.Button>
+          )}
+          menu={onCollapse => (
+            <Dropdown.Menu
+              onCollapse={onCollapse}
+              overrideWidth={DROPDOWN_WIDTH_FULL}
+            >
+              {autoRefreshOptions.map(option => {
+                if (option.type === AutoRefreshOptionType.Header) {
+                  return (
+                    <Dropdown.Divider
+                      key={option.id}
+                      id={option.id}
+                      text={option.label}
+                    />
+                  )
+                }
 
-            return (
-              <Dropdown.Item key={option.id} id={option.id} value={option}>
-                {option.label}
-              </Dropdown.Item>
-            )
-          })}
-        </Dropdown>
+                return (
+                  <Dropdown.Item
+                    key={option.id}
+                    id={option.id}
+                    value={option}
+                    selected={option.id === this.selectedOptionID}
+                    onClick={this.handleDropdownChange}
+                  >
+                    {option.label}
+                  </Dropdown.Item>
+                )
+              })}
+            </Dropdown.Menu>
+          )}
+        />
         {this.manualRefreshButton}
       </div>
     )
@@ -70,16 +99,27 @@ class AutoRefreshDropdown extends Component<Props> {
   public handleDropdownChange = (
     autoRefreshOption: AutoRefreshOption
   ): void => {
-    const {onChoose} = this.props
-    const {milliseconds} = autoRefreshOption
+    this.props.onChoose(autoRefreshOption.milliseconds)
+  }
 
-    onChoose(milliseconds)
+  private get dropdownStatus(): ComponentStatus {
+    if (this.isDisabled) {
+      return ComponentStatus.Disabled
+    }
+
+    return ComponentStatus.Default
+  }
+
+  private get isDisabled(): boolean {
+    const {selected} = this.props
+
+    return selected.status === AutoRefreshStatus.Disabled
   }
 
   private get isPaused(): boolean {
     const {selected} = this.props
 
-    return selected === 0
+    return selected.status === AutoRefreshStatus.Paused || this.isDisabled
   }
 
   private get className(): string {
@@ -96,19 +136,30 @@ class AutoRefreshDropdown extends Component<Props> {
 
   private get dropdownWidthPixels(): number {
     if (this.isPaused) {
-      return 50
+      return DROPDOWN_WIDTH_COLLAPSED
     }
 
-    return 84
+    return DROPDOWN_WIDTH_FULL
   }
 
-  private get selectedID(): string {
+  private get selectedOptionID(): string {
     const {selected} = this.props
+
     const selectedOption = autoRefreshOptions.find(
-      option => option.milliseconds === selected
+      option => option.milliseconds === selected.interval
     )
 
     return selectedOption.id
+  }
+
+  private get selectedOptionLabel(): string {
+    const {selected} = this.props
+
+    const selectedOption = autoRefreshOptions.find(
+      option => option.milliseconds === selected.interval
+    )
+
+    return selectedOption.label
   }
 
   private get manualRefreshButton(): JSX.Element {
@@ -120,11 +171,10 @@ class AutoRefreshDropdown extends Component<Props> {
 
     if (this.isPaused) {
       return (
-        <Button
-          shape={ButtonShape.Square}
+        <SquareButton
           icon={IconFont.Refresh}
           onClick={onManualRefresh}
-          customClass="autorefresh-dropdown--pause"
+          className="autorefresh-dropdown--pause"
         />
       )
     }
@@ -132,5 +182,3 @@ class AutoRefreshDropdown extends Component<Props> {
     return null
   }
 }
-
-export default AutoRefreshDropdown

@@ -28,12 +28,12 @@ func TestBucketService(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
-	org := &platform.Organization{}
+	org := &platform.Organization{Name: "org1"}
 	if err := inmemService.CreateOrganization(context.TODO(), org); err != nil {
 		panic(err)
 	}
 
-	bucket := &platform.Bucket{OrganizationID: org.ID}
+	bucket := &platform.Bucket{OrgID: org.ID}
 	if err := inmemService.CreateBucket(context.TODO(), bucket); err != nil {
 		panic(err)
 	}
@@ -57,7 +57,7 @@ type MockDeleter struct {
 	orgID, bucketID platform.ID
 }
 
-func (m *MockDeleter) DeleteBucket(orgID, bucketID platform.ID) error {
+func (m *MockDeleter) DeleteBucket(_ context.Context, orgID, bucketID platform.ID) error {
 	m.orgID, m.bucketID = orgID, bucketID
 	return nil
 }

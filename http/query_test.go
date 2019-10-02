@@ -16,6 +16,7 @@ import (
 	"github.com/influxdata/flux/ast"
 	"github.com/influxdata/flux/csv"
 	"github.com/influxdata/flux/lang"
+	"github.com/influxdata/flux/repl"
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/mock"
 	"github.com/influxdata/influxdb/query"
@@ -241,20 +242,9 @@ func TestQueryRequest_proxyRequest(t *testing.T) {
 			now: func() time.Time { return time.Unix(1, 1) },
 			want: &query.ProxyRequest{
 				Request: query.Request{
-					Compiler: lang.ASTCompiler{
-						AST: &ast.Package{
-							Package: "main",
-							Files: []*ast.File{
-								{
-									Body: []ast.Statement{
-										&ast.ExpressionStatement{
-											Expression: &ast.Identifier{Name: "howdy"},
-										},
-									},
-								},
-							},
-						},
-						Now: time.Unix(1, 1),
+					Compiler: lang.FluxCompiler{
+						Now:   time.Unix(1, 1),
+						Query: `howdy`,
 					},
 				},
 				Dialect: &csv.Dialect{
@@ -357,7 +347,7 @@ func TestQueryRequest_proxyRequest(t *testing.T) {
 			},
 			want: &query.ProxyRequest{
 				Request: query.Request{
-					Compiler: lang.SpecCompiler{
+					Compiler: repl.Compiler{
 						Spec: &flux.Spec{
 							Now: time.Unix(0, 0).UTC(),
 						},
@@ -433,7 +423,7 @@ func Test_decodeQueryRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "valid query request with explict content-type",
+			name: "valid query request with explicit content-type",
 			args: args{
 				r: func() *http.Request {
 					r := httptest.NewRequest("POST", "/", bytes.NewBufferString(`{"query": "from()"}`))
@@ -478,7 +468,7 @@ func Test_decodeQueryRequest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := decodeQueryRequest(tt.args.ctx, tt.args.r, tt.args.svc)
+			got, _, err := decodeQueryRequest(tt.args.ctx, tt.args.r, tt.args.svc)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("decodeQueryRequest() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -518,21 +508,8 @@ func Test_decodeProxyQueryRequest(t *testing.T) {
 			want: &query.ProxyRequest{
 				Request: query.Request{
 					OrganizationID: func() platform.ID { s, _ := platform.IDFromString("deadbeefdeadbeef"); return *s }(),
-					Compiler: lang.ASTCompiler{
-						AST: &ast.Package{
-							Package: "main",
-							Files: []*ast.File{
-								{
-									Body: []ast.Statement{
-										&ast.ExpressionStatement{
-											Expression: &ast.CallExpression{
-												Callee: &ast.Identifier{Name: "from"},
-											},
-										},
-									},
-								},
-							},
-						},
+					Compiler: lang.FluxCompiler{
+						Query: "from()",
 					},
 				},
 				Dialect: &csv.Dialect{
@@ -581,41 +558,18 @@ func Test_decodeProxyQueryRequest(t *testing.T) {
 			want: &query.ProxyRequest{
 				Request: query.Request{
 					OrganizationID: func() platform.ID { s, _ := platform.IDFromString("deadbeefdeadbeef"); return *s }(),
-					Compiler: lang.ASTCompiler{
-						AST: &ast.Package{
-							Package: "main",
-							Files: []*ast.File{
-								{
-									Body: []ast.Statement{
-										&ast.OptionStatement{
-											Assignment: &ast.VariableAssignment{
-												ID:   &ast.Identifier{Name: "x"},
-												Init: &ast.IntegerLiteral{Value: 0},
-											},
-										},
-									},
-								},
-								{
-									Body: []ast.Statement{
-										&ast.ExpressionStatement{
-											Expression: &ast.CallExpression{
-												Callee: &ast.Identifier{Name: "from"},
-												Arguments: []ast.Expression{
-													&ast.ObjectExpression{
-														Properties: []*ast.Property{
-															{
-																Key:   &ast.Identifier{Name: "bucket"},
-																Value: &ast.StringLiteral{Value: "mybucket"},
-															},
-														},
-													},
-												},
-											},
-										},
+					Compiler: lang.FluxCompiler{
+						Extern: &ast.File{
+							Body: []ast.Statement{
+								&ast.OptionStatement{
+									Assignment: &ast.VariableAssignment{
+										ID:   &ast.Identifier{Name: "x"},
+										Init: &ast.IntegerLiteral{Value: 0},
 									},
 								},
 							},
 						},
+						Query: `from(bucket: "mybucket")`,
 					},
 				},
 				Dialect: &csv.Dialect{
@@ -645,31 +599,8 @@ func Test_decodeProxyQueryRequest(t *testing.T) {
 			want: &query.ProxyRequest{
 				Request: query.Request{
 					OrganizationID: func() platform.ID { s, _ := platform.IDFromString("deadbeefdeadbeef"); return *s }(),
-					Compiler: lang.ASTCompiler{
-						AST: &ast.Package{
-							Package: "main",
-							Files: []*ast.File{
-								{
-									Body: []ast.Statement{
-										&ast.ExpressionStatement{
-											Expression: &ast.CallExpression{
-												Callee: &ast.Identifier{Name: "from"},
-												Arguments: []ast.Expression{
-													&ast.ObjectExpression{
-														Properties: []*ast.Property{
-															{
-																Key:   &ast.Identifier{Name: "bucket"},
-																Value: &ast.StringLiteral{Value: "mybucket"},
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
+					Compiler: lang.FluxCompiler{
+						Query: `from(bucket: "mybucket")`,
 					},
 				},
 				Dialect: &csv.Dialect{
@@ -681,10 +612,13 @@ func Test_decodeProxyQueryRequest(t *testing.T) {
 			},
 		},
 	}
-	cmpOptions := append(cmpOptions, cmpopts.IgnoreFields(lang.ASTCompiler{}, "Now"))
+	cmpOptions := append(cmpOptions,
+		cmpopts.IgnoreFields(lang.ASTCompiler{}, "Now"),
+		cmpopts.IgnoreFields(lang.FluxCompiler{}, "Now"),
+	)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := decodeProxyQueryRequest(tt.args.ctx, tt.args.r, tt.args.auth, tt.args.svc)
+			got, _, err := decodeProxyQueryRequest(tt.args.ctx, tt.args.r, tt.args.auth, tt.args.svc)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("decodeProxyQueryRequest() error = %v, wantErr %v", err, tt.wantErr)
 				return

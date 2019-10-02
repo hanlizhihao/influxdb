@@ -8,10 +8,9 @@ import {connect} from 'react-redux'
 import TaskForm from 'src/tasks/components/TaskForm'
 import TaskHeader from 'src/tasks/components/TaskHeader'
 import FluxEditor from 'src/shared/components/FluxEditor'
-import {Page} from 'src/pageLayout'
+import {Page} from '@influxdata/clockface'
 
 // Actions
-import {State as TasksState} from 'src/tasks/reducers'
 import {
   setNewScript,
   saveNewScript,
@@ -25,28 +24,26 @@ import {
   taskOptionsToFluxScript,
   addDestinationToFluxScript,
 } from 'src/utils/taskOptionsToFluxScript'
+import {pageTitleSuffixer} from 'src/shared/utils/pageTitles'
 
 // Types
-import {Links} from 'src/types/links'
-import {Organization} from 'src/types'
+import {AppState} from 'src/types'
 import {
   TaskOptions,
   TaskOptionKeys,
   TaskSchedule,
 } from 'src/utils/taskOptionsToFluxScript'
 
-interface PassedInProps {
+interface OwnProps {
   router: InjectedRouter
 }
 
-interface ConnectStateProps {
-  orgs: Organization[]
+interface StateProps {
   taskOptions: TaskOptions
   newScript: string
-  tasksLink: string
 }
 
-interface ConnectDispatchProps {
+interface DispatchProps {
   setNewScript: typeof setNewScript
   saveNewScript: typeof saveNewScript
   setTaskOption: typeof setTaskOption
@@ -54,13 +51,12 @@ interface ConnectDispatchProps {
   cancel: typeof cancel
 }
 
-class TaskPage extends PureComponent<
-  PassedInProps & ConnectStateProps & ConnectDispatchProps
-> {
+type Props = OwnProps & StateProps & DispatchProps
+
+class TaskPage extends PureComponent<Props> {
   constructor(props) {
     super(props)
   }
-
   public componentDidMount() {
     this.props.setTaskOption({
       key: 'taskScheduleType',
@@ -73,10 +69,10 @@ class TaskPage extends PureComponent<
   }
 
   public render(): JSX.Element {
-    const {newScript, taskOptions, orgs} = this.props
+    const {newScript, taskOptions} = this.props
 
     return (
-      <Page titleTag="Create Task">
+      <Page titleTag={pageTitleSuffixer(['Create Task'])}>
         <TaskHeader
           title="Create Task"
           canSubmit={this.isFormValid}
@@ -87,12 +83,10 @@ class TaskPage extends PureComponent<
           <div className="task-form">
             <div className="task-form--options">
               <TaskForm
-                orgs={orgs}
-                canSubmit={this.isFormValid}
                 taskOptions={taskOptions}
+                canSubmit={this.isFormValid}
                 onChangeInput={this.handleChangeInput}
                 onChangeScheduleType={this.handleChangeScheduleType}
-                onChangeTaskOrgID={this.handleChangeTaskOrgID}
               />
             </div>
             <div className="task-form--editor">
@@ -134,11 +128,7 @@ class TaskPage extends PureComponent<
     const script: string = addDestinationToFluxScript(newScript, taskOptions)
     const preamble = `${taskOption}`
 
-    this.props.saveNewScript(script, preamble, this.orgName)
-  }
-
-  private get orgName(): string {
-    return this.props.orgs[0].name
+    this.props.saveNewScript(script, preamble)
   }
 
   private handleCancel = () => {
@@ -151,30 +141,16 @@ class TaskPage extends PureComponent<
 
     this.props.setTaskOption({key, value})
   }
-
-  private handleChangeTaskOrgID = (orgID: string) => {
-    this.props.setTaskOption({key: 'orgID', value: orgID})
-  }
 }
 
-const mstp = ({
-  tasks,
-  links,
-  orgs,
-}: {
-  tasks: TasksState
-  links: Links
-  orgs: Organization[]
-}): ConnectStateProps => {
+const mstp = ({tasks}: AppState): StateProps => {
   return {
-    orgs,
     taskOptions: tasks.taskOptions,
     newScript: tasks.newScript,
-    tasksLink: links.tasks,
   }
 }
 
-const mdtp: ConnectDispatchProps = {
+const mdtp: DispatchProps = {
   setNewScript,
   saveNewScript,
   setTaskOption,
@@ -182,7 +158,7 @@ const mdtp: ConnectDispatchProps = {
   cancel,
 }
 
-export default connect<ConnectStateProps, ConnectDispatchProps, {}>(
+export default connect<StateProps, DispatchProps, {}>(
   mstp,
   mdtp
 )(TaskPage)

@@ -8,13 +8,11 @@ import (
 // AuthorizationKind is returned by (*Authorization).Kind().
 const AuthorizationKind = "authorization"
 
-var (
-	// ErrUnableToCreateToken sanitized error message for all errors when a user cannot create a token
-	ErrUnableToCreateToken = &Error{
-		Msg:  "unable to create token",
-		Code: EInvalid,
-	}
-)
+// ErrUnableToCreateToken sanitized error message for all errors when a user cannot create a token
+var ErrUnableToCreateToken = &Error{
+	Msg:  "unable to create token",
+	Code: EInvalid,
+}
 
 // Authorization is an authorization. 🎉
 type Authorization struct {
@@ -27,12 +25,18 @@ type Authorization struct {
 	Permissions []Permission `json:"permissions"`
 }
 
+// AuthorizationUpdate is the authorization update request.
+type AuthorizationUpdate struct {
+	Status      *Status `json:"status,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
 // Valid ensures that the authorization is valid.
 func (a *Authorization) Valid() error {
 	for _, p := range a.Permissions {
 		if p.Resource.OrgID != nil && *p.Resource.OrgID != a.OrgID {
 			return &Error{
-				Msg:  fmt.Sprintf("permisson %s is not for org id %s", p, a.OrgID),
+				Msg:  fmt.Sprintf("permission %s is not for org id %s", p, a.OrgID),
 				Code: EInvalid,
 			}
 		}
@@ -78,7 +82,7 @@ const (
 	OpFindAuthorizationByToken = "FindAuthorizationByToken"
 	OpFindAuthorizations       = "FindAuthorizations"
 	OpCreateAuthorization      = "CreateAuthorization"
-	OpSetAuthorizationStatus   = "SetAuthorizationStatus"
+	OpUpdateAuthorization      = "UpdateAuthorization"
 	OpDeleteAuthorization      = "DeleteAuthorization"
 )
 
@@ -97,9 +101,8 @@ type AuthorizationService interface {
 	// Creates a new authorization and sets a.Token and a.UserID with the new identifier.
 	CreateAuthorization(ctx context.Context, a *Authorization) error
 
-	// SetAuthorizationStatus updates the status of the authorization. Useful
-	// for setting an authorization to inactive or active.
-	SetAuthorizationStatus(ctx context.Context, id ID, status Status) error
+	// UpdateAuthorization updates the status and description if available.
+	UpdateAuthorization(ctx context.Context, id ID, udp *AuthorizationUpdate) (*Authorization, error)
 
 	// Removes a authorization by token.
 	DeleteAuthorization(ctx context.Context, id ID) error
@@ -112,4 +115,7 @@ type AuthorizationFilter struct {
 
 	UserID *ID
 	User   *string
+
+	OrgID *ID
+	Org   *string
 }

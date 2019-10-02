@@ -4,13 +4,13 @@ import _ from 'lodash'
 // Constants
 import {StepStatus} from 'src/clockface/constants/wizard'
 import {SetupSuccess, SetupError} from 'src/shared/copy/notifications'
-import {systemTemplate} from 'src/organizations/constants/index'
 
 // Actions
 import {notify} from 'src/shared/actions/notifications'
 
 // APIs
 import {client} from 'src/utils/api'
+import * as api from 'src/client'
 
 // Types
 import {ISetupParams} from '@influxdata/influx'
@@ -82,9 +82,11 @@ export const setupAdmin = (params: ISetupParams) => async (
 
     const {username, password} = params
 
-    await client.auth.signin(username, password)
+    const resp = await api.postSignin({auth: {username, password}})
 
-    await client.templates.create({...systemTemplate(params.bucket), orgID})
+    if (resp.status !== 204) {
+      throw new Error(resp.data.message)
+    }
 
     dispatch(notify(SetupSuccess))
     dispatch(setStepStatus(1, StepStatus.Complete))

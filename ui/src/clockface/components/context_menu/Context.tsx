@@ -1,19 +1,19 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import classnames from 'classnames'
+
 // Components
 import ContextMenu from 'src/clockface/components/context_menu/ContextMenu'
 import ContextMenuItem from 'src/clockface/components/context_menu/ContextMenuItem'
+
 // Types
 import {Alignment} from 'src/clockface/types'
-// Styles
-import './ContextMenu.scss'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
   children: JSX.Element | JSX.Element[]
-  align?: Alignment
+  align: Alignment
   className?: string
 }
 
@@ -23,7 +23,7 @@ interface State {
 
 @ErrorHandling
 class Context extends PureComponent<Props, State> {
-  public static defaultProps: Partial<Props> = {
+  public static defaultProps = {
     align: Alignment.Right,
   }
 

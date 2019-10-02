@@ -48,8 +48,8 @@ This project requires Go 1.11 and Go module support.
 Set `GO111MODULE=on` or build the project outside of your `GOPATH` for it to succeed.
 
 If you are getting an `error loading module requirements` error with `bzr executable file not found in $PATH”` on `make`, `brew install bazaar` (on macOS) before continuing.
-This error will also be returned if you have not installed `npm`.
-On macOS, `brew install npm` will install `npm`.
+This error will also be returned if you have not installed `yarn`.
+On macOS, `brew install yarn` will install `yarn`.  As necessary, also install `brew install protobuf`.
 
 For information about modules, please refer to the [wiki](https://github.com/golang/go/wiki/Modules).
 
@@ -228,7 +228,6 @@ If you re-generate a file and find that `staticcheck` has failed, please see thi
 |          File          |                                 Comment                                  |
 | :--------------------: | :----------------------------------------------------------------------: |
 | query/promql/promql.go |     //lint:file-ignore SA6001 Ignore all unused code, it's generated     |
-|    proto/bin_gen.go    | //lint:file-ignore ST1005 Ignore error strings should not be capitalized |
 
 #### End-to-End Tests
 

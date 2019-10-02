@@ -3,12 +3,15 @@ package testing
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
-	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/mock"
+	"github.com/influxdata/influxdb/rand"
 )
 
 const (
@@ -20,8 +23,8 @@ var organizationCmpOptions = cmp.Options{
 	cmp.Comparer(func(x, y []byte) bool {
 		return bytes.Equal(x, y)
 	}),
-	cmp.Transformer("Sort", func(in []*platform.Organization) []*platform.Organization {
-		out := append([]*platform.Organization(nil), in...) // Copy input to avoid mutating it
+	cmp.Transformer("Sort", func(in []*influxdb.Organization) []*influxdb.Organization {
+		out := append([]*influxdb.Organization(nil), in...) // Copy input to avoid mutating it
 		sort.Slice(out, func(i, j int) bool {
 			return out[i].ID.String() > out[j].ID.String()
 		})
@@ -31,17 +34,19 @@ var organizationCmpOptions = cmp.Options{
 
 // OrganizationFields will include the IDGenerator, and organizations
 type OrganizationFields struct {
-	IDGenerator   platform.IDGenerator
-	Organizations []*platform.Organization
+	IDGenerator   influxdb.IDGenerator
+	Organizations []*influxdb.Organization
+	TimeGenerator influxdb.TimeGenerator
+	OrgBucketIDs  influxdb.IDGenerator
 }
 
 // OrganizationService tests all the service functions.
 func OrganizationService(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()), t *testing.T,
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()), t *testing.T,
 ) {
 	tests := []struct {
 		name string
-		fn   func(init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+		fn   func(init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 			t *testing.T)
 	}{
 		{
@@ -78,15 +83,15 @@ func OrganizationService(
 
 // CreateOrganization testing
 func CreateOrganization(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		organization *platform.Organization
+		organization *influxdb.Organization
 	}
 	type wants struct {
 		err           error
-		organizations []*platform.Organization
+		organizations []*influxdb.Organization
 	}
 
 	tests := []struct {
@@ -99,19 +104,27 @@ func CreateOrganization(
 			name: "create organizations with empty set",
 			fields: OrganizationFields{
 				IDGenerator:   mock.NewIDGenerator(orgOneID, t),
-				Organizations: []*platform.Organization{},
+				OrgBucketIDs:  mock.NewIDGenerator(orgOneID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{},
 			},
 			args: args{
-				organization: &platform.Organization{
-					Name: "name1",
-					ID:   MustIDBase16(orgOneID),
+				organization: &influxdb.Organization{
+					Name:        "name1",
+					ID:          MustIDBase16(orgOneID),
+					Description: "desc1",
 				},
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
-						Name: "name1",
-						ID:   MustIDBase16(orgOneID),
+						Name:        "name1",
+						ID:          MustIDBase16(orgOneID),
+						Description: "desc1",
+						CRUDLog: influxdb.CRUDLog{
+							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+							UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+						},
 					},
 				},
 			},
@@ -119,8 +132,10 @@ func CreateOrganization(
 		{
 			name: "basic create organization",
 			fields: OrganizationFields{
-				IDGenerator: mock.NewIDGenerator(orgTwoID, t),
-				Organizations: []*platform.Organization{
+				IDGenerator:   mock.NewIDGenerator(orgTwoID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgTwoID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -128,13 +143,13 @@ func CreateOrganization(
 				},
 			},
 			args: args{
-				organization: &platform.Organization{
+				organization: &influxdb.Organization{
 					ID:   MustIDBase16(orgTwoID),
 					Name: "organization2",
 				},
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -142,15 +157,21 @@ func CreateOrganization(
 					{
 						ID:   MustIDBase16(orgTwoID),
 						Name: "organization2",
+						CRUDLog: influxdb.CRUDLog{
+							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+							UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+						},
 					},
 				},
 			},
 		},
 		{
-			name: "names should be unique",
+			name: "empty name",
 			fields: OrganizationFields{
-				IDGenerator: mock.NewIDGenerator(orgTwoID, t),
-				Organizations: []*platform.Organization{
+				IDGenerator:   mock.NewIDGenerator(orgTwoID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgTwoID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -158,21 +179,78 @@ func CreateOrganization(
 				},
 			},
 			args: args{
-				organization: &platform.Organization{
-					ID:   MustIDBase16(orgOneID),
-					Name: "organization1",
+				organization: &influxdb.Organization{
+					ID: MustIDBase16(orgOneID),
 				},
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
 					},
 				},
-				err: &platform.Error{
-					Code: platform.EConflict,
-					Op:   platform.OpCreateOrganization,
+				err: influxdb.ErrOrgNameisEmpty,
+			},
+		},
+		{
+			name: "name only have spaces",
+			fields: OrganizationFields{
+				IDGenerator:   mock.NewIDGenerator(orgTwoID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgTwoID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+			},
+			args: args{
+				organization: &influxdb.Organization{
+					ID:   MustIDBase16(orgOneID),
+					Name: "  ",
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+				err: influxdb.ErrOrgNameisEmpty,
+			},
+		},
+		{
+			name: "names should be unique",
+			fields: OrganizationFields{
+				IDGenerator:   mock.NewIDGenerator(orgTwoID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgTwoID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+			},
+			args: args{
+				organization: &influxdb.Organization{
+					ID:   MustIDBase16(orgOneID),
+					Name: "organization1",
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+				err: &influxdb.Error{
+					Code: influxdb.EConflict,
+					Op:   influxdb.OpCreateOrganization,
 					Msg:  "organization with name organization1 already exists",
 				},
 			},
@@ -180,8 +258,10 @@ func CreateOrganization(
 		{
 			name: "create organization with no id",
 			fields: OrganizationFields{
-				IDGenerator: mock.NewIDGenerator(orgTwoID, t),
-				Organizations: []*platform.Organization{
+				IDGenerator:   mock.NewIDGenerator(orgTwoID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgTwoID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -189,12 +269,12 @@ func CreateOrganization(
 				},
 			},
 			args: args{
-				organization: &platform.Organization{
+				organization: &influxdb.Organization{
 					Name: "organization2",
 				},
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -202,6 +282,133 @@ func CreateOrganization(
 					{
 						ID:   MustIDBase16(orgTwoID),
 						Name: "organization2",
+						CRUDLog: influxdb.CRUDLog{
+							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+							UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "names should be unique",
+			fields: OrganizationFields{
+				IDGenerator:   mock.NewIDGenerator(orgTwoID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgTwoID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+			},
+			args: args{
+				organization: &influxdb.Organization{
+					ID:   MustIDBase16(orgOneID),
+					Name: "organization1",
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+				err: &influxdb.Error{
+					Code: influxdb.EConflict,
+					Op:   influxdb.OpCreateOrganization,
+					Msg:  "organization with name organization1 already exists",
+				},
+			},
+		},
+		{
+			name: "ids should be unique",
+			fields: OrganizationFields{
+				IDGenerator:   mock.NewIDGenerator(orgOneID, t),
+				OrgBucketIDs:  mock.NewIDGenerator(orgOneID, t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+			},
+			args: args{
+				organization: &influxdb.Organization{
+					ID:   MustIDBase16(orgOneID),
+					Name: "organization2",
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+				err: &influxdb.Error{
+					Code: influxdb.EInternal,
+					Msg:  fmt.Sprintf("unable to generate valid id"),
+				},
+			},
+		},
+		{
+			name: "reserved ids should not be created",
+			fields: OrganizationFields{
+				IDGenerator:   mock.NewIDGenerator("000000000000000a", t),
+				OrgBucketIDs:  mock.NewIDGenerator("000000000000000a", t),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+			},
+			args: args{
+				organization: &influxdb.Organization{
+					ID:   MustIDBase16(orgOneID),
+					Name: "organization2",
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+				},
+				err: &influxdb.Error{
+					Code: influxdb.EInternal,
+					Msg:  fmt.Sprintf("unable to generate valid id"),
+				},
+			},
+		},
+		{
+			name: "randomly generted org ids should not have commas, spaces, or backslashes",
+			fields: OrganizationFields{
+				OrgBucketIDs:  rand.NewOrgBucketID(42),
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{},
+			},
+			args: args{
+				organization: &influxdb.Organization{
+					Name: "o1",
+				},
+			},
+			wants: wants{
+				organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16("afbf64b1967f8c53"),
+						Name: "o1",
+
+						CRUDLog: influxdb.CRUDLog{
+							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+							UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+						},
 					},
 				},
 			},
@@ -221,7 +428,7 @@ func CreateOrganization(
 			defer s.DeleteOrganization(ctx, tt.args.organization.ID)
 			// }
 
-			organizations, _, err := s.FindOrganizations(ctx, platform.OrganizationFilter{})
+			organizations, _, err := s.FindOrganizations(ctx, influxdb.OrganizationFilter{})
 			diffPlatformErrors(tt.name, err, nil, opPrefix, t)
 			if diff := cmp.Diff(organizations, tt.wants.organizations, organizationCmpOptions...); diff != "" {
 				t.Errorf("organizations are different -got/+want\ndiff %s", diff)
@@ -232,15 +439,15 @@ func CreateOrganization(
 
 // FindOrganizationByID testing
 func FindOrganizationByID(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		id platform.ID
+		id influxdb.ID
 	}
 	type wants struct {
 		err          error
-		organization *platform.Organization
+		organization *influxdb.Organization
 	}
 
 	tests := []struct {
@@ -252,7 +459,7 @@ func FindOrganizationByID(
 		{
 			name: "basic find organization by id",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -267,7 +474,7 @@ func FindOrganizationByID(
 				id: MustIDBase16(orgTwoID),
 			},
 			wants: wants{
-				organization: &platform.Organization{
+				organization: &influxdb.Organization{
 					ID:   MustIDBase16(orgTwoID),
 					Name: "organization2",
 				},
@@ -276,7 +483,7 @@ func FindOrganizationByID(
 		{
 			name: "didn't find organization by id",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -292,9 +499,9 @@ func FindOrganizationByID(
 			},
 			wants: wants{
 				organization: nil,
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpFindOrganizationByID,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpFindOrganizationByID,
 					Msg:  "organization not found",
 				},
 			},
@@ -319,16 +526,16 @@ func FindOrganizationByID(
 
 // FindOrganizations testing
 func FindOrganizations(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		ID   platform.ID
+		ID   influxdb.ID
 		name string
 	}
 
 	type wants struct {
-		organizations []*platform.Organization
+		organizations []*influxdb.Organization
 		err           error
 	}
 	tests := []struct {
@@ -340,27 +547,29 @@ func FindOrganizations(
 		{
 			name: "find all organizations",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
-						Name: "xyz",
+						ID:          MustIDBase16(orgTwoID),
+						Name:        "xyz",
+						Description: "desc xyz",
 					},
 				},
 			},
 			args: args{},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
 					},
 					{
-						ID:   MustIDBase16(orgTwoID),
-						Name: "xyz",
+						ID:          MustIDBase16(orgTwoID),
+						Name:        "xyz",
+						Description: "desc xyz",
 					},
 				},
 			},
@@ -368,7 +577,7 @@ func FindOrganizations(
 		{
 			name: "find organization by id",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
@@ -383,7 +592,7 @@ func FindOrganizations(
 				ID: MustIDBase16(orgTwoID),
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgTwoID),
 						Name: "xyz",
@@ -394,7 +603,7 @@ func FindOrganizations(
 		{
 			name: "find organization by name",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
@@ -409,7 +618,7 @@ func FindOrganizations(
 				name: "xyz",
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgTwoID),
 						Name: "xyz",
@@ -420,7 +629,7 @@ func FindOrganizations(
 		{
 			name: "find organization by id not exists",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
@@ -435,10 +644,10 @@ func FindOrganizations(
 				ID: MustIDBase16(threeID),
 			},
 			wants: wants{
-				organizations: []*platform.Organization{},
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpFindOrganizations,
+				organizations: []*influxdb.Organization{},
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpFindOrganizations,
 					Msg:  "organization not found",
 				},
 			},
@@ -446,7 +655,7 @@ func FindOrganizations(
 		{
 			name: "find organization by name not exists",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
@@ -461,10 +670,10 @@ func FindOrganizations(
 				name: "na",
 			},
 			wants: wants{
-				organizations: []*platform.Organization{},
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpFindOrganizations,
+				organizations: []*influxdb.Organization{},
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpFindOrganizations,
 					Msg:  "organization name \"na\" not found",
 				},
 			},
@@ -477,7 +686,7 @@ func FindOrganizations(
 			defer done()
 			ctx := context.Background()
 
-			filter := platform.OrganizationFilter{}
+			filter := influxdb.OrganizationFilter{}
 			if tt.args.ID.Valid() {
 				filter.ID = &tt.args.ID
 			}
@@ -497,7 +706,7 @@ func FindOrganizations(
 
 // DeleteOrganization testing
 func DeleteOrganization(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
@@ -505,7 +714,7 @@ func DeleteOrganization(
 	}
 	type wants struct {
 		err           error
-		organizations []*platform.Organization
+		organizations []*influxdb.Organization
 	}
 
 	tests := []struct {
@@ -517,7 +726,7 @@ func DeleteOrganization(
 		{
 			name: "delete organizations using exist id",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						Name: "orgA",
 						ID:   MustIDBase16(orgOneID),
@@ -532,7 +741,7 @@ func DeleteOrganization(
 				ID: orgOneID,
 			},
 			wants: wants{
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						Name: "orgB",
 						ID:   MustIDBase16(orgTwoID),
@@ -543,7 +752,7 @@ func DeleteOrganization(
 		{
 			name: "delete organizations using id that does not exist",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						Name: "orgA",
 						ID:   MustIDBase16(orgOneID),
@@ -558,12 +767,12 @@ func DeleteOrganization(
 				ID: "1234567890654321",
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpDeleteOrganization,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpDeleteOrganization,
 					Msg:  "organization not found",
 				},
-				organizations: []*platform.Organization{
+				organizations: []*influxdb.Organization{
 					{
 						Name: "orgA",
 						ID:   MustIDBase16(orgOneID),
@@ -585,7 +794,7 @@ func DeleteOrganization(
 			err := s.DeleteOrganization(ctx, MustIDBase16(tt.args.ID))
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)
 
-			filter := platform.OrganizationFilter{}
+			filter := influxdb.OrganizationFilter{}
 			organizations, _, err := s.FindOrganizations(ctx, filter)
 			diffPlatformErrors(tt.name, err, nil, opPrefix, t)
 
@@ -598,16 +807,16 @@ func DeleteOrganization(
 
 // FindOrganization testing
 func FindOrganization(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
 		name string
-		id   platform.ID
+		id   influxdb.ID
 	}
 
 	type wants struct {
-		organization *platform.Organization
+		organization *influxdb.Organization
 		err          error
 	}
 
@@ -620,7 +829,7 @@ func FindOrganization(
 		{
 			name: "find organization by name",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "abc",
@@ -635,7 +844,7 @@ func FindOrganization(
 				name: "abc",
 			},
 			wants: wants{
-				organization: &platform.Organization{
+				organization: &influxdb.Organization{
 					ID:   MustIDBase16(orgOneID),
 					Name: "abc",
 				},
@@ -647,9 +856,9 @@ func FindOrganization(
 				name: "unknown",
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpFindOrganization,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpFindOrganization,
 					Msg:  "organization name \"unknown\" not found",
 				},
 			},
@@ -657,11 +866,11 @@ func FindOrganization(
 		{
 			name: "find organization in which no id filter matches should return no org",
 			args: args{
-				id: platform.ID(3),
+				id: influxdb.ID(3),
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
 					Msg:  "organization not found",
 				},
 			},
@@ -669,7 +878,7 @@ func FindOrganization(
 		{
 			name: "find organization no filter is set returns an error about filters not provided",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "o1",
@@ -677,24 +886,21 @@ func FindOrganization(
 				},
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.EInvalid,
-					Msg:  "no filter parameters provided",
-				},
+				err: influxdb.ErrInvalidOrgFilter,
 			},
 		},
 		{
 			name: "missing organization returns error",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{},
+				Organizations: []*influxdb.Organization{},
 			},
 			args: args{
 				name: "abc",
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpFindOrganization,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpFindOrganization,
 					Msg:  "organization name \"abc\" not found",
 				},
 			},
@@ -706,11 +912,11 @@ func FindOrganization(
 			s, opPrefix, done := init(tt.fields, t)
 			defer done()
 			ctx := context.Background()
-			filter := platform.OrganizationFilter{}
+			filter := influxdb.OrganizationFilter{}
 			if tt.args.name != "" {
 				filter.Name = &tt.args.name
 			}
-			if tt.args.id != platform.InvalidID() {
+			if tt.args.id != influxdb.InvalidID() {
 				filter.ID = &tt.args.id
 			}
 
@@ -726,16 +932,17 @@ func FindOrganization(
 
 // UpdateOrganization testing
 func UpdateOrganization(
-	init func(OrganizationFields, *testing.T) (platform.OrganizationService, string, func()),
+	init func(OrganizationFields, *testing.T) (influxdb.OrganizationService, string, func()),
 	t *testing.T,
 ) {
 	type args struct {
-		name string
-		id   platform.ID
+		id          influxdb.ID
+		name        *string
+		description *string
 	}
 	type wants struct {
 		err          error
-		organization *platform.Organization
+		organization *influxdb.Organization
 	}
 
 	tests := []struct {
@@ -747,7 +954,8 @@ func UpdateOrganization(
 		{
 			name: "update id not exists",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -760,12 +968,12 @@ func UpdateOrganization(
 			},
 			args: args{
 				id:   MustIDBase16(threeID),
-				name: "changed",
+				name: strPtr("changed"),
 			},
 			wants: wants{
-				err: &platform.Error{
-					Code: platform.ENotFound,
-					Op:   platform.OpUpdateOrganization,
+				err: &influxdb.Error{
+					Code: influxdb.ENotFound,
+					Op:   influxdb.OpUpdateOrganization,
 					Msg:  "organization not found",
 				},
 			},
@@ -773,7 +981,8 @@ func UpdateOrganization(
 		{
 			name: "update name",
 			fields: OrganizationFields{
-				Organizations: []*platform.Organization{
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
 					{
 						ID:   MustIDBase16(orgOneID),
 						Name: "organization1",
@@ -786,12 +995,120 @@ func UpdateOrganization(
 			},
 			args: args{
 				id:   MustIDBase16(orgOneID),
-				name: "changed",
+				name: strPtr("changed"),
 			},
 			wants: wants{
-				organization: &platform.Organization{
+				organization: &influxdb.Organization{
 					ID:   MustIDBase16(orgOneID),
 					Name: "changed",
+					CRUDLog: influxdb.CRUDLog{
+						UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+					},
+				},
+			},
+		},
+		{
+			name: "update name not unique",
+			fields: OrganizationFields{
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+					{
+						ID:   MustIDBase16(orgTwoID),
+						Name: "organization2",
+					},
+				},
+			},
+			args: args{
+				id:   MustIDBase16(orgOneID),
+				name: strPtr("organization2"),
+			},
+			wants: wants{
+				err: &influxdb.Error{
+					Code: influxdb.EConflict,
+					Op:   influxdb.OpUpdateOrganization,
+					Msg:  "organization with name organization2 already exists",
+				},
+			},
+		},
+		{
+			name: "update name is empty",
+			fields: OrganizationFields{
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+					{
+						ID:   MustIDBase16(orgTwoID),
+						Name: "organization2",
+					},
+				},
+			},
+			args: args{
+				id:   MustIDBase16(orgOneID),
+				name: strPtr(""),
+			},
+			wants: wants{
+				err: influxdb.ErrOrgNameisEmpty,
+			},
+		},
+		{
+			name: "update name only has space",
+			fields: OrganizationFields{
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:   MustIDBase16(orgOneID),
+						Name: "organization1",
+					},
+					{
+						ID:   MustIDBase16(orgTwoID),
+						Name: "organization2",
+					},
+				},
+			},
+			args: args{
+				id:   MustIDBase16(orgOneID),
+				name: strPtr("            "),
+			},
+			wants: wants{
+				err: influxdb.ErrOrgNameisEmpty,
+			},
+		},
+		{
+			name: "update description",
+			fields: OrganizationFields{
+				TimeGenerator: mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
+				Organizations: []*influxdb.Organization{
+					{
+						ID:          MustIDBase16(orgOneID),
+						Name:        "organization1",
+						Description: "organization1 description",
+					},
+					{
+						ID:          MustIDBase16(orgTwoID),
+						Name:        "organization2",
+						Description: "organization2 description",
+					},
+				},
+			},
+			args: args{
+				id:          MustIDBase16(orgOneID),
+				description: strPtr("changed"),
+			},
+			wants: wants{
+				organization: &influxdb.Organization{
+					ID:          MustIDBase16(orgOneID),
+					Name:        "organization1",
+					Description: "changed",
+					CRUDLog: influxdb.CRUDLog{
+						UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+					},
 				},
 			},
 		},
@@ -803,10 +1120,9 @@ func UpdateOrganization(
 			defer done()
 			ctx := context.Background()
 
-			upd := platform.OrganizationUpdate{}
-			if tt.args.name != "" {
-				upd.Name = &tt.args.name
-			}
+			upd := influxdb.OrganizationUpdate{}
+			upd.Name = tt.args.name
+			upd.Description = tt.args.description
 
 			organization, err := s.UpdateOrganization(ctx, tt.args.id, upd)
 			diffPlatformErrors(tt.name, err, tt.wants.err, opPrefix, t)

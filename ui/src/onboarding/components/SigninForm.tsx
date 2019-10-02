@@ -5,11 +5,10 @@ import {connect} from 'react-redux'
 import _, {get} from 'lodash'
 
 // Components
-import {Form, Input, Button} from '@influxdata/clockface'
-import {Grid} from 'src/clockface'
+import {Form, Input, Button, Grid} from '@influxdata/clockface'
 
 // APIs
-import {client} from 'src/utils/api'
+import {postSignin} from 'src/client'
 
 // Actions
 import {notify as notifyAction} from 'src/shared/actions/notifications'
@@ -19,7 +18,7 @@ import * as copy from 'src/shared/copy/notifications'
 
 // Types
 import {Links} from 'src/types/links'
-import {Notification, NotificationFunc} from 'src/types'
+import {AppState} from 'src/types'
 import {
   Columns,
   InputType,
@@ -33,7 +32,7 @@ import {ErrorHandling} from 'src/shared/decorators/errors'
 
 export interface OwnProps {
   links: Links
-  notify: (message: Notification | NotificationFunc) => void
+  notify: typeof notifyAction
 }
 
 interface State {
@@ -108,21 +107,28 @@ class SigninForm extends PureComponent<Props, State> {
     const {username, password} = this.state
 
     try {
-      await client.auth.signin(username, password)
+      const resp = await postSignin({auth: {username, password}})
+
+      if (resp.status !== 204) {
+        throw new Error(resp.data.message)
+      }
+
       this.handleRedirect()
     } catch (error) {
       const message = get(error, 'response.data.msg', '')
       const status = get(error, 'response.status', '')
 
       if (status === 401) {
-        return notify({
+        notify({
           ...copy.SigninError,
           message: 'Login failed: username or password is invalid',
         })
+        return
       }
 
       if (!message) {
-        return notify(copy.SigninError)
+        notify(copy.SigninError)
+        return
       }
 
       notify({...copy.SigninError, message})
@@ -134,14 +140,14 @@ class SigninForm extends PureComponent<Props, State> {
     const {query} = this.props.location
 
     if (query && query.returnTo) {
-      router.push(query.returnTo)
+      router.replace(query.returnTo)
     } else {
       router.push('/')
     }
   }
 }
 
-const mstp = ({links}) => ({
+const mstp = ({links}: AppState) => ({
   links,
 })
 

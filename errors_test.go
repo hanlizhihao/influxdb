@@ -23,39 +23,52 @@ func TestErrorMsg(t *testing.T) {
 			msg:  "<not found>",
 		},
 		{
-			name: "with op",
+			name: "with message",
 			err: &platform.Error{
 				Code: platform.ENotFound,
-				Op:   "bolt.FindAuthorizationByID",
+				Msg:  "bucket not found",
 			},
-			msg: "bolt.FindAuthorizationByID: <not found>",
+			msg: "bucket not found",
 		},
 		{
-			name: "with op and value",
-			err: &platform.Error{
-				Code: platform.ENotFound,
-				Op:   "bolt.FindAuthorizationByID",
-				Msg:  fmt.Sprintf("with ID %d", 323),
-			},
-			msg: "bolt.FindAuthorizationByID: <not found> with ID 323",
-		},
-		{
-			name: "with a third party error",
+			name: "with a third party error and no message",
 			err: &platform.Error{
 				Code: EFailedToGetStorageHost,
-				Op:   "cmd/fluxd.injectDeps",
 				Err:  errors.New("empty value"),
 			},
-			msg: "cmd/fluxd.injectDeps: empty value",
+			msg: "empty value",
 		},
 		{
-			name: "with a internal error",
+			name: "with a third party error and a message",
 			err: &platform.Error{
 				Code: EFailedToGetStorageHost,
-				Op:   "cmd/fluxd.injectDeps",
-				Err:  &platform.Error{Code: platform.EEmptyValue, Op: "cmd/fluxd.getStrList"},
+				Msg:  "failed to get storage hosts",
+				Err:  errors.New("empty value"),
 			},
-			msg: "cmd/fluxd.injectDeps: cmd/fluxd.getStrList: <empty value>",
+			msg: "failed to get storage hosts: empty value",
+		},
+		{
+			name: "with an internal error and no message",
+			err: &platform.Error{
+				Code: EFailedToGetStorageHost,
+				Err: &platform.Error{
+					Code: platform.EEmptyValue,
+					Msg:  "empty value",
+				},
+			},
+			msg: "empty value",
+		},
+		{
+			name: "with an internal error and a message",
+			err: &platform.Error{
+				Code: EFailedToGetStorageHost,
+				Msg:  "failed to get storage hosts",
+				Err: &platform.Error{
+					Code: platform.EEmptyValue,
+					Msg:  "empty value",
+				},
+			},
+			msg: "failed to get storage hosts: empty value",
 		},
 	}
 	for _, c := range cases {
@@ -84,9 +97,9 @@ func TestErrorMessage(t *testing.T) {
 			want: "simple error",
 		},
 		{
-			name: "embeded error",
-			err:  &platform.Error{Err: &platform.Error{Msg: "embeded error"}},
-			want: "embeded error",
+			name: "embedded error",
+			err:  &platform.Error{Err: &platform.Error{Msg: "embedded error"}},
+			want: "embedded error",
 		},
 		{
 			name: "default error",
@@ -120,12 +133,12 @@ func TestErrorOp(t *testing.T) {
 			want: "op1",
 		},
 		{
-			name: "embeded error",
+			name: "embedded error",
 			err:  &platform.Error{Op: "op1", Err: &platform.Error{Code: platform.EInvalid}},
 			want: "op1",
 		},
 		{
-			name: "embeded error without op in root level",
+			name: "embedded error without op in root level",
 			err:  &platform.Error{Err: &platform.Error{Code: platform.EInvalid, Op: "op2"}},
 			want: "op2",
 		},
@@ -160,12 +173,12 @@ func TestErrorCode(t *testing.T) {
 			want: platform.ENotFound,
 		},
 		{
-			name: "embeded error",
+			name: "embedded error",
 			err:  &platform.Error{Code: platform.ENotFound, Err: &platform.Error{Code: platform.EInvalid}},
 			want: platform.ENotFound,
 		},
 		{
-			name: "embeded error with root level code",
+			name: "embedded error with root level code",
 			err:  &platform.Error{Err: &platform.Error{Code: platform.EInvalid}},
 			want: platform.EInvalid,
 		},

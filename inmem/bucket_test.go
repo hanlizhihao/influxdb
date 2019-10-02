@@ -11,6 +11,10 @@ import (
 func initBucketService(f platformtesting.BucketFields, t *testing.T) (platform.BucketService, string, func()) {
 	s := NewService()
 	s.IDGenerator = f.IDGenerator
+	s.TimeGenerator = f.TimeGenerator
+	if f.TimeGenerator == nil {
+		s.TimeGenerator = platform.RealTimeGenerator{}
+	}
 	ctx := context.Background()
 	for _, o := range f.Organizations {
 		if err := s.PutOrganization(ctx, o); err != nil {
@@ -26,5 +30,6 @@ func initBucketService(f platformtesting.BucketFields, t *testing.T) (platform.B
 }
 
 func TestBucketService(t *testing.T) {
+	t.Skip("bucket service no longer used.  Remove all of this inmem stuff")
 	platformtesting.BucketService(initBucketService, t)
 }

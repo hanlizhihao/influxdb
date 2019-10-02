@@ -10,6 +10,7 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
     <FancyScrollbar
       autoHeight={false}
       autoHide={false}
+      className=""
       hideTracksWhenNotNeeded={true}
       maxHeight={null}
       setScrollTop={[Function]}
@@ -39,9 +40,14 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
         <dl
           className="wizard-completion--options"
         >
-          <Grid>
-            <GridRow>
+          <Grid
+            testID="grid"
+          >
+            <GridRow
+              testID="grid--row"
+            >
               <GridColumn
+                testID="grid--column"
                 widthSM={4}
                 widthXS={12}
               >
@@ -62,6 +68,7 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
                 </div>
               </GridColumn>
               <GridColumn
+                testID="grid--column"
                 widthSM={4}
                 widthXS={12}
               >
@@ -82,20 +89,22 @@ exports[`Onboarding.Components.CompletionStep renders 1`] = `
                 </div>
               </GridColumn>
               <GridColumn
+                testID="grid--column"
                 widthSM={4}
                 widthXS={12}
               >
                 <div
                   className="wizard-completion--option"
                 >
-                  <t
+                  <Button
                     active={false}
                     color="success"
                     onClick={[MockFunction]}
+                    placeIconAfterText={false}
                     shape="none"
                     size="lg"
                     status="default"
-                    testID="button"
+                    testID="button--conf-later"
                     text="Configure Later"
                     type="button"
                   />

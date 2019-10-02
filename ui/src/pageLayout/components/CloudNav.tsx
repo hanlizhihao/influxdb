@@ -1,36 +1,51 @@
 import React, {PureComponent} from 'react'
 
+// Components
+import {FeatureFlag} from 'src/shared/utils/featureFlag'
+import {NavMenu, Icon} from '@influxdata/clockface'
+import CloudOnly from 'src/shared/components/cloud/CloudOnly'
+
 // Types
-import {IconFont} from 'src/clockface'
+import {IconFont} from '@influxdata/clockface'
 
 export default class CloudNav extends PureComponent {
   render() {
-    if (!this.shouldRender) {
-      return null
-    }
-
     return (
-      <div className="nav--item">
-        <a className="nav--item-icon">
-          <span className={`icon sidebar--icon ${IconFont.CuboNav}`} />
-        </a>
-        <div className="nav--item-menu">
-          <a className="nav--item-header" href="">
-            Cloud
-          </a>
-          <a className="nav--sub-item" href={this.usageURL}>
-            Usage
-          </a>
-          <a className="nav--sub-item" href={this.billingURL}>
-            Billing
-          </a>
-        </div>
-      </div>
+      <CloudOnly>
+        <NavMenu.Item
+          active={false}
+          titleLink={className => (
+            <a className={className} href={this.usageURL}>
+              Usage
+            </a>
+          )}
+          iconLink={className => (
+            <a className={className} href={this.usageURL}>
+              <Icon glyph={IconFont.Cloud} />
+            </a>
+          )}
+        >
+          <FeatureFlag name="cloudBilling">
+            <NavMenu.SubItem
+              active={false}
+              titleLink={className => (
+                <a className={className} href={this.usageURL}>
+                  Usage
+                </a>
+              )}
+            />
+            <NavMenu.SubItem
+              active={false}
+              titleLink={className => (
+                <a className={className} href={this.billingURL}>
+                  Billing
+                </a>
+              )}
+            />
+          </FeatureFlag>
+        </NavMenu.Item>
+      </CloudOnly>
     )
-  }
-
-  private get shouldRender(): boolean {
-    return process.env.CLOUD === 'true'
   }
 
   private get usageURL(): string {

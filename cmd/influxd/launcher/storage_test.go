@@ -10,13 +10,14 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/cmd/influxd/launcher"
 	"github.com/influxdata/influxdb/http"
 	"github.com/influxdata/influxdb/toml"
 	"github.com/influxdata/influxdb/tsdb/tsm1"
 )
 
 func TestStorage_WriteAndQuery(t *testing.T) {
-	l := RunLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx)
 
 	org1 := l.OnBoardOrFail(t, &influxdb.OnboardingRequest{
 		User:     "USER-1",
@@ -39,21 +40,21 @@ func TestStorage_WriteAndQuery(t *testing.T) {
 
 	qs := `from(bucket:"BUCKET") |> range(start:2000-01-01T00:00:00Z,stop:2000-01-02T00:00:00Z)`
 
-	exp := `,result,table,_start,_stop,_time,_value,_measurement,k,_field` + "\r\n" +
-		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,m,v1,f` + "\r\n\r\n"
+	exp := `,result,table,_start,_stop,_time,_value,_field,_measurement,k` + "\r\n" +
+		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,f,m,v1` + "\r\n\r\n"
 	if got := l.FluxQueryOrFail(t, org1.Org, org1.Auth.Token, qs); !cmp.Equal(got, exp) {
 		t.Errorf("unexpected query results -got/+exp\n%s", cmp.Diff(got, exp))
 	}
 
-	exp = `,result,table,_start,_stop,_time,_value,_measurement,k,_field` + "\r\n" +
-		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,200,m,v2,f` + "\r\n\r\n"
+	exp = `,result,table,_start,_stop,_time,_value,_field,_measurement,k` + "\r\n" +
+		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,200,f,m,v2` + "\r\n\r\n"
 	if got := l.FluxQueryOrFail(t, org2.Org, org2.Auth.Token, qs); !cmp.Equal(got, exp) {
 		t.Errorf("unexpected query results -got/+exp\n%s", cmp.Diff(got, exp))
 	}
 }
 
 func TestLauncher_WriteAndQuery(t *testing.T) {
-	l := RunLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -78,8 +79,8 @@ func TestLauncher_WriteAndQuery(t *testing.T) {
 
 	// Query server to ensure write persists.
 	qs := `from(bucket:"BUCKET") |> range(start:2000-01-01T00:00:00Z,stop:2000-01-02T00:00:00Z)`
-	exp := `,result,table,_start,_stop,_time,_value,_measurement,k,_field` + "\r\n" +
-		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,m,v,f` + "\r\n\r\n"
+	exp := `,result,table,_start,_stop,_time,_value,_field,_measurement,k` + "\r\n" +
+		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,f,m,v` + "\r\n\r\n"
 
 	buf, err := http.SimpleQuery(l.URL(), qs, l.Org.Name, l.Auth.Token)
 	if err != nil {
@@ -91,7 +92,7 @@ func TestLauncher_WriteAndQuery(t *testing.T) {
 }
 
 func TestLauncher_BucketDelete(t *testing.T) {
-	l := RunLauncherOrFail(t, ctx)
+	l := launcher.RunTestLauncherOrFail(t, ctx)
 	l.SetupOrFail(t)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -116,8 +117,8 @@ func TestLauncher_BucketDelete(t *testing.T) {
 
 	// Query server to ensure write persists.
 	qs := `from(bucket:"BUCKET") |> range(start:2000-01-01T00:00:00Z,stop:2000-01-02T00:00:00Z)`
-	exp := `,result,table,_start,_stop,_time,_value,_measurement,k,_field` + "\r\n" +
-		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,m,v,f` + "\r\n\r\n"
+	exp := `,result,table,_start,_stop,_time,_value,_field,_measurement,k` + "\r\n" +
+		`,_result,0,2000-01-01T00:00:00Z,2000-01-02T00:00:00Z,2000-01-01T00:00:00Z,100,f,m,v` + "\r\n\r\n"
 
 	buf, err := http.SimpleQuery(l.URL(), qs, l.Org.Name, l.Auth.Token)
 	if err != nil {
@@ -157,7 +158,7 @@ func TestLauncher_BucketDelete(t *testing.T) {
 }
 
 func TestStorage_CacheSnapshot_Size(t *testing.T) {
-	l := NewLauncher()
+	l := launcher.NewTestLauncher()
 	l.StorageConfig.Engine.Cache.SnapshotMemorySize = 10
 	l.StorageConfig.Engine.Cache.SnapshotAgeDuration = toml.Duration(time.Hour)
 	defer l.ShutdownOrFail(t, ctx)
@@ -203,7 +204,7 @@ func TestStorage_CacheSnapshot_Size(t *testing.T) {
 }
 
 func TestStorage_CacheSnapshot_Age(t *testing.T) {
-	l := NewLauncher()
+	l := launcher.NewTestLauncher()
 	l.StorageConfig.Engine.Cache.SnapshotAgeDuration = toml.Duration(time.Second)
 	defer l.ShutdownOrFail(t, ctx)
 
@@ -245,39 +246,4 @@ func TestStorage_CacheSnapshot_Age(t *testing.T) {
 	if got, exp := summary.Total, uint64(5); got != exp {
 		t.Fatalf("got %d series in TSM files, expected %d", got, exp)
 	}
-}
-
-// WriteOrFail attempts a write to the organization and bucket identified by to or fails if there is an error.
-func (l *Launcher) WriteOrFail(tb testing.TB, to *influxdb.OnboardingResults, data string) {
-	tb.Helper()
-	resp, err := nethttp.DefaultClient.Do(l.NewHTTPRequestOrFail(tb, "POST", fmt.Sprintf("/api/v2/write?org=%s&bucket=%s", to.Org.ID, to.Bucket.ID), to.Auth.Token, data))
-	if err != nil {
-		tb.Fatal(err)
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		tb.Fatal(err)
-	}
-
-	if err := resp.Body.Close(); err != nil {
-		tb.Fatal(err)
-	}
-
-	if resp.StatusCode != nethttp.StatusNoContent {
-		tb.Fatalf("unexpected status code: %d, body: %s, headers: %v", resp.StatusCode, body, resp.Header)
-	}
-}
-
-// FluxQueryOrFail performs a query to the specified organization and returns the results
-// or fails if there is an error.
-func (l *Launcher) FluxQueryOrFail(tb testing.TB, org *influxdb.Organization, token string, query string) string {
-	tb.Helper()
-
-	b, err := http.SimpleQuery(l.URL(), query, org.Name, token)
-	if err != nil {
-		tb.Fatal(err)
-	}
-
-	return string(b)
 }

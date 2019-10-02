@@ -1,38 +1,41 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
-import _ from 'lodash'
 
 // Components
 import TimeSeries from 'src/shared/components/TimeSeries'
-import EmptyQueryView from 'src/shared/components/EmptyQueryView'
-import QueryViewSwitcher from 'src/shared/components/QueryViewSwitcher'
+import EmptyQueryView, {ErrorFormat} from 'src/shared/components/EmptyQueryView'
+import ViewSwitcher from 'src/shared/components/ViewSwitcher'
 
 // Utils
 import {GlobalAutoRefresher} from 'src/utils/AutoRefresher'
 import {getTimeRangeVars} from 'src/variables/utils/getTimeRangeVars'
 import {getVariableAssignments} from 'src/variables/selectors'
 import {getDashboardValuesStatus} from 'src/variables/selectors'
+import {checkResultsLength} from 'src/shared/utils/vis'
 
 // Types
-import {TimeRange, RemoteDataState} from 'src/types'
-import {VariableAssignment} from 'src/types/ast'
-import {AppState} from 'src/types'
-import {DashboardQuery} from 'src/types/dashboards'
-import {QueryViewProperties, ViewType} from 'src/types/dashboards'
-import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+import {
+  TimeRange,
+  RemoteDataState,
+  TimeZone,
+  AppState,
+  DashboardQuery,
+  VariableAssignment,
+  QueryViewProperties,
+  Check,
+} from 'src/types'
 
 interface OwnProps {
   timeRange: TimeRange
-  viewID: string
-  inView: boolean
   manualRefresh: number
-  onZoom: (range: TimeRange) => void
   properties: QueryViewProperties
   dashboardID: string
+  check: Partial<Check>
 }
 
 interface StateProps {
+  timeZone: TimeZone
   variableAssignments: VariableAssignment[]
   variablesStatus: RemoteDataState
 }
@@ -44,7 +47,7 @@ interface State {
 type Props = OwnProps & StateProps
 
 class RefreshingView extends PureComponent<Props, State> {
-  public static defaultProps: Partial<Props> = {
+  public static defaultProps = {
     inView: true,
     manualRefresh: 0,
   }
@@ -64,68 +67,61 @@ class RefreshingView extends PureComponent<Props, State> {
   }
 
   public render() {
-    const {
-      inView,
-      onZoom,
-      viewID,
-      timeRange,
-      properties,
-      manualRefresh,
-      variablesStatus,
-    } = this.props
+    const {properties, manualRefresh, timeZone, check} = this.props
     const {submitToken} = this.state
 
     return (
-      <SpinnerContainer
-        loading={variablesStatus}
-        spinnerComponent={<TechnoSpinner />}
+      <TimeSeries
+        submitToken={submitToken}
+        queries={this.queries}
+        key={manualRefresh}
+        variables={this.variableAssignments}
+        check={check}
       >
-        <TimeSeries
-          inView={inView}
-          submitToken={submitToken}
-          queries={this.queries}
-          key={manualRefresh}
-          variables={this.variableAssignments}
-        >
-          {({tables, loading, error, isInitialFetch}) => {
-            return (
-              <EmptyQueryView
-                errorMessage={error ? error.message : null}
-                tables={tables}
+        {({
+          giraffeResult,
+          files,
+          loading,
+          errorMessage,
+          isInitialFetch,
+          statuses,
+        }) => {
+          return (
+            <EmptyQueryView
+              errorFormat={ErrorFormat.Tooltip}
+              errorMessage={errorMessage}
+              hasResults={checkResultsLength(giraffeResult)}
+              loading={loading}
+              isInitialFetch={isInitialFetch}
+              queries={this.queries}
+              fallbackNote={this.fallbackNote}
+            >
+              <ViewSwitcher
+                giraffeResult={giraffeResult}
+                files={files}
+                check={check}
+                statuses={statuses}
                 loading={loading}
-                isInitialFetch={isInitialFetch}
-                queries={this.queries}
-                fallbackNote={this.fallbackNote}
-              >
-                <QueryViewSwitcher
-                  tables={tables}
-                  viewID={viewID}
-                  onZoom={onZoom}
-                  loading={loading}
-                  timeRange={timeRange}
-                  properties={properties}
-                />
-              </EmptyQueryView>
-            )
-          }}
-        </TimeSeries>
-      </SpinnerContainer>
+                properties={properties}
+                timeZone={timeZone}
+              />
+            </EmptyQueryView>
+          )
+        }}
+      </TimeSeries>
     )
   }
 
   private get queries(): DashboardQuery[] {
     const {properties} = this.props
-    const {type, queries} = properties
 
-    if (type === ViewType.SingleStat) {
-      return [queries[0]]
+    switch (properties.type) {
+      case 'single-stat':
+      case 'gauge':
+        return [properties.queries[0]]
+      default:
+        return properties.queries
     }
-
-    if (type === ViewType.Gauge) {
-      return [queries[0]]
-    }
-
-    return queries
   }
 
   private get variableAssignments(): VariableAssignment[] {
@@ -135,9 +131,16 @@ class RefreshingView extends PureComponent<Props, State> {
   }
 
   private get fallbackNote(): string {
-    const {note, showNoteWhenEmpty} = this.props.properties
+    const {properties} = this.props
 
-    return showNoteWhenEmpty ? note : null
+    switch (properties.type) {
+      case 'check':
+        return null
+      default:
+        const {note, showNoteWhenEmpty} = properties
+
+        return showNoteWhenEmpty ? note : null
+    }
   }
 
   private incrementSubmitToken = () => {
@@ -153,7 +156,9 @@ const mstp = (state: AppState, ownProps: OwnProps): StateProps => {
 
   const valuesStatus = getDashboardValuesStatus(state, ownProps.dashboardID)
 
-  return {variableAssignments, variablesStatus: valuesStatus}
+  const timeZone = state.app.persisted.timeZone
+
+  return {timeZone, variableAssignments, variablesStatus: valuesStatus}
 }
 
 export default connect<StateProps, {}, OwnProps>(mstp)(RefreshingView)

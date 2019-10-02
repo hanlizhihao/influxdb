@@ -5,25 +5,41 @@ import (
 	"context"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/kv"
+	"github.com/influxdata/influxdb/mock"
 )
 
+// NewDocumentIntegrationTest will test the documents related funcs.
 func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
 	return func(t *testing.T) {
 		ctx := context.Background()
 		svc := kv.NewService(store)
+		mockTimeGen := new(mock.TimeGenerator)
 		if err := svc.Initialize(ctx); err != nil {
 			t.Fatalf("failed to initialize service: %v", err)
 		}
+
+		svc.TimeGenerator = mockTimeGen
 
 		s, err := svc.CreateDocumentStore(ctx, "testing")
 		if err != nil {
 			t.Fatalf("failed to create document store: %v", err)
 		}
+
+		ss, err := svc.FindDocumentStore(ctx, "testing")
+		if err != nil {
+			t.Fatalf("failed to find document store: %v", err)
+		}
+
+		l1 := &influxdb.Label{Name: "l1"}
+		l2 := &influxdb.Label{Name: "l2"}
+		mustCreateLabels(ctx, svc, l1, l2)
+		lBad := &influxdb.Label{ID: MustIDBase16(oneID), Name: "bad"}
 
 		o1 := &influxdb.Organization{Name: "foo"}
 		o2 := &influxdb.Organization{Name: "bar"}
@@ -49,13 +65,16 @@ func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
 		t.Run("u1 can create document for o1", func(t *testing.T) {
 			d1 = &influxdb.Document{
 				Meta: influxdb.DocumentMeta{
-					Name: "i1",
+					Name:        "i1",
+					Type:        "type1",
+					Description: "desc1",
 				},
 				Content: map[string]interface{}{
 					"v1": "v1",
 				},
 			}
-			if err := s.CreateDocument(ctx, d1, influxdb.AuthorizedWithOrg(s1, o1.Name)); err != nil {
+			mockTimeGen.FakeValue = time.Date(2009, 1, 2, 3, 0, 0, 0, time.UTC)
+			if err := s.CreateDocument(ctx, d1, influxdb.AuthorizedWithOrg(s1, o1.Name), influxdb.WithLabel(l1.ID)); err != nil {
 				t.Errorf("failed to create document: %v", err)
 			}
 		})
@@ -69,10 +88,12 @@ func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
 					"i2": "i2",
 				},
 			}
-			if err := s.CreateDocument(ctx, d2, influxdb.AuthorizedWithOrg(s2, o1.Name)); err == nil {
+			mockTimeGen.FakeValue = time.Date(2009, 1, 2, 3, 0, 1, 0, time.UTC)
+			if err := s.CreateDocument(ctx, d2, influxdb.AuthorizedWithOrg(s2, o1.Name), influxdb.WithLabel(l2.ID)); err == nil {
 				t.Fatalf("should not have be authorized to create document")
 			}
 
+			mockTimeGen.FakeValue = time.Date(2009, 1, 2, 3, 0, 1, 0, time.UTC)
 			if err := s.CreateDocument(ctx, d2, influxdb.AuthorizedWithOrg(s2, o2.Name)); err != nil {
 				t.Errorf("should have been authorized to create document: %v", err)
 			}
@@ -87,6 +108,7 @@ func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
 					"k2": "v2",
 				},
 			}
+			mockTimeGen.FakeValue = time.Date(2009, 1, 2, 3, 0, 2, 0, time.UTC)
 			if err := s.CreateDocument(ctx, d3, influxdb.AuthorizedWithOrg(s1, o2.Name)); err == nil {
 				t.Errorf("should not have be authorized to create document")
 			}
@@ -94,40 +116,77 @@ func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
 
 		t.Run("can create unowned document", func(t *testing.T) {
 			// TODO(desa): should this be allowed?
+			mockTimeGen.FakeValue = time.Date(2009, 1, 2, 3, 0, 2, 0, time.UTC)
 			if err := s.CreateDocument(ctx, d3); err != nil {
 				t.Fatalf("should have been able to create document: %v", err)
 			}
 		})
 
+		t.Run("can't create document with unexisted label", func(t *testing.T) {
+			d4 := &influxdb.Document{
+				Meta: influxdb.DocumentMeta{
+					Name: "i4",
+				},
+				Content: map[string]interface{}{
+					"k4": "v4",
+				},
+			}
+			err = s.CreateDocument(ctx, d4, influxdb.WithLabel(lBad.ID))
+			ErrorsEqual(t, err, &influxdb.Error{
+				Code: influxdb.ENotFound,
+				Msg:  "label not found",
+			})
+		})
+
+		d1.Meta.CreatedAt = time.Date(2009, 1, 2, 3, 0, 0, 0, time.UTC)
+		dl1 := new(influxdb.Document)
+		*dl1 = *d1
+		dl1.Labels = append([]*influxdb.Label{}, l1)
+
+		d2.Meta.CreatedAt = time.Date(2009, 1, 2, 3, 0, 1, 0, time.UTC)
+		dl2 := new(influxdb.Document)
+		*dl2 = *d2
+		dl2.Labels = append([]*influxdb.Label{}, d2.Labels...)
+
+		d3.Meta.CreatedAt = time.Date(2009, 1, 2, 3, 0, 2, 0, time.UTC)
+
 		t.Run("bare call to find returns all documents", func(t *testing.T) {
-			ds, err := s.FindDocuments(ctx)
+			ds, err := ss.FindDocuments(ctx)
 			if err != nil {
 				t.Fatalf("failed to retrieve documents: %v", err)
 			}
-
 			if exp, got := []*influxdb.Document{d1, d2, d3}, ds; !docsMetaEqual(exp, got) {
 				t.Errorf("documents are different -got/+want\ndiff %s", docsMetaDiff(exp, got))
 			}
 		})
 
-		t.Run("u1 can see o1s documents", func(t *testing.T) {
-			ds, err := s.FindDocuments(ctx, influxdb.AuthorizedWhere(s1), influxdb.IncludeContent)
+		t.Run("u1 can see o1s documents by label", func(t *testing.T) {
+			ds, err := ss.FindDocuments(ctx, influxdb.AuthorizedWhere(s1), influxdb.IncludeContent, influxdb.IncludeLabels)
+
 			if err != nil {
 				t.Fatalf("failed to retrieve documents: %v", err)
 			}
 
-			if exp, got := []*influxdb.Document{d1}, ds; !docsEqual(exp, got) {
-				t.Errorf("documents are different -got/+want\ndiff %s", docsDiff(exp, got))
+			if exp, got := []*influxdb.Document{dl1}, ds; !docsEqual(got, exp) {
+				t.Errorf("documents are different -got/+want\ndiff %s", docsDiff(got, exp))
 			}
 		})
 
+		t.Run("check not found err", func(t *testing.T) {
+			_, err := ss.FindDocuments(ctx, influxdb.WhereID(MustIDBase16(fourID)), influxdb.IncludeContent)
+			ErrorsEqual(t, err, &influxdb.Error{
+				Code: influxdb.ENotFound,
+				Msg:  influxdb.ErrDocumentNotFound,
+			})
+		})
+
 		t.Run("u2 can see o1 and o2s documents", func(t *testing.T) {
-			ds, err := s.FindDocuments(ctx, influxdb.AuthorizedWhere(s2), influxdb.IncludeContent)
+			ds, err := ss.FindDocuments(ctx, influxdb.AuthorizedWhere(s2), influxdb.IncludeContent, influxdb.IncludeLabels)
 			if err != nil {
 				t.Fatalf("failed to retrieve documents: %v", err)
 			}
 
-			if exp, got := []*influxdb.Document{d1, d2}, ds; !docsEqual(exp, got) {
+			if exp, got := []*influxdb.Document{dl1, dl2}, ds; !docsEqual(exp, got) {
 				t.Errorf("documents are different -got/+want\ndiff %s", docsDiff(exp, got))
 			}
 		})
@@ -175,6 +234,14 @@ func NewDocumentIntegrationTest(store kv.Store) func(t *testing.T) {
 func mustCreateOrgs(ctx context.Context, svc *kv.Service, os ...*influxdb.Organization) {
 	for _, o := range os {
 		if err := svc.CreateOrganization(ctx, o); err != nil {
+			panic(err)
+		}
+	}
+}
+
+func mustCreateLabels(ctx context.Context, svc *kv.Service, labels ...*influxdb.Label) {
+	for _, l := range labels {
+		if err := svc.CreateLabel(ctx, l); err != nil {
 			panic(err)
 		}
 	}
@@ -234,7 +301,7 @@ func docsMetaDiff(i1, i2 interface{}) string {
 	return cmp.Diff(i1, i2, documentMetaCmpOptions...)
 }
 
-var documentMetaCmpOptions = append(documentCmpOptions, cmpopts.IgnoreFields(influxdb.Document{}, "Content"))
+var documentMetaCmpOptions = append(documentCmpOptions, cmpopts.IgnoreFields(influxdb.Document{}, "Content", "Labels"))
 
 var documentCmpOptions = cmp.Options{
 	cmp.Comparer(func(x, y []byte) bool {

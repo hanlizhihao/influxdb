@@ -2,8 +2,16 @@
 import React, {PureComponent} from 'react'
 import uuid from 'uuid'
 import {ErrorHandling} from 'src/shared/decorators/errors'
+
 // Components
-import {Alignment, ComponentSize, ConfirmationButton, IndexList,} from 'src/clockface'
+import {
+  IndexList,
+  ComponentSize,
+  Alignment,
+  ConfirmationButton,
+  ComponentColor,
+  PopoverType,
+} from '@influxdata/clockface'
 import EditableDescription from 'src/shared/components/editable_description/EditableDescription'
 
 interface Item {
@@ -41,9 +49,15 @@ class Row extends PureComponent<RowProps> {
             </IndexList.Cell>
             <IndexList.Cell alignment={Alignment.Right}>
               <ConfirmationButton
-                onConfirm={this.handleClickDelete(item)}
+                onConfirm={this.handleClickDelete}
+                returnValue={item}
                 text="Delete"
-                confirmText="Confirm"
+                popoverColor={ComponentColor.Danger}
+                popoverType={PopoverType.Outline}
+                color={ComponentColor.Danger}
+                confirmationLabel=""
+                confirmationButtonColor={ComponentColor.Danger}
+                confirmationButtonText="Confirm"
                 size={ComponentSize.ExtraSmall}
               />
             </IndexList.Cell>
@@ -53,7 +67,7 @@ class Row extends PureComponent<RowProps> {
     )
   }
 
-  private handleClickDelete = item => () => {
+  private handleClickDelete = (item: Item) => {
     this.props.onDelete(item)
   }
 

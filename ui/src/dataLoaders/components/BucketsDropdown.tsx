@@ -2,10 +2,13 @@
 import React, {PureComponent} from 'react'
 
 // Components
-import {Dropdown, ComponentStatus} from 'src/clockface'
+import {Dropdown, ComponentStatus} from '@influxdata/clockface'
+
+// Utils
+import {isSystemBucket} from 'src/buckets/constants/index'
 
 // Types
-import {Bucket} from '@influxdata/influx'
+import {Bucket} from 'src/types'
 
 interface Props {
   selectedBucketID: string
@@ -15,26 +18,36 @@ interface Props {
 
 class BucketsDropdown extends PureComponent<Props> {
   public render() {
-    const {selectedBucketID, onSelectBucket} = this.props
-
     return (
       <Dropdown
-        titleText={this.title}
-        status={this.status}
-        selectedID={selectedBucketID}
-        onChange={onSelectBucket}
-      >
-        {this.dropdownBuckets}
-      </Dropdown>
+        testID="bucket-dropdown"
+        button={(active, onClick) => (
+          <Dropdown.Button
+            testID="bucket-dropdown--button"
+            active={active}
+            onClick={onClick}
+            status={this.status}
+          >
+            {this.selectedBucketName}
+          </Dropdown.Button>
+        )}
+        menu={onCollapse => (
+          <Dropdown.Menu onCollapse={onCollapse}>
+            {this.dropdownBuckets}
+          </Dropdown.Menu>
+        )}
+      />
     )
   }
 
-  private get title(): string {
+  private get selectedBucketName(): string {
+    const {selectedBucketID, buckets} = this.props
+
     if (this.isBucketsEmpty) {
       return 'No buckets found'
     }
 
-    return ''
+    return buckets.find(bucket => bucket.id === selectedBucketID).name
   }
 
   private get status(): ComponentStatus {
@@ -51,13 +64,26 @@ class BucketsDropdown extends PureComponent<Props> {
   }
 
   private get dropdownBuckets(): JSX.Element[] {
-    const {buckets} = this.props
+    const {buckets, onSelectBucket, selectedBucketID} = this.props
+
     if (this.isBucketsEmpty) {
       return []
     }
 
-    return buckets.map(b => (
-      <Dropdown.Item key={b.name} value={b} id={b.id}>
+    const nonSystemBuckets = buckets.filter(bucket => {
+      if (!isSystemBucket(bucket.name)) {
+        return bucket
+      }
+    })
+
+    return nonSystemBuckets.map(b => (
+      <Dropdown.Item
+        key={b.name}
+        value={b}
+        id={b.id}
+        onClick={onSelectBucket}
+        selected={b.id === selectedBucketID}
+      >
         {b.name}
       </Dropdown.Item>
     ))

@@ -8,15 +8,15 @@ import {HANDLE_HORIZONTAL, HANDLE_VERTICAL, MIN_HANDLE_PIXELS,} from 'src/shared
 const NOOP = () => {}
 
 interface Props {
-  name?: string
-  handleDisplay?: string
-  style?: CSSProperties
   handlePixels: number
   id: string
   size: number
+  name: string
   offset: number
   draggable: boolean
   orientation: string
+  handleDisplay: string
+  style: CSSProperties
   activeHandleID: string
   headerOrientation: string
   render: (visibility: string, pixels: number) => ReactElement<any>
@@ -28,7 +28,7 @@ interface Props {
 }
 
 class Division extends PureComponent<Props> {
-  public static defaultProps: Partial<Props> = {
+  public static defaultProps = {
     name: '',
     handleDisplay: 'visible',
     style: {},

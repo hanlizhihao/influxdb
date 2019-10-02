@@ -1,5 +1,9 @@
 // Libraries
-import {get, isObject, isArray} from 'lodash'
+import {get} from 'lodash'
+
+// Utils
+import {findNodes} from 'src/shared/utils/ast'
+import {durationToMilliseconds} from 'src/shared/utils/duration'
 
 // Types
 import {
@@ -12,7 +16,7 @@ import {
   ObjectExpression,
   DateTimeLiteral,
   DurationLiteral,
-} from 'src/types/ast'
+} from 'src/types'
 
 export function getMinDurationFromAST(ast: Package): number {
   // We can't take the minimum of durations of each range individually, since
@@ -26,6 +30,11 @@ export function getMinDurationFromAST(ast: Package): number {
   // 4. Take the minimum duration
   //
   const times = allRangeTimes(ast)
+
+  if (!times.length) {
+    throw new Error('no time ranges found in query')
+  }
+
   const starts = times.map(t => t[0])
   const stops = times.map(t => t[1])
   const cartesianProduct = starts.map(start => stops.map(stop => [start, stop]))
@@ -41,7 +50,7 @@ export function getMinDurationFromAST(ast: Package): number {
 }
 
 function allRangeTimes(ast: any): Array<[number, number]> {
-  return findNodes(isRangeNode, ast).map(node => rangeTimes(ast, node))
+  return findNodes(ast, isRangeNode).map(node => rangeTimes(ast, node))
 }
 
 /*
@@ -79,16 +88,24 @@ function rangeTimes(ast: any, rangeNode: CallExpression): [number, number] {
 function propertyTime(ast: any, value: Expression, now: number): number {
   switch (value.type) {
     case 'UnaryExpression':
-      return now - durationDuration(value.argument as DurationLiteral)
+      return (
+        now - durationToMilliseconds((value.argument as DurationLiteral).values)
+      )
+
     case 'DurationLiteral':
-      return now + durationDuration(value)
+      return now + durationToMilliseconds(value.values)
+
     case 'DateTimeLiteral':
       return Date.parse(value.value)
+
     case 'Identifier':
       return propertyTime(ast, lookupVariable(ast, value.name), now)
+
     case 'BinaryExpression':
       const leftTime = Date.parse((value.left as DateTimeLiteral).value)
-      const rightDuration = durationDuration(value.right as DurationLiteral)
+      const rightDuration = durationToMilliseconds(
+        (value.right as DurationLiteral).values
+      )
 
       switch (value.operator) {
         case '+':
@@ -98,32 +115,27 @@ function propertyTime(ast: any, value: Expression, now: number): number {
         default:
           throw new Error(`unexpected operator ${value.operator}`)
       }
+
+    case 'MemberExpression':
+      const objName = get(value, 'object.name')
+      const propertyName = get(value, 'property.name')
+      const objExpr = lookupVariable(ast, objName) as ObjectExpression
+      const property = objExpr.properties.find(
+        p => get(p, 'key.name') === propertyName
+      )
+
+      return propertyTime(ast, property.value, now)
+
+    case 'CallExpression':
+      if (isNowCall(value)) {
+        return now
+      }
+
+      throw new Error('unexpected CallExpression')
+
     default:
       throw new Error(`unexpected expression type ${value.type}`)
   }
-}
-
-const UNIT_TO_APPROX_DURATION = {
-  ns: 1 / 1000000,
-  µs: 1 / 1000,
-  us: 1 / 1000,
-  ms: 1,
-  s: 1000,
-  m: 1000 * 60,
-  h: 1000 * 60 * 60,
-  d: 1000 * 60 * 60 * 24,
-  w: 1000 * 60 * 60 * 24 * 7,
-  mo: 1000 * 60 * 60 * 24 * 30,
-  y: 1000 * 60 * 60 * 24 * 365,
-}
-
-function durationDuration(durationLiteral: DurationLiteral): number {
-  const duration = durationLiteral.values.reduce(
-    (sum, {magnitude, unit}) => sum + magnitude * UNIT_TO_APPROX_DURATION[unit],
-    0
-  )
-
-  return duration
 }
 
 /*
@@ -138,7 +150,7 @@ function lookupVariable(ast: any, name: string): Expression {
     )
   }
 
-  const declarator = findNodes(isDeclarator, ast)
+  const declarator = findNodes(ast, isDeclarator)
 
   if (!declarator.length) {
     throw new Error(`unable to lookup variable "${name}"`)
@@ -153,37 +165,14 @@ function lookupVariable(ast: any, name: string): Expression {
   return init
 }
 
+function isNowCall(node: CallExpression): boolean {
+  return get(node, 'callee.name') === 'now'
+}
+
 function isRangeNode(node: Node) {
   return (
     get(node, 'type') === 'CallExpression' &&
     get(node, 'callee.type') === 'Identifier' &&
     get(node, 'callee.name') === 'range'
   )
-}
-
-/*
-  Find all nodes in a tree matching the `predicate` function. Each node in the
-  tree is an object, which may contain objects or arrays of objects as children
-  under any key.
-*/
-function findNodes(
-  predicate: (node: Node) => boolean,
-  node: any,
-  acc: any[] = []
-) {
-  if (predicate(node)) {
-    acc.push(node)
-  }
-
-  for (const value of Object.values(node)) {
-    if (isObject(value)) {
-      findNodes(predicate, value, acc)
-    } else if (isArray(value)) {
-      for (const innerValue of value) {
-        findNodes(predicate, innerValue, acc)
-      }
-    }
-  }
-
-  return acc
 }

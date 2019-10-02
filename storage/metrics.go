@@ -2,9 +2,30 @@ package storage
 
 import (
 	"sort"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// The following package variables act as singletons, to be shared by all
+// storage.Engine instantiations. This allows multiple Engines to be
+// monitored within the same process.
+var (
+	rms *retentionMetrics
+	mmu sync.RWMutex
+)
+
+// RetentionPrometheusCollectors returns all prometheus metrics for retention.
+func RetentionPrometheusCollectors() []prometheus.Collector {
+	mmu.RLock()
+	defer mmu.RUnlock()
+
+	var collectors []prometheus.Collector
+	if rms != nil {
+		collectors = append(collectors, rms.PrometheusCollectors()...)
+	}
+	return collectors
+}
 
 // namespace is the leading part of all published metrics for the Storage service.
 const namespace = "storage"
@@ -25,8 +46,11 @@ func newRetentionMetrics(labels prometheus.Labels) *retentionMetrics {
 	}
 	sort.Strings(names)
 
-	checksNames := append(append([]string(nil), names...), "status", "org_id", "bucket_id")
+	checksNames := append(append([]string(nil), names...), "status")
 	sort.Strings(checksNames)
+
+	checkDurationNames := append(append([]string(nil), names...), "status")
+	sort.Strings(checkDurationNames)
 
 	return &retentionMetrics{
 		labels: labels,
@@ -34,7 +58,7 @@ func newRetentionMetrics(labels prometheus.Labels) *retentionMetrics {
 			Namespace: namespace,
 			Subsystem: retentionSubsystem,
 			Name:      "checks_total",
-			Help:      "Number of retention check operations performed by org/bucket id.",
+			Help:      "Number of retention check operations performed.",
 		}, checksNames),
 
 		CheckDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -44,7 +68,7 @@ func newRetentionMetrics(labels prometheus.Labels) *retentionMetrics {
 			Help:      "Time taken to perform a successful retention check.",
 			// 25 buckets spaced exponentially between 10s and ~2h
 			Buckets: prometheus.ExponentialBuckets(10, 1.32, 25),
-		}, names),
+		}, checkDurationNames),
 	}
 }
 

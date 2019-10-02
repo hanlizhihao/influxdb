@@ -9,10 +9,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/influxdata/influxdb/http/metric"
 	"github.com/julienschmidt/httprouter"
 	"go.uber.org/zap"
 
-	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb"
 	pcontext "github.com/influxdata/influxdb/context"
 	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/models"
@@ -23,17 +24,21 @@ import (
 // WriteBackend is all services and associated parameters required to construct
 // the WriteHandler.
 type WriteBackend struct {
-	Logger *zap.Logger
+	influxdb.HTTPErrorHandler
+	Logger             *zap.Logger
+	WriteEventRecorder metric.EventRecorder
 
 	PointsWriter        storage.PointsWriter
-	BucketService       platform.BucketService
-	OrganizationService platform.OrganizationService
+	BucketService       influxdb.BucketService
+	OrganizationService influxdb.OrganizationService
 }
 
 // NewWriteBackend returns a new instance of WriteBackend.
 func NewWriteBackend(b *APIBackend) *WriteBackend {
 	return &WriteBackend{
-		Logger: b.Logger.With(zap.String("handler", "write")),
+		HTTPErrorHandler:   b.HTTPErrorHandler,
+		Logger:             b.Logger.With(zap.String("handler", "write")),
+		WriteEventRecorder: b.WriteEventRecorder,
 
 		PointsWriter:        b.PointsWriter,
 		BucketService:       b.BucketService,
@@ -44,13 +49,15 @@ func NewWriteBackend(b *APIBackend) *WriteBackend {
 // WriteHandler receives line protocol and sends to a publish function.
 type WriteHandler struct {
 	*httprouter.Router
-
+	influxdb.HTTPErrorHandler
 	Logger *zap.Logger
 
-	BucketService       platform.BucketService
-	OrganizationService platform.OrganizationService
+	BucketService       influxdb.BucketService
+	OrganizationService influxdb.OrganizationService
 
 	PointsWriter storage.PointsWriter
+
+	EventRecorder metric.EventRecorder
 }
 
 const (
@@ -62,12 +69,14 @@ const (
 // NewWriteHandler creates a new handler at /api/v2/write to receive line protocol.
 func NewWriteHandler(b *WriteBackend) *WriteHandler {
 	h := &WriteHandler{
-		Router: NewRouter(),
-		Logger: b.Logger,
+		Router:           NewRouter(b.HTTPErrorHandler),
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		Logger:           b.Logger,
 
 		PointsWriter:        b.PointsWriter,
 		BucketService:       b.BucketService,
 		OrganizationService: b.OrganizationService,
+		EventRecorder:       b.WriteEventRecorder,
 	}
 
 	h.HandlerFunc("POST", writePath, h.handleWrite)
@@ -81,13 +90,29 @@ func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	defer r.Body.Close()
 
+	// TODO(desa): I really don't like how we're recording the usage metrics here
+	// Ideally this will be moved when we solve https://github.com/influxdata/influxdb/issues/13403
+	var orgID influxdb.ID
+	var requestBytes int
+	sw := newStatusResponseWriter(w)
+	w = sw
+	defer func() {
+		h.EventRecorder.Record(ctx, metric.Event{
+			OrgID:         orgID,
+			Endpoint:      r.URL.Path, // This should be sufficient for the time being as it should only be single endpoint.
+			RequestBytes:  requestBytes,
+			ResponseBytes: sw.responseBytes,
+			Status:        sw.code(),
+		})
+	}()
+
 	in := r.Body
 	if r.Header.Get("Content-Encoding") == "gzip" {
 		var err error
 		in, err = gzip.NewReader(r.Body)
 		if err != nil {
-			EncodeError(ctx, &platform.Error{
-				Code: platform.EInvalid,
+			h.HandleHTTPError(ctx, &influxdb.Error{
+				Code: influxdb.EInvalid,
 				Op:   "http/handleWrite",
 				Msg:  errInvalidGzipHeader,
 				Err:  err,
@@ -99,75 +124,70 @@ func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
 
 	a, err := pcontext.GetAuthorizer(ctx)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	req, err := decodeWriteRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	logger := h.Logger.With(zap.String("org", req.Org), zap.String("bucket", req.Bucket))
 
-	var org *platform.Organization
-	if id, err := platform.IDFromString(req.Org); err == nil {
-		// Decoded ID successfully. Make sure it's a real org.
-		o, err := h.OrganizationService.FindOrganizationByID(ctx, *id)
-		if err == nil {
-			org = o
-		} else if platform.ErrorCode(err) != platform.ENotFound {
-			EncodeError(ctx, err, w)
-			return
-		}
-	}
-	if org == nil {
-		o, err := h.OrganizationService.FindOrganization(ctx, platform.OrganizationFilter{Name: &req.Org})
-		if err != nil {
-			logger.Info("Failed to find organization", zap.Error(err))
-			EncodeError(ctx, err, w)
-			return
-		}
-
-		org = o
+	var org *influxdb.Organization
+	org, err = queryOrganization(ctx, r, h.OrganizationService)
+	if err != nil {
+		logger.Info("Failed to find organization", zap.Error(err))
+		h.HandleHTTPError(ctx, err, w)
+		return
 	}
 
-	var bucket *platform.Bucket
-	if id, err := platform.IDFromString(req.Bucket); err == nil {
+	orgID = org.ID
+
+	var bucket *influxdb.Bucket
+	if id, err := influxdb.IDFromString(req.Bucket); err == nil {
 		// Decoded ID successfully. Make sure it's a real bucket.
-		b, err := h.BucketService.FindBucket(ctx, platform.BucketFilter{
+		b, err := h.BucketService.FindBucket(ctx, influxdb.BucketFilter{
 			OrganizationID: &org.ID,
 			ID:             id,
 		})
 		if err == nil {
 			bucket = b
-		} else if platform.ErrorCode(err) != platform.ENotFound {
-			EncodeError(ctx, err, w)
+		} else if influxdb.ErrorCode(err) != influxdb.ENotFound {
+			h.HandleHTTPError(ctx, err, w)
 			return
 		}
 	}
 
 	if bucket == nil {
-		b, err := h.BucketService.FindBucket(ctx, platform.BucketFilter{
+		b, err := h.BucketService.FindBucket(ctx, influxdb.BucketFilter{
 			OrganizationID: &org.ID,
 			Name:           &req.Bucket,
 		})
 		if err != nil {
-			EncodeError(ctx, &platform.Error{
-				Op:  "http/handleWrite",
-				Err: err,
-			}, w)
+			h.HandleHTTPError(ctx, err, w)
 			return
 		}
 
 		bucket = b
 	}
 
-	p, err := platform.NewPermissionAtID(bucket.ID, platform.WriteAction, platform.BucketsResourceType, org.ID)
+	// TODO(jade): remove this after system buckets issue is resolved
+	if bucket.IsSystem() {
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EForbidden,
+			Op:   "http/handleWrite",
+			Msg:  fmt.Sprintf("cannot write to internal bucket %s", bucket.Name),
+		}, w)
+		return
+	}
+
+	p, err := influxdb.NewPermissionAtID(bucket.ID, influxdb.WriteAction, influxdb.BucketsResourceType, org.ID)
 	if err != nil {
-		EncodeError(ctx, &platform.Error{
-			Code: platform.EInternal,
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EInternal,
 			Op:   "http/handleWrite",
 			Msg:  fmt.Sprintf("unable to create permission for bucket: %v", err),
 			Err:  err,
@@ -176,8 +196,8 @@ func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !a.Allowed(*p) {
-		EncodeError(ctx, &platform.Error{
-			Code: platform.EForbidden,
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EForbidden,
 			Op:   "http/handleWrite",
 			Msg:  "insufficient permissions for write",
 		}, w)
@@ -190,8 +210,8 @@ func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
 	data, err := ioutil.ReadAll(in)
 	if err != nil {
 		logger.Error("Error reading body", zap.Error(err))
-		EncodeError(ctx, &platform.Error{
-			Code: platform.EInternal,
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EInternal,
 			Op:   "http/handleWrite",
 			Msg:  fmt.Sprintf("unable to read data: %v", err),
 			Err:  err,
@@ -199,36 +219,34 @@ func (h *WriteHandler) handleWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	points, err := models.ParsePointsWithPrecision(data, time.Now(), req.Precision)
+	requestBytes = len(data)
+	if requestBytes == 0 {
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Op:   "http/handleWrite",
+			Msg:  "writing requires points",
+		}, w)
+		return
+	}
+
+	encoded := tsdb.EncodeName(org.ID, bucket.ID)
+	mm := models.EscapeMeasurement(encoded[:])
+	points, err := models.ParsePointsWithPrecision(data, mm, time.Now(), req.Precision)
 	if err != nil {
 		logger.Error("Error parsing points", zap.Error(err))
-		EncodeError(ctx, &platform.Error{
-			Code: platform.EInvalid,
-			Op:   "http/handleWrite",
-			Msg:  fmt.Sprintf("unable to parse points: %v", err),
-			Err:  err,
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EInvalid,
+			Msg:  err.Error(),
 		}, w)
 		return
 	}
 
-	exploded, err := tsdb.ExplodePoints(org.ID, bucket.ID, points)
-	if err != nil {
-		logger.Error("Error exploding points", zap.Error(err))
-		EncodeError(ctx, &platform.Error{
-			Code: platform.EInternal,
-			Op:   "http/handleWrite",
-			Msg:  fmt.Sprintf("unable to convert points to internal structures: %v", err),
-			Err:  err,
-		}, w)
-		return
-	}
-
-	if err := h.PointsWriter.WritePoints(ctx, exploded); err != nil {
+	if err := h.PointsWriter.WritePoints(ctx, points); err != nil {
 		logger.Error("Error writing points", zap.Error(err))
-		EncodeError(ctx, &platform.Error{
-			Code: platform.EInternal,
+		h.HandleHTTPError(ctx, &influxdb.Error{
+			Code: influxdb.EInternal,
 			Op:   "http/handleWrite",
-			Msg:  fmt.Sprintf("unable to write points to database: %v", err),
+			Msg:  "unexpected error writing points to database",
 			Err:  err,
 		}, w)
 		return
@@ -245,8 +263,8 @@ func decodeWriteRequest(ctx context.Context, r *http.Request) (*postWriteRequest
 	}
 
 	if !models.ValidPrecision(p) {
-		return nil, &platform.Error{
-			Code: platform.EInvalid,
+		return nil, &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Op:   "http/decodeWriteRequest",
 			Msg:  errInvalidPrecision,
 		}
@@ -273,23 +291,23 @@ type WriteService struct {
 	InsecureSkipVerify bool
 }
 
-var _ platform.WriteService = (*WriteService)(nil)
+var _ influxdb.WriteService = (*WriteService)(nil)
 
-func (s *WriteService) Write(ctx context.Context, orgID, bucketID platform.ID, r io.Reader) error {
+func (s *WriteService) Write(ctx context.Context, orgID, bucketID influxdb.ID, r io.Reader) error {
 	precision := s.Precision
 	if precision == "" {
 		precision = "ns"
 	}
 
 	if !models.ValidPrecision(precision) {
-		return &platform.Error{
-			Code: platform.EInvalid,
+		return &influxdb.Error{
+			Code: influxdb.EInvalid,
 			Op:   "http/Write",
 			Msg:  errInvalidPrecision,
 		}
 	}
 
-	u, err := newURL(s.Addr, writePath)
+	u, err := NewURL(s.Addr, writePath)
 	if err != nil {
 		return err
 	}
@@ -324,7 +342,7 @@ func (s *WriteService) Write(ctx context.Context, orgID, bucketID platform.ID, r
 	params.Set("precision", string(precision))
 	req.URL.RawQuery = params.Encode()
 
-	hc := newClient(u.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {

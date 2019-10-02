@@ -1,11 +1,11 @@
 package readservice
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 
 	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/storage"
@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/influxdb/storage/reads/datatypes"
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxql"
-	"github.com/opentracing/opentracing-go"
 )
 
 const (
@@ -35,7 +34,7 @@ type indexSeriesCursor struct {
 	hasValueExpr bool
 }
 
-func newIndexSeriesCursor(ctx context.Context, src *readSource, req *datatypes.ReadRequest, engine *storage.Engine) (*indexSeriesCursor, error) {
+func newIndexSeriesCursor(ctx context.Context, src *readSource, predicate *datatypes.Predicate, engine *storage.Engine) (*indexSeriesCursor, error) {
 	queries, err := engine.CreateCursorIterator(ctx)
 	if err != nil {
 		return nil, err
@@ -45,11 +44,8 @@ func newIndexSeriesCursor(ctx context.Context, src *readSource, req *datatypes.R
 		return nil, nil
 	}
 
-	span := opentracing.SpanFromContext(ctx)
-	if span != nil {
-		span = opentracing.StartSpan("index_cursor.create", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
 
 	opt := query.IteratorOptions{
 		Aux:        []influxql.VarRef{{Val: "key"}},
@@ -59,7 +55,7 @@ func newIndexSeriesCursor(ctx context.Context, src *readSource, req *datatypes.R
 	}
 	p := &indexSeriesCursor{row: reads.SeriesRow{Query: tsdb.CursorIterators{queries}}}
 
-	if root := req.Predicate.GetRoot(); root != nil {
+	if root := predicate.GetRoot(); root != nil {
 		if p.cond, err = reads.NodeToExpr(root, nil); err != nil {
 			return nil, err
 		}
@@ -123,26 +119,18 @@ func (c *indexSeriesCursor) Next() *reads.SeriesRow {
 		return nil
 	}
 
+	if len(sr.Tags) < 2 {
+		// Invariant broken.
+		c.err = fmt.Errorf("attempted to emit key with only tags: %s", sr.Tags)
+		return nil
+	}
+
 	c.row.Name = sr.Name
 	//TODO(edd): check this.
 	c.row.SeriesTags = copyTags(c.row.SeriesTags, sr.Tags)
 	c.row.Tags = copyTags(c.row.Tags, sr.Tags)
-	c.row.Field = string(c.row.Tags.Get(models.FieldKeyTagKeyBytes))
-
-	// Normalise the special tag keys to the emitted format.
-	if len(c.row.Tags) < 2 {
-		// Invariant broken.
-		c.err = fmt.Errorf("attempted to emit key with only tags: %s", c.row.Tags)
-		return &c.row
-	}
-
-	for i := 0; i < len(c.row.Tags); i++ {
-		if bytes.Equal(c.row.Tags[i].Key, models.MeasurementTagKeyBytes) {
-			c.row.Tags[i].Key = measurementKeyBytes
-		} else if bytes.Equal(c.row.Tags[i].Key, models.FieldKeyTagKeyBytes) {
-			c.row.Tags[i].Key = fieldKeyBytes
-		}
-	}
+	fv := c.row.Tags.Get(models.FieldKeyTagKeyBytes)
+	c.row.Field = string(fv)
 
 	if c.cond != nil && c.hasValueExpr {
 		// TODO(sgc): lazily evaluate valueCond
@@ -152,6 +140,13 @@ func (c *indexSeriesCursor) Next() *reads.SeriesRow {
 			c.row.ValueCond = nil
 		}
 	}
+
+	// Normalise the special tag keys to the emitted format.
+	mv := c.row.Tags.Get(models.MeasurementTagKeyBytes)
+	c.row.Tags.Delete(models.MeasurementTagKeyBytes)
+	c.row.Tags.Set(measurementKeyBytes, mv)
+	c.row.Tags.Delete(models.FieldKeyTagKeyBytes)
+	c.row.Tags.Set(fieldKeyBytes, fv)
 
 	return &c.row
 }

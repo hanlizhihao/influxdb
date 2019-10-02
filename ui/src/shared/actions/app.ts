@@ -4,15 +4,17 @@ import {notify} from 'src/shared/actions/notifications'
 import {presentationMode} from 'src/shared/copy/notifications'
 
 import {Dispatch} from 'redux'
+import {TimeZone} from 'src/types'
 
 import {
-    ActionTypes,
-    DelayEnablePresentationModeDispatcher,
-    DisablePresentationModeAction,
-    EnablePresentationModeAction,
-    SetAutoRefreshAction,
-    SetAutoRefreshActionCreator,
-    TemplateControlBarVisibilityToggledAction,
+  ActionTypes,
+  EnablePresentationModeAction,
+  DisablePresentationModeAction,
+  DelayEnablePresentationModeDispatcher,
+  SetAutoRefreshActionCreator,
+  SetAutoRefreshAction,
+  SetTimeZoneAction,
+  TemplateControlBarVisibilityToggledAction,
 } from 'src/types/actions/app'
 
 // ephemeral state action creators
@@ -42,6 +44,11 @@ export const setAutoRefresh: SetAutoRefreshActionCreator = (
   payload: {
     milliseconds,
   },
+})
+
+export const setTimeZone = (timeZone: TimeZone): SetTimeZoneAction => ({
+  type: ActionTypes.SetTimeZone,
+  payload: {timeZone},
 })
 
 export const templateControlBarVisibilityToggled = (): TemplateControlBarVisibilityToggledAction => ({

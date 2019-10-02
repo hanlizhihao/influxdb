@@ -1,16 +1,17 @@
 #!/usr/bin/python -u
 
-import argparse
-import hashlib
-import json
-import logging
-import os
-import re
-import shutil
-import subprocess
 import sys
-import tempfile
+import os
+import subprocess
 from datetime import datetime
+import shutil
+import tempfile
+import hashlib
+import re
+import logging
+import argparse
+import json
+import fs
 
 ################
 #### Chronograf Variables
@@ -46,7 +47,7 @@ MAINTAINER = "contact@influxdb.com"
 VENDOR = "InfluxData"
 DESCRIPTION = "Open source monitoring and visualization UI for the entire TICK stack."
 
-prereqs = [ 'git', 'go', 'npm' ]
+prereqs = [ 'git', 'go', 'yarn' ]
 go_vet_command = "go tool vet ./"
 optional_prereqs = [ 'fpm', 'rpmbuild', 'gpg' ]
 

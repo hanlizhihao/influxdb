@@ -10,41 +10,23 @@ jest.mock('src/timeMachine/apis/queryBuilder')
 const setInitialState = state => {
   return {
     ...state,
-    orgs: [
-      {
+    orgs: {
+      org: {
         id: 'foo',
       },
-    ],
+    },
   }
 }
 
 describe('QueryBuilder', () => {
   it('can select a bucket', async () => {
-    const {
-      getByTestId,
-      getAllByTestId,
-      queryAllByTestId,
-      getByText,
-    } = renderWithRedux(<QueryBuilder />, setInitialState)
+    const {getByTestId} = renderWithRedux(<QueryBuilder />, setInitialState)
 
-    const bucketsDropdownClosed = await waitForElement(() => getByText('b1'))
-
-    fireEvent.click(bucketsDropdownClosed)
-
-    const bucketItems = getAllByTestId(/dropdown--item/)
-
-    expect(bucketItems.length).toBe(2)
-
-    const b2 = getByTestId('dropdown--item b2')
+    const b2 = await waitForElement(() => getByTestId('selector-list b2'))
 
     fireEvent.click(b2)
 
-    const closedDropdown = await waitForElement(() =>
-      getByTestId('buckets--button')
-    )
-
-    expect(closedDropdown.textContent).toBe('b2')
-    expect(queryAllByTestId(/dropdown--item/).length).toBe(0)
+    expect(b2.className).toContain('selected')
   })
 
   it('can select a tag', async () => {
@@ -59,11 +41,11 @@ describe('QueryBuilder', () => {
 
     fireEvent.click(keysButton)
 
-    const keyMenuItems = getAllByTestId(/dropdown--item/)
+    const keyMenuItems = getAllByTestId(/searchable-dropdown--item/)
 
     expect(keyMenuItems.length).toBe(2)
 
-    const tk2 = getByTestId('dropdown--item tk2')
+    const tk2 = getByTestId('searchable-dropdown--item tk2')
 
     fireEvent.click(tk2)
 
@@ -72,7 +54,7 @@ describe('QueryBuilder', () => {
     )
 
     expect(keysButton.innerHTML.includes('tk2')).toBe(true)
-    expect(queryAllByTestId(/dropdown--item/).length).toBe(0)
+    expect(queryAllByTestId(/searchable-dropdown--item/).length).toBe(0)
   })
 
   it('can select a tag value', async () => {
@@ -88,5 +70,29 @@ describe('QueryBuilder', () => {
     await waitForElement(() => getByTestId('tag-selector--container 1'))
 
     expect(queryAllByTestId(/tag-selector--container/).length).toBe(2)
+  })
+
+  it('can select an aggregate window', async () => {
+    const {getByTestId} = renderWithRedux(<QueryBuilder />, setInitialState)
+
+    // can only select an aggregate window if you've already selected a function
+    const mean = getByTestId('selector-list mean')
+    fireEvent.click(mean)
+
+    let windowSelectorButton = getByTestId('duration-selector--button')
+
+    fireEvent.click(windowSelectorButton)
+
+    const windowSelector = getByTestId('duration-selector--menu')
+
+    expect(windowSelector.childElementCount).toBe(14)
+
+    const fiveMins = getByTestId('duration-selector--5m')
+
+    fireEvent.click(fiveMins)
+
+    windowSelectorButton = getByTestId('duration-selector--button')
+
+    expect(windowSelectorButton.textContent).toContain('5 minutes')
   })
 })

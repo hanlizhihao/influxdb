@@ -1,7 +1,16 @@
+// Libraries
 import React, {PureComponent} from 'react'
 
-import {Page} from 'src/pageLayout'
-import {ComponentColor, Button, ComponentStatus} from '@influxdata/clockface'
+// Components
+import PageTitleWithOrg from 'src/shared/components/PageTitleWithOrg'
+
+// Types
+import {
+  ComponentColor,
+  Button,
+  ComponentStatus,
+  Page,
+} from '@influxdata/clockface'
 
 interface Props {
   title: string
@@ -15,7 +24,7 @@ export default class TaskHeader extends PureComponent<Props> {
     return (
       <Page.Header fullWidth={true}>
         <Page.Header.Left>
-          <Page.Title title={this.props.title} />
+          <PageTitleWithOrg title={this.props.title} />
         </Page.Header.Left>
         <Page.Header.Right>
           <Button

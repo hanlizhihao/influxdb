@@ -13,7 +13,7 @@
 
 # SUBDIRS are directories that have their own Makefile.
 # It is required that all subdirs have the `all` and `clean` targets.
-SUBDIRS := proto http ui chronograf query storage task
+SUBDIRS := http ui chronograf query storage
 GO_ARGS=-tags '$(GO_TAGS)'
 
 # Test vars can be used by all recursive Makefiles
@@ -49,7 +49,11 @@ CMDS := \
 #
 # This target sets up the dependencies to correctly build all go commands.
 # Other targets must depend on this target to correctly builds CMDS.
-all: GO_ARGS=-tags 'assets $(GO_TAGS)'
+ifeq ($(GOARCH), arm64)
+    all: GO_ARGS=-tags ' assets noasm $(GO_TAGS)'
+else
+    all: GO_ARGS=-tags 'assets $(GO_TAGS)'
+endif
 all: subdirs generate $(CMDS)
 
 # Target to build subdirs.
@@ -62,6 +66,9 @@ subdirs: $(SUBDIRS)
 #
 $(CMDS): $(SOURCES)
 	$(GO_BUILD) -o $@ ./cmd/$(shell basename "$@")
+
+# Ease of use build for just the go binary
+influxd: bin/$(GOOS)/influxd
 
 #
 # Define targets for the web ui
@@ -81,6 +88,9 @@ chronograf_lint:
 
 ui/node_modules:
 	make -C ui node_modules
+
+ui_client:
+	make -C ui client
 
 #
 # Define action only targets
@@ -138,7 +148,7 @@ nightly:
 
 release:
 	$(GO_INSTALL) github.com/goreleaser/goreleaser
-	git checkout -- go.sum # avoid dirty git repository caused by go install 
+	git checkout -- go.sum # avoid dirty git repository caused by go install
 	goreleaser release --rm-dist
 
 clean:
@@ -173,4 +183,4 @@ protoc:
 	chmod +x /go/bin/protoc
 
 # .PHONY targets represent actions that do not create an actual file.
-.PHONY: all subdirs $(SUBDIRS) run fmt checkfmt tidy checktidy checkgenerate test test-go test-js test-go-race bench clean node_modules vet nightly chronogiraffe dist ping protoc e2e run-e2e
+.PHONY: all subdirs $(SUBDIRS) run fmt checkfmt tidy checktidy checkgenerate test test-go test-js test-go-race bench clean node_modules vet nightly chronogiraffe dist ping protoc e2e run-e2e influxd

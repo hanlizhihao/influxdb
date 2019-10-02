@@ -8,42 +8,46 @@ import CellHeader from 'src/shared/components/cells/CellHeader'
 import CellContext from 'src/shared/components/cells/CellContext'
 import ViewComponent from 'src/shared/components/cells/View'
 import {ErrorHandling} from 'src/shared/decorators/errors'
-import {SpinnerContainer, TechnoSpinner} from '@influxdata/clockface'
+import {SpinnerContainer} from '@influxdata/clockface'
+import EmptyGraphMessage from 'src/shared/components/EmptyGraphMessage'
 
 // Utils
-import {getView} from 'src/dashboards/selectors'
+import {getView, getCheckForView, getViewStatus} from 'src/dashboards/selectors'
 
 // Types
 import {
   AppState,
-  ViewType,
   View,
   Cell,
   TimeRange,
   RemoteDataState,
+  Check,
 } from 'src/types'
 
 interface StateProps {
   viewsStatus: RemoteDataState
   view: View
+  check: Partial<Check>
 }
 
 interface OwnProps {
   cell: Cell
   timeRange: TimeRange
-  autoRefresh: number
   manualRefresh: number
   onDeleteCell: (cell: Cell) => void
   onCloneCell: (cell: Cell) => void
   onEditCell: () => void
   onEditNote: (id: string) => void
-  onZoom: (range: TimeRange) => void
+}
+
+interface State {
+  inView: boolean
 }
 
 type Props = StateProps & OwnProps
 
 @ErrorHandling
-class CellComponent extends Component<Props> {
+class CellComponent extends Component<Props, State> {
   public render() {
     const {
       onEditCell,
@@ -78,7 +82,7 @@ class CellComponent extends Component<Props> {
   private get viewName(): string {
     const {view} = this.props
 
-    if (view && view.properties.type !== ViewType.Markdown) {
+    if (view && view.properties.type !== 'markdown') {
       return view.name
     }
 
@@ -92,7 +96,7 @@ class CellComponent extends Component<Props> {
       return ''
     }
 
-    const isMarkdownView = view.properties.type === ViewType.Markdown
+    const isMarkdownView = view.properties.type === 'markdown'
     const showNoteWhenEmpty = get(view, 'properties.showNoteWhenEmpty')
 
     if (isMarkdownView || showNoteWhenEmpty) {
@@ -105,9 +109,8 @@ class CellComponent extends Component<Props> {
   private get view(): JSX.Element {
     const {
       timeRange,
-      autoRefresh,
       manualRefresh,
-      onZoom,
+      check,
       view,
       onEditCell,
       viewsStatus,
@@ -116,13 +119,12 @@ class CellComponent extends Component<Props> {
     return (
       <SpinnerContainer
         loading={viewsStatus}
-        spinnerComponent={<TechnoSpinner />}
+        spinnerComponent={<EmptyGraphMessage message="Loading..." />}
       >
         <ViewComponent
           view={view}
-          onZoom={onZoom}
+          check={check}
           timeRange={timeRange}
-          autoRefresh={autoRefresh}
           manualRefresh={manualRefresh}
           onEditCell={onEditCell}
         />
@@ -136,11 +138,13 @@ class CellComponent extends Component<Props> {
 }
 
 const mstp = (state: AppState, ownProps: OwnProps): StateProps => {
-  const {
-    views: {status},
-  } = state
+  const view = getView(state, ownProps.cell.id)
 
-  return {view: getView(state, ownProps.cell.id), viewsStatus: status}
+  const status = getViewStatus(state, ownProps.cell.id)
+
+  const check = getCheckForView(state, view)
+
+  return {view, viewsStatus: status, check}
 }
 
 export default connect<StateProps, {}, OwnProps>(

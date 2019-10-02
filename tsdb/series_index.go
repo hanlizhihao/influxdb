@@ -155,9 +155,21 @@ func (idx *SeriesIndex) Recover(segments []*SeriesSegment) error {
 	return nil
 }
 
+// GrowBy preallocates the in-memory hashmap to a larger size.
+func (idx *SeriesIndex) GrowBy(delta int) {
+	if delta < 0 {
+		return
+	}
+	idx.keyIDMap.Grow(((idx.keyIDMap.Len() + int64(delta)) * 100) / int64(idx.keyIDMap.LoadFactor()))
+}
+
 // Count returns the number of series in the index.
 func (idx *SeriesIndex) Count() uint64 {
-	return idx.OnDiskCount() + idx.InMemCount()
+	n := int64(idx.OnDiskCount()+idx.InMemCount()) - int64(len(idx.tombstones))
+	if n < 0 {
+		n = 0
+	}
+	return uint64(n)
 }
 
 // OnDiskCount returns the number of series in the on-disk index.
@@ -209,7 +221,11 @@ func (idx *SeriesIndex) execEntry(flag uint8, id SeriesIDTyped, offset int64, ke
 		}
 
 	case SeriesEntryTombstoneFlag:
-		idx.tombstones[untypedID] = struct{}{}
+		// Only add to tombstone if it exists on disk or in-memory.
+		// This affects counts if a tombstone exists but the ID doesn't exist.
+		if idx.FindOffsetByID(untypedID) != 0 {
+			idx.tombstones[untypedID] = struct{}{}
+		}
 
 	default:
 		panic("unreachable")

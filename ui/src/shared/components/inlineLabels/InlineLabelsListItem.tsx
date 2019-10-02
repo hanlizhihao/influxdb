@@ -2,7 +2,7 @@
 import React, {Component, MouseEvent} from 'react'
 import classnames from 'classnames'
 // Components
-import Label from 'src/clockface/components/label/Label'
+import {Label} from '@influxdata/clockface'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
@@ -28,12 +28,7 @@ class InlineLabelsListItem extends Component<Props> {
         onClick={this.handleClick}
         data-testid={`label-list--item ${name}`}
       >
-        <Label
-          name={name}
-          description={description}
-          id={id}
-          colorHex={colorHex}
-        />
+        <Label name={name} description={description} id={id} color={colorHex} />
       </div>
     )
   }

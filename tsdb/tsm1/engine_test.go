@@ -13,12 +13,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/models"
+	"github.com/influxdata/influxdb/toml"
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxdb/tsdb/tsi1"
 	"github.com/influxdata/influxdb/tsdb/tsm1"
 	"github.com/influxdata/influxql"
+	"go.uber.org/zap"
 )
 
 // Test that series id set gets updated and returned appropriately.
@@ -59,9 +62,8 @@ func TestIndex_SeriesIDSet(t *testing.T) {
 	}
 
 	// Drop all the series for the gpu measurement and they should no longer
-	// be in the series ID set. This relies on the fact that DeleteBucketRange is really
-	// operating on prefixes.
-	if err := engine.DeleteBucketRange([]byte("gpu"), math.MinInt64, math.MaxInt64); err != nil {
+	// be in the series ID set.
+	if err := engine.DeletePrefixRange(context.Background(), []byte("gpu"), math.MinInt64, math.MaxInt64, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +126,7 @@ func TestEngine_SnapshotsDisabled(t *testing.T) {
 
 	// Writing a snapshot should not fail when the snapshot is empty
 	// even if snapshots are disabled.
-	if err := e.WriteSnapshot(context.Background()); err != nil {
+	if err := e.WriteSnapshot(context.Background(), tsm1.CacheStatusColdNoWrites); err != nil {
 		t.Fatalf("failed to snapshot: %s", err.Error())
 	}
 }
@@ -132,7 +134,7 @@ func TestEngine_SnapshotsDisabled(t *testing.T) {
 func TestEngine_ShouldCompactCache(t *testing.T) {
 	nowTime := time.Now()
 
-	e, err := NewEngine()
+	e, err := NewEngine(tsm1.NewConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +151,7 @@ func TestEngine_ShouldCompactCache(t *testing.T) {
 		t.Fatalf("got status %v, exp status %v - nothing written to cache, so should not compact", got, exp)
 	}
 
-	if err := e.WritePointsString("m,k=v f=3i"); err != nil {
+	if err := e.WritePointsString("mm", "m,k=v f=3i"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,7 +246,7 @@ func BenchmarkEngine_WritePoints(b *testing.B) {
 		e := MustOpenEngine()
 		pp := make([]models.Point, 0, sz)
 		for i := 0; i < sz; i++ {
-			p := MustParsePointString(fmt.Sprintf("cpu,host=%d value=1.2", i))
+			p := MustParsePointString(fmt.Sprintf("cpu,host=%d value=1.2", i), "mm")
 			pp = append(pp, p)
 		}
 
@@ -269,7 +271,7 @@ func BenchmarkEngine_WritePoints_Parallel(b *testing.B) {
 		cpus := runtime.GOMAXPROCS(0)
 		pp := make([]models.Point, 0, sz*cpus)
 		for i := 0; i < sz*cpus; i++ {
-			p := MustParsePointString(fmt.Sprintf("cpu,host=%d value=1.2,other=%di", i, i))
+			p := MustParsePointString(fmt.Sprintf("cpu,host=%d value=1.2,other=%di", i, i), "mm")
 			pp = append(pp, p)
 		}
 
@@ -307,6 +309,56 @@ func BenchmarkEngine_WritePoints_Parallel(b *testing.B) {
 	}
 }
 
+func BenchmarkEngine_DeletePrefixRange_Cache(b *testing.B) {
+	config := tsm1.NewConfig()
+	config.Cache.SnapshotMemorySize = toml.Size(256 * 1024 * 1024)
+	e, err := NewEngine(config)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	if err := e.Open(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+
+	pp := make([]models.Point, 0, 100000)
+	for i := 0; i < 100000; i++ {
+		p := MustParsePointString(fmt.Sprintf("cpu-%d,host=%d value=1.2", i%1000, i), fmt.Sprintf("000000001122111100000000112211%d", i%1000))
+		pp = append(pp, p)
+	}
+
+	b.Run("exists", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			if err = e.WritePoints(pp); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			if err := e.DeletePrefixRange(context.Background(), []byte("0000000011221111000000001122112"), 0, math.MaxInt64, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("not_exists", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			if err = e.WritePoints(pp); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+
+			if err := e.DeletePrefixRange(context.Background(), []byte("fooasdasdasdasdasd"), 0, math.MaxInt64, nil); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	e.Close()
+}
+
 // Engine is a test wrapper for tsm1.Engine.
 type Engine struct {
 	*tsm1.Engine
@@ -317,7 +369,7 @@ type Engine struct {
 }
 
 // NewEngine returns a new instance of Engine at a temporary location.
-func NewEngine() (*Engine, error) {
+func NewEngine(config tsm1.Config) (*Engine, error) {
 	root, err := ioutil.TempDir("", "tsm1-")
 	if err != nil {
 		panic(err)
@@ -325,7 +377,10 @@ func NewEngine() (*Engine, error) {
 
 	// Setup series file.
 	sfile := tsdb.NewSeriesFile(filepath.Join(root, "_series"))
-	sfile.Logger = logger.New(os.Stdout)
+	sfile.Logger = zap.NewNop()
+	if testing.Verbose() {
+		sfile.Logger = logger.New(os.Stdout)
+	}
 	if err = sfile.Open(context.Background()); err != nil {
 		return nil, err
 	}
@@ -333,7 +388,6 @@ func NewEngine() (*Engine, error) {
 	idxPath := filepath.Join(root, "index")
 	idx := MustOpenIndex(idxPath, tsdb.NewSeriesIDSet(), sfile)
 
-	config := tsm1.NewConfig()
 	tsm1Engine := tsm1.NewEngine(filepath.Join(root, "data"), idx, config,
 		tsm1.WithCompactionPlanner(newMockPlanner()))
 
@@ -348,7 +402,7 @@ func NewEngine() (*Engine, error) {
 
 // MustOpenEngine returns a new, open instance of Engine.
 func MustOpenEngine() *Engine {
-	e, err := NewEngine()
+	e, err := NewEngine(tsm1.NewConfig())
 	if err != nil {
 		panic(err)
 	}
@@ -434,8 +488,8 @@ func (e *Engine) AddSeries(name string, tags map[string]string) error {
 
 // WritePointsString calls WritePointsString on the underlying engine, but also
 // adds the associated series to the index.
-func (e *Engine) WritePointsString(ptstr ...string) error {
-	points, err := models.ParsePointsString(strings.Join(ptstr, "\n"))
+func (e *Engine) WritePointsString(mm string, ptstr ...string) error {
+	points, err := models.ParsePointsString(strings.Join(ptstr, "\n"), mm)
 	if err != nil {
 		return err
 	}
@@ -463,7 +517,30 @@ func (e *Engine) MustAddSeries(name string, tags map[string]string) {
 
 // MustWriteSnapshot forces a snapshot of the engine. Panic on error.
 func (e *Engine) MustWriteSnapshot() {
-	if err := e.WriteSnapshot(context.Background()); err != nil {
+	if err := e.WriteSnapshot(context.Background(), tsm1.CacheStatusColdNoWrites); err != nil {
+		panic(err)
+	}
+}
+
+// MustWritePointsString parses and writes the specified points to the
+// provided org and bucket. Panic on error.
+func (e *Engine) MustWritePointsString(org, bucket influxdb.ID, buf string) {
+	err := e.writePoints(MustParseExplodePoints(org, bucket, buf)...)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// MustDeleteBucketRange calls DeletePrefixRange using the org and bucket for
+// the prefix. Panic on error.
+func (e *Engine) MustDeleteBucketRange(orgID, bucketID influxdb.ID, min, max int64) {
+	// TODO(edd): we need to clean up how we're encoding the prefix so that we
+	// don't have to remember to get it right everywhere we need to touch TSM data.
+	encoded := tsdb.EncodeName(orgID, bucketID)
+	name := models.EscapeMeasurement(encoded[:])
+
+	err := e.DeletePrefixRange(context.Background(), name, min, max, nil)
+	if err != nil {
 		panic(err)
 	}
 }
@@ -508,16 +585,24 @@ func (f *SeriesFile) Close() {
 }
 
 // MustParsePointsString parses points from a string. Panic on error.
-func MustParsePointsString(buf string) []models.Point {
-	a, err := models.ParsePointsString(buf)
+func MustParsePointsString(buf, mm string) []models.Point {
+	a, err := models.ParsePointsString(buf, mm)
 	if err != nil {
 		panic(err)
 	}
 	return a
 }
 
+// MustParseExplodePoints parses points from a string and transforms using
+// ExplodePoints using the provided org and bucket. Panic on error.
+func MustParseExplodePoints(org, bucket influxdb.ID, buf string) []models.Point {
+	encoded := tsdb.EncodeName(org, bucket)
+	name := models.EscapeMeasurement(encoded[:])
+	return MustParsePointsString(buf, string(name))
+}
+
 // MustParsePointString parses the first point from a string. Panic on error.
-func MustParsePointString(buf string) models.Point { return MustParsePointsString(buf)[0] }
+func MustParsePointString(buf, mm string) models.Point { return MustParsePointsString(buf, mm)[0] }
 
 type mockPlanner struct{}
 

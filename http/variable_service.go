@@ -20,14 +20,19 @@ const (
 // VariableBackend is all services and associated parameters required to construct
 // the VariableHandler.
 type VariableBackend struct {
+	platform.HTTPErrorHandler
 	Logger          *zap.Logger
 	VariableService platform.VariableService
+	LabelService    platform.LabelService
 }
 
+// NewVariableBackend creates a backend used by the variable handler.
 func NewVariableBackend(b *APIBackend) *VariableBackend {
 	return &VariableBackend{
-		Logger:          b.Logger.With(zap.String("handler", "variable")),
-		VariableService: b.VariableService,
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		Logger:           b.Logger.With(zap.String("handler", "variable")),
+		VariableService:  b.VariableService,
+		LabelService:     b.LabelService,
 	}
 }
 
@@ -35,21 +40,27 @@ func NewVariableBackend(b *APIBackend) *VariableBackend {
 type VariableHandler struct {
 	*httprouter.Router
 
+	platform.HTTPErrorHandler
 	Logger *zap.Logger
 
 	VariableService platform.VariableService
+	LabelService    platform.LabelService
 }
 
 // NewVariableHandler creates a new VariableHandler
 func NewVariableHandler(b *VariableBackend) *VariableHandler {
 	h := &VariableHandler{
-		Router: NewRouter(),
-		Logger: b.Logger,
+		Router:           NewRouter(b.HTTPErrorHandler),
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		Logger:           b.Logger,
 
 		VariableService: b.VariableService,
+		LabelService:    b.LabelService,
 	}
 
 	entityPath := fmt.Sprintf("%s/:id", variablePath)
+	entityLabelsPath := fmt.Sprintf("%s/labels", entityPath)
+	entityLabelsIDPath := fmt.Sprintf("%s/:lid", entityLabelsPath)
 
 	h.HandlerFunc("GET", variablePath, h.handleGetVariables)
 	h.HandlerFunc("POST", variablePath, h.handlePostVariable)
@@ -57,6 +68,16 @@ func NewVariableHandler(b *VariableBackend) *VariableHandler {
 	h.HandlerFunc("PATCH", entityPath, h.handlePatchVariable)
 	h.HandlerFunc("PUT", entityPath, h.handlePutVariable)
 	h.HandlerFunc("DELETE", entityPath, h.handleDeleteVariable)
+
+	labelBackend := &LabelBackend{
+		HTTPErrorHandler: b.HTTPErrorHandler,
+		Logger:           b.Logger.With(zap.String("handler", "label")),
+		LabelService:     b.LabelService,
+		ResourceType:     platform.DashboardsResourceType,
+	}
+	h.HandlerFunc("GET", entityLabelsPath, newGetLabelsHandler(labelBackend))
+	h.HandlerFunc("POST", entityLabelsPath, newPostLabelHandler(labelBackend))
+	h.HandlerFunc("DELETE", entityLabelsIDPath, newDeleteLabelHandler(labelBackend))
 
 	return h
 }
@@ -74,7 +95,7 @@ func (r getVariablesResponse) ToPlatform() []*platform.Variable {
 	return variables
 }
 
-func newGetVariablesResponse(variables []*platform.Variable, f platform.VariableFilter, opts platform.FindOptions) getVariablesResponse {
+func newGetVariablesResponse(ctx context.Context, variables []*platform.Variable, f platform.VariableFilter, opts platform.FindOptions, labelService platform.LabelService) getVariablesResponse {
 	num := len(variables)
 	resp := getVariablesResponse{
 		Variables: make([]variableResponse, 0, num),
@@ -82,7 +103,8 @@ func newGetVariablesResponse(variables []*platform.Variable, f platform.Variable
 	}
 
 	for _, variable := range variables {
-		resp.Variables = append(resp.Variables, newVariableResponse(variable))
+		labels, _ := labelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: variable.ID})
+		resp.Variables = append(resp.Variables, newVariableResponse(variable, labels))
 	}
 
 	return resp
@@ -121,24 +143,23 @@ func decodeGetVariablesRequest(ctx context.Context, r *http.Request) (*getVariab
 
 func (h *VariableHandler) handleGetVariables(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodeGetVariablesRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	variables, err := h.VariableService.FindVariables(ctx, req.filter, req.opts)
 	if err != nil {
-		EncodeError(ctx, &platform.Error{
+		h.HandleHTTPError(ctx, &platform.Error{
 			Code: platform.EInternal,
 			Msg:  "could not read variables",
 			Err:  err,
 		}, w)
 		return
 	}
-
-	err = encodeResponse(ctx, w, http.StatusOK, newGetVariablesResponse(variables, req.filter, req.opts))
+	h.Logger.Debug("variables retrieved", zap.String("vars", fmt.Sprint(variables)))
+	err = encodeResponse(ctx, w, http.StatusOK, newGetVariablesResponse(ctx, variables, req.filter, req.opts, h.LabelService))
 	if err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
@@ -157,10 +178,7 @@ func requestVariableID(ctx context.Context) (platform.ID, error) {
 
 	id, err := platform.IDFromString(urlID)
 	if err != nil {
-		return platform.InvalidID(), &platform.Error{
-			Code: platform.EInvalid,
-			Msg:  err.Error(),
-		}
+		return platform.InvalidID(), err
 	}
 
 	return *id, nil
@@ -168,20 +186,25 @@ func requestVariableID(ctx context.Context) (platform.ID, error) {
 
 func (h *VariableHandler) handleGetVariable(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	id, err := requestVariableID(ctx)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	variable, err := h.VariableService.FindVariableByID(ctx, id)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	err = encodeResponse(ctx, w, http.StatusOK, newVariableResponse(variable))
+	labels, err := h.LabelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: variable.ID})
+	if err != nil {
+		h.HandleHTTPError(ctx, err, w)
+		return
+	}
+	h.Logger.Debug("variable retrieved", zap.String("var", fmt.Sprint(variable)))
+	err = encodeResponse(ctx, w, http.StatusOK, newVariableResponse(variable, labels))
 	if err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
@@ -189,42 +212,49 @@ func (h *VariableHandler) handleGetVariable(w http.ResponseWriter, r *http.Reque
 }
 
 type variableLinks struct {
-	Self string `json:"self"`
-	Org  string `json:"org"`
+	Self   string `json:"self"`
+	Labels string `json:"labels"`
+	Org    string `json:"org"`
 }
 
 type variableResponse struct {
 	*platform.Variable
-	Links variableLinks `json:"links"`
+	Labels []platform.Label `json:"labels"`
+	Links  variableLinks    `json:"links"`
 }
 
-func newVariableResponse(m *platform.Variable) variableResponse {
-	return variableResponse{
+func newVariableResponse(m *platform.Variable, labels []*platform.Label) variableResponse {
+	res := variableResponse{
 		Variable: m,
+		Labels:   []platform.Label{},
 		Links: variableLinks{
-			Self: fmt.Sprintf("/api/v2/variables/%s", m.ID),
-			Org:  fmt.Sprintf("/api/v2/orgs/%s", m.OrganizationID),
+			Self:   fmt.Sprintf("/api/v2/variables/%s", m.ID),
+			Labels: fmt.Sprintf("/api/v2/variables/%s/labels", m.ID),
+			Org:    fmt.Sprintf("/api/v2/orgs/%s", m.OrganizationID),
 		},
 	}
+
+	for _, l := range labels {
+		res.Labels = append(res.Labels, *l)
+	}
+	return res
 }
 
 func (h *VariableHandler) handlePostVariable(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodePostVariableRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	err = h.VariableService.CreateVariable(ctx, req.variable)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
-	err = encodeResponse(ctx, w, http.StatusCreated, newVariableResponse(req.variable))
-	if err != nil {
+	h.Logger.Debug("variable created", zap.String("var", fmt.Sprint(req.variable)))
+	if err := encodeResponse(ctx, w, http.StatusCreated, newVariableResponse(req.variable, []*platform.Label{})); err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
 	}
@@ -265,20 +295,25 @@ func decodePostVariableRequest(ctx context.Context, r *http.Request) (*postVaria
 
 func (h *VariableHandler) handlePatchVariable(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodePatchVariableRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	variable, err := h.VariableService.UpdateVariable(ctx, req.id, req.variableUpdate)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	err = encodeResponse(ctx, w, http.StatusOK, newVariableResponse(variable))
+	labels, err := h.LabelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: variable.ID})
+	if err != nil {
+		h.HandleHTTPError(ctx, err, w)
+		return
+	}
+	h.Logger.Debug("variable updated", zap.String("var", fmt.Sprint(variable)))
+	err = encodeResponse(ctx, w, http.StatusOK, newVariableResponse(variable, labels))
 	if err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
@@ -327,20 +362,25 @@ func decodePatchVariableRequest(ctx context.Context, r *http.Request) (*patchVar
 
 func (h *VariableHandler) handlePutVariable(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	req, err := decodePutVariableRequest(ctx, r)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	err = h.VariableService.ReplaceVariable(ctx, req.variable)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
-	err = encodeResponse(ctx, w, http.StatusOK, newVariableResponse(req.variable))
+	labels, err := h.LabelService.FindResourceLabels(ctx, platform.LabelMappingFilter{ResourceID: req.variable.ID})
+	if err != nil {
+		h.HandleHTTPError(ctx, err, w)
+		return
+	}
+	h.Logger.Debug("variable replaced", zap.String("var", fmt.Sprint(req.variable)))
+	err = encodeResponse(ctx, w, http.StatusOK, newVariableResponse(req.variable, labels))
 	if err != nil {
 		logEncodingError(h.Logger, r, err)
 		return
@@ -382,19 +422,18 @@ func decodePutVariableRequest(ctx context.Context, r *http.Request) (*putVariabl
 
 func (h *VariableHandler) handleDeleteVariable(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-
 	id, err := requestVariableID(ctx)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
 
 	err = h.VariableService.DeleteVariable(ctx, id)
 	if err != nil {
-		EncodeError(ctx, err, w)
+		h.HandleHTTPError(ctx, err, w)
 		return
 	}
-
+	h.Logger.Debug("variable deleted", zap.String("variableID", fmt.Sprint(id)))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -408,7 +447,7 @@ type VariableService struct {
 // FindVariableByID finds a single variable from the store by its ID
 func (s *VariableService) FindVariableByID(ctx context.Context, id platform.ID) (*platform.Variable, error) {
 	path := variableIDPath(id)
-	url, err := newURL(s.Addr, path)
+	url, err := NewURL(s.Addr, path)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +458,7 @@ func (s *VariableService) FindVariableByID(ctx context.Context, id platform.ID) 
 	}
 
 	SetToken(s.Token, req)
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -444,7 +483,7 @@ func (s *VariableService) FindVariableByID(ctx context.Context, id platform.ID) 
 //
 // Additional options provide pagination & sorting.
 func (s *VariableService) FindVariables(ctx context.Context, filter platform.VariableFilter, opts ...platform.FindOptions) ([]*platform.Variable, error) {
-	url, err := newURL(s.Addr, variablePath)
+	url, err := NewURL(s.Addr, variablePath)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +506,7 @@ func (s *VariableService) FindVariables(ctx context.Context, filter platform.Var
 	req.URL.RawQuery = query.Encode()
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -497,7 +536,7 @@ func (s *VariableService) CreateVariable(ctx context.Context, m *platform.Variab
 		}
 	}
 
-	url, err := newURL(s.Addr, variablePath)
+	url, err := NewURL(s.Addr, variablePath)
 	if err != nil {
 		return err
 	}
@@ -515,7 +554,7 @@ func (s *VariableService) CreateVariable(ctx context.Context, m *platform.Variab
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
 
-	hc := newClient(url.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(url.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -532,7 +571,7 @@ func (s *VariableService) CreateVariable(ctx context.Context, m *platform.Variab
 
 // UpdateVariable updates a single variable with a changeset
 func (s *VariableService) UpdateVariable(ctx context.Context, id platform.ID, update *platform.VariableUpdate) (*platform.Variable, error) {
-	u, err := newURL(s.Addr, variableIDPath(id))
+	u, err := NewURL(s.Addr, variableIDPath(id))
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +589,7 @@ func (s *VariableService) UpdateVariable(ctx context.Context, id platform.ID, up
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
 
-	hc := newClient(u.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -572,7 +611,7 @@ func (s *VariableService) UpdateVariable(ctx context.Context, id platform.ID, up
 
 // ReplaceVariable replaces a single variable
 func (s *VariableService) ReplaceVariable(ctx context.Context, variable *platform.Variable) error {
-	u, err := newURL(s.Addr, variableIDPath(variable.ID))
+	u, err := NewURL(s.Addr, variableIDPath(variable.ID))
 	if err != nil {
 		return err
 	}
@@ -590,7 +629,7 @@ func (s *VariableService) ReplaceVariable(ctx context.Context, variable *platfor
 	req.Header.Set("Content-Type", "application/json")
 	SetToken(s.Token, req)
 
-	hc := newClient(u.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, s.InsecureSkipVerify)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -611,7 +650,7 @@ func (s *VariableService) ReplaceVariable(ctx context.Context, variable *platfor
 
 // DeleteVariable removes a variable from the store
 func (s *VariableService) DeleteVariable(ctx context.Context, id platform.ID) error {
-	u, err := newURL(s.Addr, variableIDPath(id))
+	u, err := NewURL(s.Addr, variableIDPath(id))
 	if err != nil {
 		return err
 	}
@@ -622,7 +661,7 @@ func (s *VariableService) DeleteVariable(ctx context.Context, id platform.ID) er
 	}
 	SetToken(s.Token, req)
 
-	hc := newClient(u.Scheme, s.InsecureSkipVerify)
+	hc := NewClient(u.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return err

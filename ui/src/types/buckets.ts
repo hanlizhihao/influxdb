@@ -1,12 +1,6 @@
-export interface Bucket {
-  id: string
-  name: string
-  organization: string
-  orgID: string
-  rp?: string
-  retentionRules: RetentionRule[]
-  links: BucketLinks
-}
+import {Bucket} from 'src/client'
+
+export type BucketRetentionRules = Bucket['retentionRules']
 
 export enum RetentionRuleTypes {
   Expire = 'expire',
@@ -22,3 +16,5 @@ export interface BucketLinks {
   org: string
   self: string
 }
+
+export {Bucket} from 'src/client'

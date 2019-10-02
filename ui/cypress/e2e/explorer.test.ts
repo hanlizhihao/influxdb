@@ -1,6 +1,14 @@
 import {Doc} from 'codemirror'
-import {Organization} from '@influxdata/influx'
-import {FROM, RANGE, MEAN} from '../../src/shared/constants/fluxFunctions'
+import {Organization} from '../../src/types'
+import {
+  FROM,
+  RANGE,
+  MEAN,
+  MATH_ABS,
+  MATH_FLOOR,
+  STRINGS_TITLE,
+  STRINGS_TRIM,
+} from '../../src/shared/constants/fluxFunctions'
 
 interface HTMLElementCM extends HTMLElement {
   CodeMirror: {
@@ -18,8 +26,10 @@ describe('DataExplorer', () => {
       cy.wrap(body.org).as('org')
     })
 
-    cy.fixture('routes').then(({explorer}) => {
-      cy.visit(explorer)
+    cy.fixture('routes').then(({orgs, explorer}) => {
+      cy.get<Organization>('@org').then(({id}) => {
+        cy.visit(`${orgs}/${id}${explorer}`)
+      })
     })
   })
 
@@ -45,6 +55,38 @@ describe('DataExplorer', () => {
       })
 
       cy.getByTestID('time-machine-submit-button').should('be.disabled')
+    })
+
+    it('imports the appropriate packages to build a query', () => {
+      cy.getByTestID('functions-toolbar-tab').click()
+
+      cy.get<$CM>('.CodeMirror').then($cm => {
+        const cm = $cm[0].CodeMirror
+        cy.wrap(cm.doc).as('flux')
+        expect(cm.doc.getValue()).to.eq('')
+      })
+
+      cy.getByTestID('flux-function from').click()
+      cy.getByTestID('flux-function range').click()
+      cy.getByTestID('flux-function math.abs').click()
+      cy.getByTestID('flux-function math.floor').click()
+      cy.getByTestID('flux-function strings.title').click()
+      cy.getByTestID('flux-function strings.trim').click()
+
+      cy.get<Doc>('@flux').then(doc => {
+        const actual = doc.getValue()
+        const expected = `
+        import"${STRINGS_TITLE.package}"
+        import"${MATH_ABS.package}"
+        ${FROM.example}|>
+        ${RANGE.example}|>
+        ${MATH_ABS.example}|>
+        ${MATH_FLOOR.example}|>
+        ${STRINGS_TITLE.example}|>
+        ${STRINGS_TRIM.example}`
+
+        cy.fluxEqual(actual, expected).should('be.true')
+      })
     })
 
     it('can use the function selector to build a query', () => {
@@ -85,7 +127,7 @@ describe('DataExplorer', () => {
     })
 
     it('can filter aggregation functions by name from script editor mode', () => {
-      cy.get('.input-field').type('covariance')
+      cy.get('.cf-input-field').type('covariance')
       cy.getByTestID('toolbar-function').should('have.length', 1)
     })
 
@@ -114,10 +156,8 @@ describe('DataExplorer', () => {
         cy.createBucket(id, name, 'newBucket')
       })
 
-      cy.getByTestID('buckets--button').click()
-
-      cy.getByTestID('dropdown--item defbuck').should('exist')
-      cy.getByTestID('dropdown--item newBucket').should('exist')
+      cy.getByTestID('selector-list defbuck').should('exist')
+      cy.getByTestID('selector-list newBucket').should('exist')
     })
 
     it('can delete a second query', () => {

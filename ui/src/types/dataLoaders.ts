@@ -65,6 +65,7 @@ export interface DataLoadersState {
   activeLPTab: LineProtocolTab
   telegrafConfigID: string
   lpStatus: RemoteDataState
+  lpError: string
   lineProtocolBody: string
   precision: WritePrecision
   scraperTarget: ScraperTarget
@@ -128,6 +129,7 @@ export interface TelegrafPlugin {
   configured: ConfigurationState
   active: boolean
   plugin?: Plugin
+  templateID?: string
 }
 
 export enum BundleName {
@@ -200,6 +202,7 @@ export interface TelegrafPluginInfo {
   [name: string]: {
     fields: ConfigFields
     defaults: Plugin
+    templateID?: string
   }
 }
 

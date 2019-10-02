@@ -1,35 +1,32 @@
 // Libraries
 import {Dispatch} from 'redux'
-import {replace} from 'react-router-redux'
+import {replace, push} from 'react-router-redux'
 
 // APIs
 import {
+  createDashboard as createDashboardAJAX,
   getDashboard as getDashboardAJAX,
   getDashboards as getDashboardsAJAX,
-  createDashboard as createDashboardAJAX,
   deleteDashboard as deleteDashboardAJAX,
   updateDashboard as updateDashboardAJAX,
   updateCells as updateCellsAJAX,
   addCell as addCellAJAX,
   deleteCell as deleteCellAJAX,
-  addDashboardLabels as addDashboardLabelsAJAX,
-  removeDashboardLabels as removeDashboardLabelsAJAX,
   getView as getViewAJAX,
   updateView as updateViewAJAX,
 } from 'src/dashboards/apis'
 import {createDashboardFromTemplate as createDashboardFromTemplateAJAX} from 'src/templates/api'
 
 // Actions
-import {notify} from 'src/shared/actions/notifications'
+import {
+  notify,
+  PublishNotificationAction,
+} from 'src/shared/actions/notifications'
 import {
   deleteTimeRange,
   updateTimeRangeFromQueryParams,
   DeleteTimeRangeAction,
 } from 'src/dashboards/actions/ranges'
-import {
-  importDashboardSucceeded,
-  importDashboardFailed,
-} from 'src/shared/copy/notifications'
 import {setView, SetViewAction, setViews} from 'src/dashboards/actions/views'
 import {
   getVariables,
@@ -37,10 +34,14 @@ import {
   selectValue,
 } from 'src/variables/actions'
 import {setExportTemplate} from 'src/templates/actions'
+import {checkDashboardLimits} from 'src/cloud/actions/limits'
 
 // Utils
 import {filterUnusedVars} from 'src/shared/utils/filterUnusedVars'
-import {getVariablesForOrg, getHydratedVariables} from 'src/variables/selectors'
+import {
+  extractVariablesList,
+  getHydratedVariables,
+} from 'src/variables/selectors'
 import {getViewsForDashboard} from 'src/dashboards/selectors'
 import {
   getNewDashboardCell,
@@ -48,13 +49,17 @@ import {
 } from 'src/dashboards/utils/cellGetters'
 import {dashboardToTemplate} from 'src/shared/utils/resourceToTemplate'
 import {client} from 'src/utils/api'
+import {exportVariables} from 'src/variables/utils/exportVariables'
+import {getSaveableView} from 'src/timeMachine/selectors'
+import {incrementCloneName} from 'src/utils/naming'
+import {isLimitError} from 'src/cloud/utils/limits'
 
 // Constants
 import * as copy from 'src/shared/copy/notifications'
+import {DEFAULT_DASHBOARD_NAME} from 'src/dashboards/constants/index'
 
 // Types
 import {RemoteDataState} from 'src/types'
-import {PublishNotificationAction} from 'src/types/actions/notifications'
 import {CreateCell, ILabel} from '@influxdata/influx'
 import {
   Dashboard,
@@ -66,55 +71,55 @@ import {
 } from 'src/types'
 
 export enum ActionTypes {
-  LoadDashboards = 'LOAD_DASHBOARDS',
-  LoadDashboard = 'LOAD_DASHBOARD',
-  DeleteDashboard = 'DELETE_DASHBOARD',
+  SetDashboards = 'SET_DASHBOARDS',
+  SetDashboard = 'SET_DASHBOARD',
+  RemoveDashboard = 'REMOVE_DASHBOARD',
   DeleteDashboardFailed = 'DELETE_DASHBOARD_FAILED',
-  UpdateDashboard = 'UPDATE_DASHBOARD',
-  DeleteCell = 'DELETE_CELL',
+  EditDashboard = 'EDIT_DASHBOARD',
+  RemoveCell = 'REMOVE_CELL',
   AddDashboardLabels = 'ADD_DASHBOARD_LABELS',
   RemoveDashboardLabels = 'REMOVE_DASHBOARD_LABELS',
 }
 
 export type Action =
-  | LoadDashboardsAction
-  | DeleteDashboardAction
-  | LoadDashboardAction
-  | UpdateDashboardAction
-  | DeleteCellAction
-  | PublishNotificationAction
+  | SetDashboardsAction
+  | RemoveDashboardAction
+  | SetDashboardAction
+  | EditDashboardAction
+  | RemoveCellAction
   | SetViewAction
   | DeleteTimeRangeAction
   | DeleteDashboardFailedAction
   | AddDashboardLabelsAction
   | RemoveDashboardLabelsAction
 
-interface DeleteCellAction {
-  type: ActionTypes.DeleteCell
+interface RemoveCellAction {
+  type: ActionTypes.RemoveCell
   payload: {
     dashboard: Dashboard
     cell: Cell
   }
 }
 
-interface UpdateDashboardAction {
-  type: ActionTypes.UpdateDashboard
+interface EditDashboardAction {
+  type: ActionTypes.EditDashboard
   payload: {
     dashboard: Dashboard
   }
 }
 
-interface LoadDashboardsAction {
-  type: ActionTypes.LoadDashboards
+interface SetDashboardsAction {
+  type: ActionTypes.SetDashboards
   payload: {
-    dashboards: Dashboard[]
+    status: RemoteDataState
+    list: Dashboard[]
   }
 }
 
-interface DeleteDashboardAction {
-  type: ActionTypes.DeleteDashboard
+interface RemoveDashboardAction {
+  type: ActionTypes.RemoveDashboard
   payload: {
-    dashboardID: string
+    id: string
   }
 }
 
@@ -125,8 +130,8 @@ interface DeleteDashboardFailedAction {
   }
 }
 
-interface LoadDashboardAction {
-  type: ActionTypes.LoadDashboard
+interface SetDashboardAction {
+  type: ActionTypes.SetDashboard
   payload: {
     dashboard: Dashboard
   }
@@ -150,32 +155,30 @@ interface RemoveDashboardLabelsAction {
 
 // Action Creators
 
-export const updateDashboard = (
-  dashboard: Dashboard
-): UpdateDashboardAction => ({
-  type: ActionTypes.UpdateDashboard,
+export const editDashboard = (dashboard: Dashboard): EditDashboardAction => ({
+  type: ActionTypes.EditDashboard,
   payload: {dashboard},
 })
 
-export const loadDashboards = (
-  dashboards: Dashboard[]
-): LoadDashboardsAction => ({
-  type: ActionTypes.LoadDashboards,
+export const setDashboards = (
+  status: RemoteDataState,
+  list?: Dashboard[]
+): SetDashboardsAction => ({
+  type: ActionTypes.SetDashboards,
   payload: {
-    dashboards,
+    status,
+    list,
   },
 })
 
-export const loadDashboard = (dashboard: Dashboard): LoadDashboardAction => ({
-  type: ActionTypes.LoadDashboard,
+export const setDashboard = (dashboard: Dashboard): SetDashboardAction => ({
+  type: ActionTypes.SetDashboard,
   payload: {dashboard},
 })
 
-export const deleteDashboard = (
-  dashboardID: string
-): DeleteDashboardAction => ({
-  type: ActionTypes.DeleteDashboard,
-  payload: {dashboardID},
+export const removeDashboard = (id: string): RemoveDashboardAction => ({
+  type: ActionTypes.RemoveDashboard,
+  payload: {id},
 })
 
 export const deleteDashboardFailed = (
@@ -185,11 +188,11 @@ export const deleteDashboardFailed = (
   payload: {dashboard},
 })
 
-export const deleteCell = (
+export const removeCell = (
   dashboard: Dashboard,
   cell: Cell
-): DeleteCellAction => ({
-  type: ActionTypes.DeleteCell,
+): RemoveCellAction => ({
+  type: ActionTypes.RemoveCell,
   payload: {dashboard, cell},
 })
 
@@ -211,56 +214,118 @@ export const removeDashboardLabels = (
 
 // Thunks
 
+export const createDashboard = () => async (
+  dispatch,
+  getState: GetState
+): Promise<void> => {
+  try {
+    const {
+      orgs: {org},
+    } = getState()
+
+    const newDashboard = {
+      name: DEFAULT_DASHBOARD_NAME,
+      cells: [],
+      orgID: org.id,
+    }
+
+    const data = await createDashboardAJAX(newDashboard)
+    dispatch(push(`/orgs/${org.id}/dashboards/${data.id}`))
+    dispatch(checkDashboardLimits())
+  } catch (error) {
+    console.error(error)
+
+    if (isLimitError(error)) {
+      dispatch(notify(copy.resourceLimitReached('dashboards')))
+    } else {
+      dispatch(notify(copy.dashboardCreateFailed()))
+    }
+  }
+}
+
+export const cloneDashboard = (dashboard: Dashboard) => async (
+  dispatch,
+  getState: GetState
+): Promise<void> => {
+  try {
+    const {
+      orgs: {org},
+      dashboards,
+    } = getState()
+
+    const allDashboardNames = dashboards.list.map(d => d.name)
+
+    const clonedName = incrementCloneName(allDashboardNames, dashboard.name)
+
+    const data = await client.dashboards.clone(dashboard.id, clonedName, org.id)
+
+    dispatch(checkDashboardLimits())
+    dispatch(push(`/orgs/${org.id}/dashboards/${data.id}`))
+  } catch (error) {
+    console.error(error)
+    if (isLimitError(error)) {
+      dispatch(notify(copy.resourceLimitReached('dashboards')))
+    } else {
+      dispatch(notify(copy.dashboardCreateFailed()))
+    }
+  }
+}
+
 export const getDashboardsAsync = () => async (
-  dispatch: Dispatch<Action>
+  dispatch: Dispatch<Action>,
+  getState: GetState
 ): Promise<Dashboard[]> => {
   try {
-    const dashboards = await getDashboardsAJAX()
-    dispatch(loadDashboards(dashboards))
+    const {
+      orgs: {org},
+    } = getState()
+
+    dispatch(setDashboards(RemoteDataState.Loading))
+    const dashboards = await getDashboardsAJAX(org.id)
+    dispatch(setDashboards(RemoteDataState.Done, dashboards))
+
     return dashboards
   } catch (error) {
+    dispatch(setDashboards(RemoteDataState.Error))
     console.error(error)
     throw error
   }
 }
 
 export const createDashboardFromTemplate = (
-  template: DashboardTemplate,
-  orgID: string
-) => async dispatch => {
+  template: DashboardTemplate
+) => async (dispatch, getState: GetState) => {
   try {
-    await createDashboardFromTemplateAJAX(template, orgID)
+    const {
+      orgs: {org},
+    } = getState()
 
-    dispatch(notify(importDashboardSucceeded()))
+    await createDashboardFromTemplateAJAX(template, org.id)
+
+    const dashboards = await getDashboardsAJAX(org.id)
+
+    dispatch(setDashboards(RemoteDataState.Done, dashboards))
+    dispatch(notify(copy.importDashboardSucceeded()))
+    dispatch(checkDashboardLimits())
   } catch (error) {
-    dispatch(notify(importDashboardFailed(error)))
-  }
-}
-
-export const importDashboardAsync = (dashboard: Dashboard) => async (
-  dispatch: Dispatch<Action>
-): Promise<void> => {
-  try {
-    await createDashboardAJAX(dashboard)
-    const dashboards = await getDashboardsAJAX()
-
-    dispatch(loadDashboards(dashboards))
-    dispatch(notify(copy.dashboardImported()))
-  } catch (error) {
-    dispatch(notify(copy.dashboardImportFailed('Could not upload dashboard')))
-    console.error(error)
+    if (isLimitError(error)) {
+      dispatch(notify(copy.resourceLimitReached('dashboards')))
+    } else {
+      dispatch(notify(copy.importDashboardFailed(error)))
+    }
   }
 }
 
 export const deleteDashboardAsync = (dashboard: Dashboard) => async (
-  dispatch: Dispatch<Action>
+  dispatch
 ): Promise<void> => {
-  dispatch(deleteDashboard(dashboard.id))
+  dispatch(removeDashboard(dashboard.id))
   dispatch(deleteTimeRange(dashboard.id))
 
   try {
     await deleteDashboardAJAX(dashboard)
     dispatch(notify(copy.dashboardDeleted(dashboard.name)))
+    dispatch(checkDashboardLimits())
   } catch (error) {
     dispatch(
       notify(copy.dashboardDeleteFailed(dashboard.name, error.data.message))
@@ -271,15 +336,13 @@ export const deleteDashboardAsync = (dashboard: Dashboard) => async (
 }
 
 export const refreshDashboardVariableValues = (
-  dashboard: Dashboard,
+  dashboardID: string,
   nextViews: View[]
 ) => (dispatch, getState: GetState) => {
-  const variables = getVariablesForOrg(getState(), dashboard.orgID)
+  const variables = extractVariablesList(getState())
   const variablesInUse = filterUnusedVars(variables, nextViews)
 
-  return dispatch(
-    refreshVariableValues(dashboard.id, dashboard.orgID, variablesInUse)
-  )
+  return dispatch(refreshVariableValues(dashboardID, variablesInUse))
 }
 
 export const getDashboardAsync = (dashboardID: string) => async (
@@ -300,10 +363,10 @@ export const getDashboardAsync = (dashboardID: string) => async (
     dispatch(setViews(RemoteDataState.Done, views))
 
     // Ensure the values for the variables in use on the dashboard are populated
-    await dispatch(refreshDashboardVariableValues(dashboard, views))
+    await dispatch(refreshDashboardVariableValues(dashboard.id, views))
 
     // Now that all the necessary state has been loaded, set the dashboard
-    dispatch(loadDashboard(dashboard))
+    dispatch(setDashboard(dashboard))
   } catch {
     dispatch(replace(`/dashboards`))
     dispatch(notify(copy.dashboardGetFailed(dashboardID)))
@@ -315,11 +378,11 @@ export const getDashboardAsync = (dashboardID: string) => async (
 }
 
 export const updateDashboardAsync = (dashboard: Dashboard) => async (
-  dispatch: Dispatch<Action>
+  dispatch: Dispatch<Action | PublishNotificationAction>
 ): Promise<void> => {
   try {
     const updatedDashboard = await updateDashboardAJAX(dashboard)
-    dispatch(updateDashboard(updatedDashboard))
+    dispatch(editDashboard(updatedDashboard))
   } catch (error) {
     console.error(error)
     dispatch(notify(copy.dashboardUpdateFailed()))
@@ -327,18 +390,24 @@ export const updateDashboardAsync = (dashboard: Dashboard) => async (
 }
 
 export const createCellWithView = (
-  dashboard: Dashboard,
+  dashboardID: string,
   view: NewView,
   clonedCell?: Cell
 ) => async (dispatch, getState: GetState): Promise<void> => {
   try {
+    const state = getState()
+    let dashboard = state.dashboards.list.find(d => d.id === dashboardID)
+    if (!dashboard) {
+      dashboard = await getDashboardAJAX(dashboardID)
+    }
+
     const cell: CreateCell = getNewDashboardCell(dashboard, clonedCell)
 
     // Create the cell
-    const createdCell = await addCellAJAX(dashboard.id, cell)
+    const createdCell = await addCellAJAX(dashboardID, cell)
 
     // Create the view and associate it with the cell
-    const newView = await updateViewAJAX(dashboard.id, createdCell.id, view)
+    const newView = await updateViewAJAX(dashboardID, createdCell.id, view)
 
     // Update the dashboard with the new cell
     let updatedDashboard: Dashboard = {
@@ -349,31 +418,31 @@ export const createCellWithView = (
     updatedDashboard = await updateDashboardAJAX(dashboard)
 
     // Refresh variables in use on dashboard
-    const views = [...getViewsForDashboard(getState(), dashboard.id), newView]
+    const views = [...getViewsForDashboard(state, dashboard.id), newView]
 
-    await dispatch(refreshDashboardVariableValues(dashboard, views))
+    await dispatch(refreshDashboardVariableValues(dashboard.id, views))
 
     dispatch(setView(createdCell.id, newView, RemoteDataState.Done))
-    dispatch(updateDashboard(updatedDashboard))
+    dispatch(editDashboard(updatedDashboard))
   } catch {
     notify(copy.cellAddFailed())
   }
 }
 
-export const updateView = (dashboard: Dashboard, view: View) => async (
+export const updateView = (dashboardID: string, view: View) => async (
   dispatch,
   getState: GetState
 ) => {
   const cellID = view.cellID
 
   try {
-    const newView = await updateViewAJAX(dashboard.id, cellID, view)
+    const newView = await updateViewAJAX(dashboardID, cellID, view)
 
-    const views = getViewsForDashboard(getState(), dashboard.id)
+    const views = getViewsForDashboard(getState(), dashboardID)
 
     views.splice(views.findIndex(v => v.id === newView.id), 1, newView)
 
-    await dispatch(refreshDashboardVariableValues(dashboard, views))
+    await dispatch(refreshDashboardVariableValues(dashboardID, views))
 
     dispatch(setView(cellID, newView, RemoteDataState.Done))
   } catch (e) {
@@ -393,7 +462,7 @@ export const updateCellsAsync = (dashboard: Dashboard, cells: Cell[]) => async (
       cells: updatedCells,
     }
 
-    dispatch(loadDashboard(updatedDashboard))
+    dispatch(setDashboard(updatedDashboard))
   } catch (error) {
     console.error(error)
   }
@@ -410,10 +479,10 @@ export const deleteCellAsync = (dashboard: Dashboard, cell: Cell) => async (
 
     await Promise.all([
       deleteCellAJAX(dashboard.id, cell),
-      dispatch(refreshDashboardVariableValues(dashboard, views)),
+      dispatch(refreshDashboardVariableValues(dashboard.id, views)),
     ])
 
-    dispatch(deleteCell(dashboard, cell))
+    dispatch(removeCell(dashboard, cell))
     dispatch(notify(copy.cellDeleted()))
   } catch (error) {
     console.error(error)
@@ -423,7 +492,9 @@ export const deleteCellAsync = (dashboard: Dashboard, cell: Cell) => async (
 export const copyDashboardCellAsync = (
   dashboard: Dashboard,
   cell: Cell
-) => async (dispatch: Dispatch<Action>): Promise<void> => {
+) => async (
+  dispatch: Dispatch<Action | PublishNotificationAction>
+): Promise<void> => {
   try {
     const clonedCell = getClonedDashboardCell(dashboard, cell)
     const updatedDashboard = {
@@ -431,7 +502,7 @@ export const copyDashboardCellAsync = (
       cells: [...dashboard.cells, clonedCell],
     }
 
-    dispatch(loadDashboard(updatedDashboard))
+    dispatch(setDashboard(updatedDashboard))
     dispatch(notify(copy.cellAdded()))
   } catch (error) {
     console.error(error)
@@ -441,9 +512,12 @@ export const copyDashboardCellAsync = (
 export const addDashboardLabelsAsync = (
   dashboardID: string,
   labels: ILabel[]
-) => async (dispatch: Dispatch<Action>) => {
+) => async (dispatch: Dispatch<Action | PublishNotificationAction>) => {
   try {
-    const newLabels = await addDashboardLabelsAJAX(dashboardID, labels)
+    const newLabels = await client.dashboards.addLabels(
+      dashboardID,
+      labels.map(l => l.id)
+    )
 
     dispatch(addDashboardLabels(dashboardID, newLabels))
   } catch (error) {
@@ -455,9 +529,10 @@ export const addDashboardLabelsAsync = (
 export const removeDashboardLabelsAsync = (
   dashboardID: string,
   labels: ILabel[]
-) => async (dispatch: Dispatch<Action>) => {
+) => async (dispatch: Dispatch<Action | PublishNotificationAction>) => {
   try {
-    await removeDashboardLabelsAJAX(dashboardID, labels)
+    await client.dashboards.removeLabels(dashboardID, labels.map(l => l.id))
+
     dispatch(removeDashboardLabels(dashboardID, labels))
   } catch (error) {
     console.error(error)
@@ -471,35 +546,58 @@ export const selectVariableValue = (
   value: string
 ) => async (dispatch, getState: GetState): Promise<void> => {
   const variables = getHydratedVariables(getState(), dashboardID)
-  const dashboard = getState().dashboards.find(d => d.id === dashboardID)
+  const dashboard = getState().dashboards.list.find(d => d.id === dashboardID)
 
   dispatch(selectValue(dashboardID, variableID, value))
 
-  await dispatch(
-    refreshVariableValues(dashboard.id, dashboard.orgID, variables)
-  )
+  await dispatch(refreshVariableValues(dashboard.id, variables))
 }
 
 export const convertToTemplate = (dashboardID: string) => async (
-  dispatch
+  dispatch,
+  getState: GetState
 ): Promise<void> => {
   try {
     dispatch(setExportTemplate(RemoteDataState.Loading))
-
+    const {
+      orgs: {org},
+    } = getState()
     const dashboard = await getDashboardAJAX(dashboardID)
     const pendingViews = dashboard.cells.map(c =>
       getViewAJAX(dashboardID, c.id)
     )
     const views = await Promise.all(pendingViews)
-    const allVariables = await client.variables.getAll()
+    const allVariables = await client.variables.getAll(org.id)
     const variables = filterUnusedVars(allVariables, views)
-    const dashboardTemplate = dashboardToTemplate(dashboard, views, variables)
+    const exportedVariables = exportVariables(variables, allVariables)
+    const dashboardTemplate = dashboardToTemplate(
+      dashboard,
+      views,
+      exportedVariables
+    )
 
-    const orgID = dashboard.orgID // TODO remove when org is implicit app state
-
-    dispatch(setExportTemplate(RemoteDataState.Done, dashboardTemplate, orgID))
+    dispatch(setExportTemplate(RemoteDataState.Done, dashboardTemplate))
   } catch (error) {
     dispatch(setExportTemplate(RemoteDataState.Error))
     dispatch(notify(copy.createTemplateFailed(error)))
+  }
+}
+
+export const saveVEOView = (dashboardID: string) => async (
+  dispatch,
+  getState: GetState
+): Promise<void> => {
+  const view = getSaveableView(getState())
+
+  try {
+    if (view.id) {
+      await dispatch(updateView(dashboardID, view))
+    } else {
+      await dispatch(createCellWithView(dashboardID, view))
+    }
+  } catch (error) {
+    console.error(error)
+    dispatch(notify(copy.cellAddFailed()))
+    throw error
   }
 }

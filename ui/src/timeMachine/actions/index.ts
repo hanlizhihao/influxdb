@@ -15,13 +15,20 @@ import {
   ViewType,
   Axes,
   DecimalPlaces,
-  XYViewGeom,
+  XYGeom,
   FieldOption,
   TableOptions,
   TimeMachineTab,
+  AutoRefresh,
+  TimeMachineID,
+  Check,
+  CheckType,
+  Threshold,
+  CheckStatusLevel,
 } from 'src/types'
 import {Color} from 'src/types/colors'
-import {Table, HistogramPosition, isNumeric} from 'src/minard'
+import {HistogramPosition} from '@influxdata/giraffe'
+import {RemoteDataState} from '@influxdata/clockface'
 
 export type Action =
   | QueryBuilderAction
@@ -30,6 +37,7 @@ export type Action =
   | SetActiveTabAction
   | SetNameAction
   | SetTimeRangeAction
+  | SetAutoRefreshAction
   | SetTypeAction
   | SetActiveQueryText
   | SetIsViewingRawDataAction
@@ -41,10 +49,9 @@ export type Action =
   | SetStaticLegend
   | SetColors
   | SetYAxisLabel
-  | SetYAxisMinBound
-  | SetYAxisMaxBound
-  | SetYAxisPrefix
-  | SetYAxisSuffix
+  | SetYAxisBounds
+  | SetAxisPrefix
+  | SetAxisSuffix
   | SetYAxisBase
   | SetYAxisScale
   | SetPrefix
@@ -60,23 +67,35 @@ export type Action =
   | SetTableOptionsAction
   | SetTimeFormatAction
   | SetXColumnAction
+  | SetYColumnAction
+  | SetBinSizeAction
+  | SetColorHexesAction
   | SetFillColumnsAction
+  | SetSymbolColumnsAction
   | SetBinCountAction
   | SetHistogramPositionAction
-  | TableLoadedAction
   | SetXDomainAction
+  | SetYDomainAction
   | SetXAxisLabelAction
+  | SetShadeBelowAction
+  | ReturnType<typeof toggleVisOptions>
+  | ReturnType<typeof setCheckStatus>
+  | ReturnType<typeof setTimeMachineCheck>
+  | ReturnType<typeof updateTimeMachineCheck>
+  | ReturnType<typeof changeCheckType>
+  | ReturnType<typeof updateCheckThreshold>
+  | ReturnType<typeof removeCheckThreshold>
 
 interface SetActiveTimeMachineAction {
   type: 'SET_ACTIVE_TIME_MACHINE'
   payload: {
-    activeTimeMachineID: string
+    activeTimeMachineID: TimeMachineID
     initialState: Partial<TimeMachineState>
   }
 }
 
 export const setActiveTimeMachine = (
-  activeTimeMachineID: string,
+  activeTimeMachineID: TimeMachineID,
   initialState: Partial<TimeMachineState> = {}
 ): SetActiveTimeMachineAction => ({
   type: 'SET_ACTIVE_TIME_MACHINE',
@@ -93,6 +112,10 @@ export const setActiveTab = (
 ): SetActiveTabAction => ({
   type: 'SET_ACTIVE_TAB',
   payload: {activeTab},
+})
+
+export const toggleVisOptions = () => ({
+  type: 'TOGGLE_VIS_OPTIONS' as 'TOGGLE_VIS_OPTIONS',
 })
 
 interface SetNameAction {
@@ -120,6 +143,18 @@ export const setTimeRange = (timeRange: TimeRange) => dispatch => {
   dispatch(saveAndExecuteQueries())
   dispatch(reloadTagSelectors())
 }
+
+interface SetAutoRefreshAction {
+  type: 'SET_AUTO_REFRESH'
+  payload: {autoRefresh: AutoRefresh}
+}
+
+export const setAutoRefresh = (
+  autoRefresh: AutoRefresh
+): SetAutoRefreshAction => ({
+  type: 'SET_AUTO_REFRESH',
+  payload: {autoRefresh},
+})
 
 interface SetTypeAction {
   type: 'SET_VIEW_TYPE'
@@ -155,10 +190,10 @@ export const setIsViewingRawData = (
 
 interface SetGeomAction {
   type: 'SET_GEOM'
-  payload: {geom: XYViewGeom}
+  payload: {geom: XYGeom}
 }
 
-export const setGeom = (geom: XYViewGeom): SetGeomAction => ({
+export const setGeom = (geom: XYGeom): SetGeomAction => ({
   type: 'SET_GEOM',
   payload: {geom},
 })
@@ -175,52 +210,50 @@ export const setAxes = (axes: Axes): SetAxes => ({
 
 interface SetYAxisLabel {
   type: 'SET_Y_AXIS_LABEL'
-  payload: {label: string}
+  payload: {yAxisLabel: string}
 }
 
-export const setYAxisLabel = (label: string): SetYAxisLabel => ({
+export const setYAxisLabel = (yAxisLabel: string): SetYAxisLabel => ({
   type: 'SET_Y_AXIS_LABEL',
-  payload: {label},
+  payload: {yAxisLabel},
 })
 
-interface SetYAxisMinBound {
-  type: 'SET_Y_AXIS_MIN_BOUND'
-  payload: {min: string}
+interface SetYAxisBounds {
+  type: 'SET_Y_AXIS_BOUNDS'
+  payload: {bounds: Axes['y']['bounds']}
 }
 
-export const setYAxisMinBound = (min: string): SetYAxisMinBound => ({
-  type: 'SET_Y_AXIS_MIN_BOUND',
-  payload: {min},
+export const setYAxisBounds = (
+  bounds: Axes['y']['bounds']
+): SetYAxisBounds => ({
+  type: 'SET_Y_AXIS_BOUNDS',
+  payload: {bounds},
 })
 
-interface SetYAxisMaxBound {
-  type: 'SET_Y_AXIS_MAX_BOUND'
-  payload: {max: string}
+interface SetAxisPrefix {
+  type: 'SET_AXIS_PREFIX'
+  payload: {prefix: string; axis: 'x' | 'y'}
 }
 
-export const setYAxisMaxBound = (max: string): SetYAxisMaxBound => ({
-  type: 'SET_Y_AXIS_MAX_BOUND',
-  payload: {max},
+export const setAxisPrefix = (
+  prefix: string,
+  axis: 'x' | 'y'
+): SetAxisPrefix => ({
+  type: 'SET_AXIS_PREFIX',
+  payload: {prefix, axis},
 })
 
-interface SetYAxisPrefix {
-  type: 'SET_Y_AXIS_PREFIX'
-  payload: {prefix: string}
+interface SetAxisSuffix {
+  type: 'SET_AXIS_SUFFIX'
+  payload: {suffix: string; axis: 'x' | 'y'}
 }
 
-export const setYAxisPrefix = (prefix: string): SetYAxisPrefix => ({
-  type: 'SET_Y_AXIS_PREFIX',
-  payload: {prefix},
-})
-
-interface SetYAxisSuffix {
-  type: 'SET_Y_AXIS_SUFFIX'
-  payload: {suffix: string}
-}
-
-export const setYAxisSuffix = (suffix: string): SetYAxisSuffix => ({
-  type: 'SET_Y_AXIS_SUFFIX',
-  payload: {suffix},
+export const setAxisSuffix = (
+  suffix: string,
+  axis: 'x' | 'y'
+): SetAxisSuffix => ({
+  type: 'SET_AXIS_SUFFIX',
+  payload: {suffix, axis},
 })
 
 interface SetYAxisBase {
@@ -461,6 +494,46 @@ export const setXColumn = (xColumn: string): SetXColumnAction => ({
   payload: {xColumn},
 })
 
+interface SetYColumnAction {
+  type: 'SET_Y_COLUMN'
+  payload: {yColumn: string}
+}
+
+export const setYColumn = (yColumn: string): SetYColumnAction => ({
+  type: 'SET_Y_COLUMN',
+  payload: {yColumn},
+})
+
+interface SetShadeBelowAction {
+  type: 'SET_SHADE_BELOW'
+  payload: {shadeBelow}
+}
+
+export const setShadeBelow = (shadeBelow: boolean): SetShadeBelowAction => ({
+  type: 'SET_SHADE_BELOW',
+  payload: {shadeBelow},
+})
+
+interface SetBinSizeAction {
+  type: 'SET_BIN_SIZE'
+  payload: {binSize: number}
+}
+
+export const setBinSize = (binSize: number): SetBinSizeAction => ({
+  type: 'SET_BIN_SIZE',
+  payload: {binSize},
+})
+
+interface SetColorHexesAction {
+  type: 'SET_COLOR_HEXES'
+  payload: {colors: string[]}
+}
+
+export const setColorHexes = (colors: string[]): SetColorHexesAction => ({
+  type: 'SET_COLOR_HEXES',
+  payload: {colors},
+})
+
 interface SetFillColumnsAction {
   type: 'SET_FILL_COLUMNS'
   payload: {fillColumns: string[]}
@@ -471,6 +544,18 @@ export const setFillColumns = (
 ): SetFillColumnsAction => ({
   type: 'SET_FILL_COLUMNS',
   payload: {fillColumns},
+})
+
+interface SetSymbolColumnsAction {
+  type: 'SET_SYMBOL_COLUMNS'
+  payload: {symbolColumns: string[]}
+}
+
+export const setSymbolColumns = (
+  symbolColumns: string[]
+): SetSymbolColumnsAction => ({
+  type: 'SET_SYMBOL_COLUMNS',
+  payload: {symbolColumns},
 })
 
 interface SetBinCountAction {
@@ -495,34 +580,6 @@ export const setHistogramPosition = (
   payload: {position},
 })
 
-interface TableLoadedAction {
-  type: 'TABLE_LOADED'
-  payload: {
-    availableXColumns: string[]
-    availableGroupColumns: string[]
-  }
-}
-
-export const tableLoaded = (table: Table): TableLoadedAction => {
-  const availableXColumns = Object.entries(table.columns)
-    .filter(([__, {type}]) => isNumeric(type) && type !== 'time')
-    .map(([name]) => name)
-
-  const invalidGroupColumns = new Set(['_value', '_start', '_stop', '_time'])
-
-  const availableGroupColumns = Object.keys(table.columns).filter(
-    name => !invalidGroupColumns.has(name)
-  )
-
-  return {
-    type: 'TABLE_LOADED',
-    payload: {
-      availableXColumns,
-      availableGroupColumns,
-    },
-  }
-}
-
 interface SetXDomainAction {
   type: 'SET_VIEW_X_DOMAIN'
   payload: {xDomain: [number, number]}
@@ -533,6 +590,16 @@ export const setXDomain = (xDomain: [number, number]): SetXDomainAction => ({
   payload: {xDomain},
 })
 
+interface SetYDomainAction {
+  type: 'SET_VIEW_Y_DOMAIN'
+  payload: {yDomain: [number, number]}
+}
+
+export const setYDomain = (yDomain: [number, number]): SetYDomainAction => ({
+  type: 'SET_VIEW_Y_DOMAIN',
+  payload: {yDomain},
+})
+
 interface SetXAxisLabelAction {
   type: 'SET_X_AXIS_LABEL'
   payload: {xAxisLabel: string}
@@ -541,4 +608,37 @@ interface SetXAxisLabelAction {
 export const setXAxisLabel = (xAxisLabel: string): SetXAxisLabelAction => ({
   type: 'SET_X_AXIS_LABEL',
   payload: {xAxisLabel},
+})
+
+export const setCheckStatus = (checkStatus: RemoteDataState) => ({
+  type: 'SET_TIME_MACHINE_CHECK_STATUS' as 'SET_TIME_MACHINE_CHECK_STATUS',
+  payload: {checkStatus},
+})
+
+export const setTimeMachineCheck = (
+  checkStatus: RemoteDataState,
+  check: Partial<Check>
+) => ({
+  type: 'SET_TIME_MACHINE_CHECK' as 'SET_TIME_MACHINE_CHECK',
+  payload: {checkStatus, check},
+})
+
+export const updateTimeMachineCheck = (checkUpdate: Partial<Check>) => ({
+  type: 'UPDATE_TIME_MACHINE_CHECK' as 'UPDATE_TIME_MACHINE_CHECK',
+  payload: {checkUpdate},
+})
+
+export const changeCheckType = (toType: CheckType) => ({
+  type: 'CHANGE_TIME_MACHINE_CHECK_TYPE' as 'CHANGE_TIME_MACHINE_CHECK_TYPE',
+  payload: {toType},
+})
+
+export const updateCheckThreshold = (threshold: Threshold) => ({
+  type: 'UPDATE_CHECK_THRESHOLD' as 'UPDATE_CHECK_THRESHOLD',
+  payload: {threshold},
+})
+
+export const removeCheckThreshold = (level: CheckStatusLevel) => ({
+  type: 'REMOVE_CHECK_THRESHOLD' as 'REMOVE_CHECK_THRESHOLD',
+  payload: {level},
 })

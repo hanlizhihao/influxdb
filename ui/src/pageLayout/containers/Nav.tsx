@@ -1,133 +1,337 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {withRouter, WithRouterProps} from 'react-router'
+import {withRouter, WithRouterProps, Link} from 'react-router'
 import {connect} from 'react-redux'
+import _ from 'lodash'
 
 // Components
-import NavMenu from 'src/pageLayout/components/NavMenu'
+import {NavMenu, Icon} from '@influxdata/clockface'
 import CloudNav from 'src/pageLayout/components/CloudNav'
+import AccountNavSubItem from 'src/pageLayout/components/AccountNavSubItem'
+import CloudExclude from 'src/shared/components/cloud/CloudExclude'
+import CloudOnly from 'src/shared/components/cloud/CloudOnly'
+import {FeatureFlag} from 'src/shared/utils/featureFlag'
+
+// Utils
+import {getNavItemActivation} from 'src/pageLayout/utils'
 
 // Types
-import {AppState} from 'src/types'
-import {IconFont} from 'src/clockface'
+import {AppState, Organization} from 'src/types'
+import {IconFont} from '@influxdata/clockface'
 
+// Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
-interface OwnProps {
+interface StateProps {
   isHidden: boolean
   me: AppState['me']
+  orgs: Organization[]
+  orgName: string
 }
 
-type Props = OwnProps & WithRouterProps
+interface State {
+  isShowingOrganizations: boolean
+}
+
+type Props = StateProps & WithRouterProps
 
 @ErrorHandling
-class SideNav extends PureComponent<Props> {
+class SideNav extends PureComponent<Props, State> {
+  constructor(props) {
+    super(props)
+
+    this.state = {
+      isShowingOrganizations: false,
+    }
+  }
+
   public render() {
-    const {isHidden, me} = this.props
-    const {location} = this.props
+    const {
+      isHidden,
+      me,
+      params: {orgID},
+      orgs,
+      orgName,
+    } = this.props
+
     if (isHidden) {
       return null
     }
 
+    // Home page
+    const orgPrefix = `/orgs/${orgID}`
+    // Top level nav links
+    const dataExplorerLink = `${orgPrefix}/data-explorer`
+    const dashboardsLink = `${orgPrefix}/dashboards`
+    const tasksLink = `${orgPrefix}/tasks`
+    const alertingLink = `${orgPrefix}/alerting`
+    const alertHistoryLink = `${orgPrefix}/alert-history`
+    // Load data
+    const loadDataLink = `${orgPrefix}/load-data/buckets`
+    const bucketsLink = `${orgPrefix}/load-data/buckets`
+    const telegrafsLink = `${orgPrefix}/load-data/telegrafs`
+    const scrapersLink = `${orgPrefix}/load-data/scrapers`
+    const tokensLink = `${orgPrefix}/load-data/tokens`
+    const clientLibrariesLink = `${orgPrefix}/load-data/client-libraries`
+    // Settings
+    const settingsLink = `${orgPrefix}/settings/members`
+    const membersLink = `${orgPrefix}/settings/members`
+    const variablesLink = `${orgPrefix}/settings/variables`
+    const templatesLink = `${orgPrefix}/settings/templates`
+    const labelsLink = `${orgPrefix}/settings/labels`
+    const profileLink = `${orgPrefix}/settings/profile`
+    // Feedback
+    const feedbackLink =
+      'https://docs.google.com/forms/d/e/1FAIpQLSdGJpnIZGotN1VFJPkgZEhrt4t4f6QY1lMgMSRUnMeN3FjCKA/viewform?usp=sf_link'
+
     return (
       <NavMenu>
+        <div onMouseLeave={this.closeOrganizationsView} className="find-me">
+          <NavMenu.Item
+            titleLink={className => (
+              <Link className={className} to={orgPrefix}>
+                <CloudOnly>{me.name}</CloudOnly>
+                <CloudExclude>{`${me.name} (${orgName})`}</CloudExclude>
+              </Link>
+            )}
+            iconLink={className => (
+              <Link to={orgPrefix} className={className}>
+                <Icon glyph={IconFont.CuboNav} />
+              </Link>
+            )}
+            active={getNavItemActivation(['me', 'account'], location.pathname)}
+          >
+            <AccountNavSubItem
+              orgs={orgs}
+              isShowingOrganizations={this.state.isShowingOrganizations}
+              showOrganizationsView={this.showOrganizationsView}
+              closeOrganizationsView={this.closeOrganizationsView}
+            />
+          </NavMenu.Item>
+        </div>
         <NavMenu.Item
-          title={me.name}
-          link="/me"
-          icon={IconFont.CuboNav}
-          location={location.pathname}
-          highlightPaths={['me', 'account']}
+          titleLink={className => (
+            <Link className={className} to={dataExplorerLink}>
+              Data Explorer
+            </Link>
+          )}
+          iconLink={className => (
+            <Link to={dataExplorerLink} className={className}>
+              <Icon glyph={IconFont.GraphLine} />
+            </Link>
+          )}
+          active={getNavItemActivation(['data-explorer'], location.pathname)}
+        />
+        <NavMenu.Item
+          titleLink={className => (
+            <Link className={className} to={dashboardsLink}>
+              Dashboards
+            </Link>
+          )}
+          iconLink={className => (
+            <Link to={dashboardsLink} className={className}>
+              <Icon glyph={IconFont.Dashboards} />
+            </Link>
+          )}
+          active={getNavItemActivation(['dashboards'], location.pathname)}
+        />
+        <NavMenu.Item
+          titleLink={className => (
+            <Link className={className} to={tasksLink}>
+              Tasks
+            </Link>
+          )}
+          iconLink={className => (
+            <Link to={tasksLink} className={className}>
+              <Icon glyph={IconFont.Calendar} />
+            </Link>
+          )}
+          active={getNavItemActivation(['tasks'], location.pathname)}
+        />
+        <NavMenu.Item
+          titleLink={className => (
+            <Link className={className} to={alertingLink}>
+              Monitoring & Alerting
+            </Link>
+          )}
+          iconLink={className => (
+            <Link to={alertingLink} className={className}>
+              <Icon glyph={IconFont.Bell} />
+            </Link>
+          )}
+          active={getNavItemActivation(['alerting'], location.pathname)}
         >
           <NavMenu.SubItem
-            title="Logout"
-            link="/logout"
-            location={location.pathname}
-            highlightPaths={[]}
+            titleLink={className => (
+              <Link to={alertHistoryLink} className={className}>
+                History
+              </Link>
+            )}
+            active={getNavItemActivation(['alert-history'], location.pathname)}
+            key="alert-history"
           />
         </NavMenu.Item>
         <NavMenu.Item
-          title="Data Explorer"
-          link="/data-explorer"
-          icon={IconFont.GraphLine}
-          location={location.pathname}
-          highlightPaths={['data-explorer']}
-        />
-        <NavMenu.Item
-          title="Dashboards"
-          link="/dashboards"
-          icon={IconFont.Dashboards}
-          location={location.pathname}
-          highlightPaths={['dashboards']}
-        />
-        <NavMenu.Item
-          title="Tasks"
-          link="/tasks"
-          icon={IconFont.Calendar}
-          location={location.pathname}
-          highlightPaths={['tasks']}
-        />
-        <NavMenu.Item
-          title="Organizations"
-          link="/organizations"
-          icon={IconFont.UsersDuo}
-          location={location.pathname}
-          highlightPaths={['organizations']}
-        />
-        <NavMenu.Item
-          title="Configuration"
-          link="/configuration/buckets_tab"
-          icon={IconFont.Wrench}
-          location={location.pathname}
-          highlightPaths={['configuration']}
+          titleLink={className => (
+            <Link className={className} to={loadDataLink}>
+              Load Data
+            </Link>
+          )}
+          iconLink={className => (
+            <Link to={loadDataLink} className={className}>
+              <Icon glyph={IconFont.DisksNav} />
+            </Link>
+          )}
+          active={getNavItemActivation(['load-data'], location.pathname)}
         >
           <NavMenu.SubItem
-            title="Buckets"
-            link="/configuration/buckets_tab"
-            location={location.pathname}
-            highlightPaths={['buckets_tab']}
+            titleLink={className => (
+              <Link to={bucketsLink} className={className}>
+                Buckets
+              </Link>
+            )}
+            active={getNavItemActivation(['buckets'], location.pathname)}
+            key="buckets"
           />
           <NavMenu.SubItem
-            title="Telegrafs"
-            link="/configuration/telegrafs_tab"
-            location={location.pathname}
-            highlightPaths={['telegrafs_tab']}
+            titleLink={className => (
+              <Link to={telegrafsLink} className={className}>
+                Telegraf
+              </Link>
+            )}
+            active={getNavItemActivation(['telegrafs'], location.pathname)}
+            key="telegrafs"
+          />
+          <CloudExclude>
+            <NavMenu.SubItem
+              titleLink={className => (
+                <Link to={scrapersLink} className={className}>
+                  Scrapers
+                </Link>
+              )}
+              active={getNavItemActivation(['scrapers'], location.pathname)}
+              key="scrapers"
+            />
+          </CloudExclude>
+          <NavMenu.SubItem
+            titleLink={className => (
+              <Link to={tokensLink} className={className}>
+                Tokens
+              </Link>
+            )}
+            active={getNavItemActivation(['tokens'], location.pathname)}
+            key="tokens"
+          />
+          <FeatureFlag name="clientLibrariesPage">
+            <NavMenu.SubItem
+              titleLink={className => (
+                <Link to={clientLibrariesLink} className={className}>
+                  Client Libraries
+                </Link>
+              )}
+              active={getNavItemActivation(
+                ['client-libraries'],
+                location.pathname
+              )}
+              key="client-libraries"
+            />
+          </FeatureFlag>
+        </NavMenu.Item>
+        <NavMenu.Item
+          titleLink={className => (
+            <Link className={className} to={settingsLink}>
+              Settings
+            </Link>
+          )}
+          iconLink={className => (
+            <Link to={settingsLink} className={className}>
+              <Icon glyph={IconFont.WrenchNav} />
+            </Link>
+          )}
+          active={getNavItemActivation(['settings'], location.pathname)}
+        >
+          <NavMenu.SubItem
+            titleLink={className => (
+              <Link to={membersLink} className={className}>
+                Members
+              </Link>
+            )}
+            active={getNavItemActivation(['members'], location.pathname)}
+            key="members"
           />
           <NavMenu.SubItem
-            title="Scrapers"
-            link="/configuration/scrapers_tab"
-            location={location.pathname}
-            highlightPaths={['scrapers_tab']}
+            titleLink={className => (
+              <Link to={variablesLink} className={className}>
+                Variables
+              </Link>
+            )}
+            active={getNavItemActivation(['variables'], location.pathname)}
+            key="variables"
           />
           <NavMenu.SubItem
-            title="Variables"
-            link="/configuration/variables_tab"
-            location={location.pathname}
-            highlightPaths={['variables_tab']}
+            titleLink={className => (
+              <Link to={templatesLink} className={className}>
+                Templates
+              </Link>
+            )}
+            active={getNavItemActivation(['templates'], location.pathname)}
+            key="templates"
           />
           <NavMenu.SubItem
-            title="Profile"
-            link="/configuration/settings_tab"
-            location={location.pathname}
-            highlightPaths={['settings_tab']}
+            titleLink={className => (
+              <Link to={labelsLink} className={className}>
+                Labels
+              </Link>
+            )}
+            active={getNavItemActivation(['labels'], location.pathname)}
+            key="labels"
           />
           <NavMenu.SubItem
-            title="Tokens"
-            link="/configuration/tokens_tab"
-            location={location.pathname}
-            highlightPaths={['tokens_tab']}
+            titleLink={className => (
+              <Link to={profileLink} className={className}>
+                Profile
+              </Link>
+            )}
+            active={getNavItemActivation(['profile'], location.pathname)}
+            key="profile"
           />
         </NavMenu.Item>
         <CloudNav />
+        <NavMenu.Item
+          titleLink={className => (
+            <a className={className} href={feedbackLink} target="_blank">
+              Feedback
+            </a>
+          )}
+          iconLink={className => (
+            <a href={feedbackLink} className={className} target="_blank">
+              <Icon glyph={IconFont.NavChat} />
+            </a>
+          )}
+          active={getNavItemActivation(['feedback'], location.pathname)}
+        />
       </NavMenu>
     )
   }
+
+  private showOrganizationsView = (): void => {
+    this.setState({isShowingOrganizations: true})
+  }
+
+  private closeOrganizationsView = (): void => {
+    this.setState({isShowingOrganizations: false})
+  }
 }
 
-const mstp = (state: AppState) => {
+const mstp = (state: AppState): StateProps => {
   const isHidden = state.app.ephemeral.inPresentationMode
-  const {me} = state
+  const {
+    me,
+    orgs,
+    orgs: {org},
+  } = state
 
-  return {isHidden, me}
+  return {isHidden, me, orgs: orgs.items, orgName: _.get(org, 'name', '')}
 }
 
-export default connect(mstp)(withRouter<OwnProps>(SideNav))
+export default connect<StateProps>(mstp)(withRouter(SideNav))

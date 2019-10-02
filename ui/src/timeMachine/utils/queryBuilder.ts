@@ -1,11 +1,14 @@
-import {BuilderConfig} from 'src/types'
+import {get, isEmpty} from 'lodash'
+import {BuilderConfig, DashboardDraftQuery} from 'src/types'
 import {FUNCTIONS} from 'src/timeMachine/constants/queryBuilder'
 import {
   TIME_RANGE_START,
   TIME_RANGE_STOP,
-  WINDOW_PERIOD,
   OPTION_NAME,
+  WINDOW_PERIOD,
 } from 'src/variables/constants'
+import {AGG_WINDOW_AUTO} from 'src/timeMachine/constants/queryBuilder'
+import {BuilderTagsType} from '@influxdata/influx'
 
 export function isConfigValid(builderConfig: BuilderConfig): boolean {
   const {buckets, tags} = builderConfig
@@ -15,6 +18,50 @@ export function isConfigValid(builderConfig: BuilderConfig): boolean {
     tags.some(({key, values}) => key && values.length > 0)
 
   return isConfigValid
+}
+
+export interface CheckQueryValidity {
+  oneQuery: boolean
+  builderMode: boolean
+  singleAggregateFunc: boolean
+  singleField: boolean
+}
+
+export const isDraftQueryAlertable = (
+  draftQueries: DashboardDraftQuery[]
+): CheckQueryValidity => {
+  const tags: BuilderTagsType[] = get(
+    draftQueries,
+    '[0].builderConfig.tags',
+    []
+  )
+  const fieldSelection = tags.find(t => get(t, 'key') === '_field')
+  const fieldValues = get(fieldSelection, 'values', [])
+  const functions = draftQueries[0].builderConfig.functions
+  return {
+    oneQuery: draftQueries.length === 1, // one query
+    builderMode: draftQueries[0].editMode == 'builder', // built in builder
+    singleAggregateFunc: functions.length === 1, // one aggregate function
+    singleField: fieldValues.length === 1, // one field selection
+  }
+}
+
+export const isCheckSaveable = (
+  draftQueries: DashboardDraftQuery[],
+  checkType: string
+): boolean => {
+  const {
+    oneQuery,
+    builderMode,
+    singleAggregateFunc,
+    singleField,
+  } = isDraftQueryAlertable(draftQueries)
+
+  if (checkType === 'deadman') {
+    return oneQuery && builderMode && singleField
+  }
+
+  return oneQuery && builderMode && singleAggregateFunc && singleField
 }
 
 export function buildQuery(builderConfig: BuilderConfig): string {
@@ -37,7 +84,8 @@ function buildQueryHelper(
 ): string {
   const [bucket] = builderConfig.buckets
   const tagFilterCall = formatTagFilterCall(builderConfig.tags)
-  const fnCall = fn ? formatFunctionCall(fn) : ''
+  const {aggregateWindow} = builderConfig
+  const fnCall = fn ? formatFunctionCall(fn, aggregateWindow.period) : ''
 
   const query = `from(bucket: "${bucket}")
   |> range(start: ${OPTION_NAME}.${TIME_RANGE_START}, stop: ${OPTION_NAME}.${TIME_RANGE_STOP})${tagFilterCall}${fnCall}`
@@ -45,24 +93,27 @@ function buildQueryHelper(
   return query
 }
 
-export function formatFunctionCall(fn: BuilderConfig['functions'][0]) {
-  const fnSpec = FUNCTIONS.find(f => f.name === fn.name)
+export function formatFunctionCall(
+  fn: BuilderConfig['functions'][0],
+  period: string
+) {
+  const fnSpec = FUNCTIONS.find(spec => spec.name === fn.name)
 
-  let fnCall: string = ''
-
-  if (fnSpec && fnSpec.aggregate) {
-    fnCall = `
-  |> window(period: ${OPTION_NAME}.${WINDOW_PERIOD})
-  ${fnSpec.flux}
-  |> group(columns: ["_value", "_time", "_start", "_stop"], mode: "except")
-  |> yield(name: "${fn.name}")`
-  } else {
-    fnCall = `
-  ${fnSpec.flux}
-  |> yield(name: "${fn.name}")`
+  if (!fnSpec) {
+    return
   }
 
-  return fnCall
+  const formattedPeriod = formatPeriod(period)
+
+  return `\n  ${fnSpec.flux(formattedPeriod)}\n  |> yield(name: "${fn.name}")`
+}
+
+const formatPeriod = (period: string): string => {
+  if (period === AGG_WINDOW_AUTO || !period) {
+    return `${OPTION_NAME}.${WINDOW_PERIOD}`
+  }
+
+  return period
 }
 
 function formatTagFilterCall(tagsSelections: BuilderConfig['tags']) {
@@ -86,5 +137,8 @@ export function hasQueryBeenEdited(
   query: string,
   builderConfig: BuilderConfig
 ): boolean {
-  return query !== buildQuery(builderConfig)
+  const emptyQueryChanged = !isConfigValid(builderConfig) && !isEmpty(query)
+  const existingQueryChanged = query !== buildQuery(builderConfig)
+
+  return emptyQueryChanged || existingQueryChanged
 }

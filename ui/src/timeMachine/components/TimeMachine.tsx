@@ -4,8 +4,9 @@ import {connect} from 'react-redux'
 import classnames from 'classnames'
 
 // Components
-import {DraggableResizer, Stack} from 'src/clockface'
+import {DraggableResizer, Orientation} from '@influxdata/clockface'
 import TimeMachineQueries from 'src/timeMachine/components/Queries'
+import TimeMachineAlerting from 'src/timeMachine/components/TimeMachineAlerting'
 import TimeMachineVis from 'src/timeMachine/components/Vis'
 import ViewOptions from 'src/timeMachine/components/view_options/ViewOptions'
 
@@ -19,20 +20,32 @@ const INITIAL_RESIZER_HANDLE = 0.5
 
 interface StateProps {
   activeTab: TimeMachineTab
+  isViewingVisOptions: boolean
 }
 
-const TimeMachine: FunctionComponent<StateProps> = ({activeTab}) => {
+const TimeMachine: FunctionComponent<StateProps> = ({
+  activeTab,
+  isViewingVisOptions,
+}) => {
   const [dragPosition, setDragPosition] = useState([INITIAL_RESIZER_HANDLE])
 
   const containerClassName = classnames('time-machine', {
-    'time-machine--split': activeTab === TimeMachineTab.Visualization,
+    'time-machine--split': isViewingVisOptions,
   })
+
+  let bottomContents: JSX.Element = null
+
+  if (activeTab === 'alerting') {
+    bottomContents = <TimeMachineAlerting />
+  } else if (activeTab === 'queries') {
+    bottomContents = <TimeMachineQueries />
+  }
 
   return (
     <>
       <div className={containerClassName}>
         <DraggableResizer
-          stackPanels={Stack.Rows}
+          handleOrientation={Orientation.Horizontal}
           handlePositions={dragPosition}
           onChangePositions={setDragPosition}
         >
@@ -47,21 +60,21 @@ const TimeMachine: FunctionComponent<StateProps> = ({activeTab}) => {
               data-testid="time-machine--bottom"
             >
               <div className="time-machine--bottom-contents">
-                <TimeMachineQueries />
+                {bottomContents}
               </div>
             </div>
           </DraggableResizer.Panel>
         </DraggableResizer>
       </div>
-      {activeTab === TimeMachineTab.Visualization && <ViewOptions />}
+      {isViewingVisOptions && <ViewOptions />}
     </>
   )
 }
 
 const mstp = (state: AppState) => {
-  const {activeTab} = getActiveTimeMachine(state)
+  const {activeTab, isViewingVisOptions} = getActiveTimeMachine(state)
 
-  return {activeTab}
+  return {activeTab, isViewingVisOptions}
 }
 
 export default connect<StateProps>(mstp)(TimeMachine)

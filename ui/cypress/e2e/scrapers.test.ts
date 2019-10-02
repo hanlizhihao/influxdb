@@ -1,4 +1,4 @@
-import {Organization, Bucket} from '@influxdata/influx'
+import {Organization, Bucket} from '../../src/types'
 
 describe('Scrapers', () => {
   beforeEach(() => {
@@ -13,17 +13,17 @@ describe('Scrapers', () => {
       cy.wrap(bucket).as('bucket')
 
       cy.fixture('routes').then(({orgs}) => {
-        cy.visit(`${orgs}/${id}/scrapers`)
+        cy.visit(`${orgs}/${id}/load-data/scrapers`)
       })
     })
   })
 
-  describe('from the org view', () => {
+  describe('from the org settings', () => {
     it('can create a scraper from the create button in the page header', () => {
       const newScraper = '🐍craper'
       const newURL = 'http://google.com'
 
-      cy.getByTestID('table-row').should('have.length', 0)
+      cy.getByTestID('resource-card').should('have.length', 0)
 
       cy.getByTestID('create-scraper-button-header').click()
       cy.getByTestID('overlay--container').within(() => {
@@ -36,14 +36,14 @@ describe('Scrapers', () => {
         cy.getByTestID('create-scraper--submit').click()
       })
 
-      cy.getByTestID('table-row').should('have.length', 1)
+      cy.getByTestID('resource-card').should('have.length', 1)
     })
 
     it('can create a scraper from the create button in the empty state', () => {
       const newScraper = '🐍craper'
       const newURL = 'http://google.com'
 
-      cy.getByTestID('table-row').should('have.length', 0)
+      cy.getByTestID('resource-card').should('have.length', 0)
 
       cy.getByTestID('create-scraper-button-empty').click()
       cy.getByTestID('overlay--container').within(() => {
@@ -56,49 +56,50 @@ describe('Scrapers', () => {
         cy.getByTestID('create-scraper--submit').click()
       })
 
-      cy.getByTestID('table-row').should('have.length', 1)
+      cy.getByTestID('resource-card').should('have.length', 1)
     })
 
-    it('can update scrapers name', () => {
-      const newScraperName = 'This is new name'
+    describe('Scrapers list', () => {
+      beforeEach(() => {
+        const scraperName = 'New Scraper'
+        const url = 'http://google.com'
+        const type = 'Prometheus'
 
-      const scraperName = 'New Scraper'
-      const url = 'http://google.com'
-      const type = 'Prometheus'
+        cy.get<Organization>('@org').then((org: Organization) => {
+          cy.get<Bucket>('@bucket').then((bucket: Bucket) => {
+            cy.createScraper(scraperName, url, type, org.id, bucket.id)
+            cy.createScraper(scraperName, url, type, org.id, bucket.id)
+          })
+        })
 
-      cy.get<Organization>('@org').then(({id}) => {
-        let orgID = id
-        cy.get<Bucket>('@bucket').then(({id}) => {
-          cy.createScraper(scraperName, url, type, orgID, id)
+        cy.fixture('routes').then(({orgs}) => {
+          cy.get<Organization>('@org').then(({id}: Organization) => {
+            cy.visit(`${orgs}/${id}/load-data/scrapers`)
+          })
         })
       })
 
-      cy.getByTestID('table-cell').within(() => {
-        cy.getByTestID('editable-name').click()
-        cy.getByTestID('input-field').type(`${newScraperName}{enter}`)
-      })
-    })
-
-    it('can delete a scraper', () => {
-      const scraperName = 'New Scraper'
-      const url = 'http://google.com'
-      const type = 'Prometheus'
-
-      cy.get<Organization>('@org').then(({id}) => {
-        let orgID = id
-        cy.get<Bucket>('@bucket').then(({id}) => {
-          cy.createScraper(scraperName, url, type, orgID, id)
-          cy.createScraper(scraperName, url, type, orgID, id)
+      it('can update scrapers name', () => {
+        const newScraperName = 'This is new name'
+        cy.getByTestID('resource-card').within(() => {
+          cy.getByTestID('editable-name')
+            .first()
+            .click()
+          cy.getByTestID('input-field').type(`${newScraperName}{enter}`)
         })
+
+        cy.getByTestID('resource-card').contains(newScraperName)
       })
 
-      cy.getByTestID('table-row').should('have.length', 2)
+      it('can delete a scraper', () => {
+        cy.getByTestID('resource-card').should('have.length', 2)
 
-      cy.getByTestID('confirmation-button')
-        .last()
-        .click({force: true})
+        cy.getByTestID('confirmation-button')
+          .last()
+          .click({force: true})
 
-      cy.getByTestID('table-row').should('have.length', 1)
+        cy.getByTestID('resource-card').should('have.length', 1)
+      })
     })
   })
 })

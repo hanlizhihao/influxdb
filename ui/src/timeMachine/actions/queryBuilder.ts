@@ -2,14 +2,17 @@
 import {queryBuilderFetcher} from 'src/timeMachine/apis/QueryBuilderFetcher'
 
 // Utils
-import {getActiveOrg} from 'src/organizations/selectors'
-import {getActiveQuery, getActiveTimeMachine} from 'src/timeMachine/selectors'
+import {
+  getActiveQuery,
+  getActiveTimeMachine,
+  getTimeRange,
+} from 'src/timeMachine/selectors'
 
 // Types
 import {Dispatch} from 'redux-thunk'
 import {GetState} from 'src/types'
 import {RemoteDataState} from 'src/types'
-import {CancellationError} from 'src/types/promises'
+import {BuilderFunctionsType} from '@influxdata/influx'
 
 export type Action =
   | SetBuilderBucketSelectionAction
@@ -23,7 +26,8 @@ export type Action =
   | SetBuilderTagValuesSelectionAction
   | AddTagSelectorAction
   | RemoveTagSelectorAction
-  | SelectFunctionAction
+  | SetFunctionsAction
+  | SelectAggregateWindowAction
   | SetValuesSearchTermAction
   | SetKeysSearchTermAction
   | SetBuilderTagsStatusAction
@@ -173,14 +177,28 @@ const removeTagSelectorSync = (index: number): RemoveTagSelectorAction => ({
   payload: {index},
 })
 
-interface SelectFunctionAction {
+interface SetFunctionsAction {
   type: 'SELECT_BUILDER_FUNCTION'
-  payload: {name: string}
+  payload: {functions: BuilderFunctionsType[]}
 }
 
-export const selectFunction = (name: string): SelectFunctionAction => ({
+export const setFunctions = (
+  functions: BuilderFunctionsType[]
+): SetFunctionsAction => ({
   type: 'SELECT_BUILDER_FUNCTION',
-  payload: {name},
+  payload: {functions},
+})
+
+interface SelectAggregateWindowAction {
+  type: 'SELECT_AGGREGATE_WINDOW'
+  payload: {period: string}
+}
+
+export const selectAggregateWindow = (
+  period: string
+): SelectAggregateWindowAction => ({
+  type: 'SELECT_AGGREGATE_WINDOW',
+  payload: {period},
 })
 
 interface SetValuesSearchTermAction {
@@ -214,15 +232,19 @@ export const loadBuckets = () => async (
   getState: GetState
 ) => {
   const queryURL = getState().links.query.self
-  const orgID = getActiveOrg(getState()).id
+  const orgID = getState().orgs.org.id
 
   dispatch(setBuilderBucketsStatus(RemoteDataState.Loading))
 
   try {
-    const buckets = await queryBuilderFetcher.findBuckets({
+    let buckets = await queryBuilderFetcher.findBuckets({
       url: queryURL,
       orgID,
     })
+
+    const systemBuckets = buckets.filter(b => b.startsWith('_'))
+    const userBuckets = buckets.filter(b => !b.startsWith('_'))
+    buckets = [...userBuckets, ...systemBuckets]
 
     const selectedBucket = getActiveQuery(getState()).builderConfig.buckets[0]
 
@@ -234,7 +256,7 @@ export const loadBuckets = () => async (
       dispatch(selectBucket(buckets[0], true))
     }
   } catch (e) {
-    if (e instanceof CancellationError) {
+    if (e.name === 'CancellationError') {
       return
     }
 
@@ -263,12 +285,12 @@ export const loadTagSelector = (index: number) => async (
 
   const tagsSelections = tags.slice(0, index)
   const queryURL = getState().links.query.self
-  const orgID = getActiveOrg(getState()).id
+  const orgID = getState().orgs.org.id
 
   dispatch(setBuilderTagKeysStatus(index, RemoteDataState.Loading))
 
   try {
-    const timeRange = getActiveTimeMachine(getState()).timeRange
+    const timeRange = getTimeRange(getState())
     const searchTerm = getActiveTimeMachine(getState()).queryBuilder.tags[index]
       .keysSearchTerm
 
@@ -302,7 +324,7 @@ export const loadTagSelector = (index: number) => async (
     dispatch(setBuilderTagKeys(index, keys))
     dispatch(loadTagSelectorValues(index))
   } catch (e) {
-    if (e instanceof CancellationError) {
+    if (e.name === 'CancellationError') {
       return
     }
 
@@ -319,12 +341,12 @@ const loadTagSelectorValues = (index: number) => async (
   const {buckets, tags} = getActiveQuery(state).builderConfig
   const tagsSelections = tags.slice(0, index)
   const queryURL = state.links.query.self
-  const orgID = getActiveOrg(state).id
+  const orgID = getState().orgs.org.id
 
   dispatch(setBuilderTagValuesStatus(index, RemoteDataState.Loading))
 
   try {
-    const timeRange = getActiveTimeMachine(getState()).timeRange
+    const timeRange = getTimeRange(getState())
     const key = getActiveQuery(getState()).builderConfig.tags[index].key
     const searchTerm = getActiveTimeMachine(getState()).queryBuilder.tags[index]
       .valuesSearchTerm
@@ -352,7 +374,7 @@ const loadTagSelectorValues = (index: number) => async (
     dispatch(setBuilderTagValues(index, values))
     dispatch(loadTagSelector(index + 1))
   } catch (e) {
-    if (e instanceof CancellationError) {
+    if (e.name === 'CancellationError') {
       return
     }
 
@@ -365,13 +387,22 @@ export const selectTagValue = (index: number, value: string) => async (
   dispatch: Dispatch<Action>,
   getState: GetState
 ) => {
-  const tags = getActiveQuery(getState()).builderConfig.tags
+  const state = getState()
+  const {
+    timeMachines: {activeTimeMachineID},
+  } = state
+  const tags = getActiveQuery(state).builderConfig.tags
   const values = tags[index].values
 
   let newValues: string[]
 
   if (values.includes(value)) {
     newValues = values.filter(v => v !== value)
+  } else if (
+    activeTimeMachineID === 'alerting' &&
+    tags[index].key === '_field'
+  ) {
+    newValues = [value]
   } else {
     newValues = [...values, value]
   }
@@ -383,6 +414,30 @@ export const selectTagValue = (index: number, value: string) => async (
   } else {
     dispatch(loadTagSelector(index + 1))
   }
+}
+
+export const selectBuilderFunction = (name: string) => async (
+  dispatch: Dispatch<Action>,
+  getState: GetState
+) => {
+  const state = getState()
+  const {
+    timeMachines: {activeTimeMachineID},
+  } = state
+  const {draftQueries, activeQueryIndex} = getActiveTimeMachine(state)
+
+  const functions = draftQueries[activeQueryIndex].builderConfig.functions
+
+  let newFunctions: BuilderFunctionsType[]
+
+  if (functions.find(f => f.name === name)) {
+    newFunctions = functions.filter(f => f.name !== name)
+  } else if (activeTimeMachineID === 'alerting') {
+    newFunctions = [{name}]
+  } else {
+    newFunctions = [...functions, {name}]
+  }
+  dispatch(setFunctions(newFunctions))
 }
 
 export const selectTagKey = (index: number, key: string) => async (

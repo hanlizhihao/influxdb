@@ -1,12 +1,18 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"strings"
 
 	platform "github.com/influxdata/influxdb"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -56,19 +62,46 @@ func CheckError(resp *http.Response) (err error) {
 			Msg:  fmt.Sprintf("unexpected status code: %d %s", resp.StatusCode, resp.Status),
 		}
 	}
-	pe := new(platform.Error)
-	parseErr := json.NewDecoder(resp.Body).Decode(pe)
-	if parseErr != nil {
-		return parseErr
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		// Assume JSON if there is no content-type.
+		contentType = "application/json"
 	}
-	return pe
+	mediatype, _, _ := mime.ParseMediaType(contentType)
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, resp.Body); err != nil {
+		return &platform.Error{
+			Code: platform.EInternal,
+			Msg:  err.Error(),
+		}
+	}
+
+	switch mediatype {
+	case "application/json":
+		pe := new(platform.Error)
+
+		parseErr := json.Unmarshal(buf.Bytes(), pe)
+		if parseErr != nil {
+			line, _ := buf.ReadString('\n')
+			return errors.Wrap(stderrors.New(strings.TrimSuffix(line, "\n")), parseErr.Error())
+		}
+		return pe
+	default:
+		line, _ := buf.ReadString('\n')
+		return stderrors.New(strings.TrimSuffix(line, "\n"))
+	}
 }
 
-// EncodeError encodes err with the appropriate status code and format,
+// ErrorHandler is the error handler in http package.
+type ErrorHandler int
+
+// HandleHTTPError encodes err with the appropriate status code and format,
 // sets the X-Platform-Error-Code headers on the response.
 // We're no longer using X-Influx-Error and X-Influx-Reference.
 // and sets the response status to the corresponding status code.
-func EncodeError(ctx context.Context, err error, w http.ResponseWriter) {
+func (h ErrorHandler) HandleHTTPError(ctx context.Context, err error, w http.ResponseWriter) {
 	if err == nil {
 		return
 	}
@@ -81,29 +114,33 @@ func EncodeError(ctx context.Context, err error, w http.ResponseWriter) {
 	w.Header().Set(PlatformErrorCodeHeader, code)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(httpCode)
-	var e error
-	if pe, ok := err.(*platform.Error); ok {
-		e = &platform.Error{
-			Code: code,
-			Op:   platform.ErrorOp(err),
-			Msg:  platform.ErrorMessage(err),
-			Err:  pe.Err,
-		}
+	var e struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	e.Code = platform.ErrorCode(err)
+	if err, ok := err.(*platform.Error); ok {
+		e.Message = err.Error()
 	} else {
-		e = &platform.Error{
-			Code: platform.EInternal,
-			Err:  err,
-		}
+		e.Message = "An internal error has occurred"
 	}
 	b, _ := json.Marshal(e)
 	_, _ = w.Write(b)
 }
 
 // UnauthorizedError encodes a error message and status code for unauthorized access.
-func UnauthorizedError(ctx context.Context, w http.ResponseWriter) {
-	EncodeError(ctx, &platform.Error{
+func UnauthorizedError(ctx context.Context, h platform.HTTPErrorHandler, w http.ResponseWriter) {
+	h.HandleHTTPError(ctx, &platform.Error{
 		Code: platform.EUnauthorized,
 		Msg:  "unauthorized access",
+	}, w)
+}
+
+// InactiveUserError encode a error message and status code for inactive users.
+func InactiveUserError(ctx context.Context, h platform.HTTPErrorHandler, w http.ResponseWriter) {
+	h.HandleHTTPError(ctx, &platform.Error{
+		Code: platform.EForbidden,
+		Msg:  "User is inactive",
 	}, w)
 }
 
@@ -117,6 +154,7 @@ var statusCodePlatformError = map[string]int{
 	platform.ENotFound:            http.StatusNotFound,
 	platform.EUnavailable:         http.StatusServiceUnavailable,
 	platform.EForbidden:           http.StatusForbidden,
+	platform.ETooManyRequests:     http.StatusTooManyRequests,
 	platform.EUnauthorized:        http.StatusUnauthorized,
 	platform.EMethodNotAllowed:    http.StatusMethodNotAllowed,
 }

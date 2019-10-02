@@ -3,6 +3,7 @@ import {
   signin,
   setupUser,
   createDashboard,
+  createCell,
   createOrg,
   createSource,
   flush,
@@ -17,6 +18,11 @@ import {
   createScraper,
   fluxEqual,
   createTelegraf,
+  createToken,
+  createDashboardTemplate,
+  writeData,
+  getByTestIDSubStr,
+  createEndpoint,
 } from './support/commands'
 
 declare global {
@@ -27,18 +33,24 @@ declare global {
       createSource: typeof createSource
       createTask: typeof createTask
       createVariable: typeof createVariable
+      createDashboardTemplate: typeof createDashboardTemplate
       createDashboard: typeof createDashboard
+      createCell: typeof createCell
       createOrg: typeof createOrg
       flush: typeof flush
       getByTestID: typeof getByTestID
       getByInputName: typeof getByInputName
       getByTitle: typeof getByTitle
+      getByTestIDSubStr: typeof getByTestIDSubStr
       createAndAddLabel: typeof createAndAddLabel
       createLabel: typeof createLabel
       createBucket: typeof createBucket
       createScraper: typeof createScraper
       fluxEqual: typeof fluxEqual
       createTelegraf: typeof createTelegraf
+      createToken: typeof createToken
+      writeData: typeof writeData
+      createEndpoint: typeof createEndpoint
     }
   }
 }

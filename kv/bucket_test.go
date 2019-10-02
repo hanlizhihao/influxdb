@@ -45,7 +45,12 @@ func initInmemBucketService(f influxdbtesting.BucketFields, t *testing.T) (influ
 
 func initBucketService(s kv.Store, f influxdbtesting.BucketFields, t *testing.T) (influxdb.BucketService, string, func()) {
 	svc := kv.NewService(s)
+	svc.OrgBucketIDs = f.OrgBucketIDs
 	svc.IDGenerator = f.IDGenerator
+	svc.TimeGenerator = f.TimeGenerator
+	if f.TimeGenerator == nil {
+		svc.TimeGenerator = influxdb.RealTimeGenerator{}
+	}
 
 	ctx := context.Background()
 	if err := svc.Initialize(ctx); err != nil {

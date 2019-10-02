@@ -3,7 +3,7 @@ import {push, goBack} from 'react-router-redux'
 import _ from 'lodash'
 
 // APIs
-import {Run, LogEvent, ITask as Task} from '@influxdata/influx'
+import {LogEvent, ITask as Task} from '@influxdata/influx'
 import {client} from 'src/utils/api'
 import {notify} from 'src/shared/actions/notifications'
 import {
@@ -12,8 +12,6 @@ import {
   taskDeleteFailed,
   taskNotFound,
   taskUpdateFailed,
-  taskImportFailed,
-  taskImportSuccess,
   taskUpdateSuccess,
   taskCreatedSuccess,
   taskDeleteSuccess,
@@ -21,7 +19,12 @@ import {
   taskCloneFailed,
   taskRunSuccess,
   taskGetFailed,
-} from 'src/shared/copy/v2/notifications'
+} from 'src/shared/copy/notifications'
+import {
+  importTaskFailed,
+  importTaskSucceeded,
+} from 'src/shared/copy/notifications'
+import {createTaskFromTemplate as createTaskFromTemplateAJAX} from 'src/templates/api'
 
 // Actions
 import {setExportTemplate} from 'src/templates/actions'
@@ -30,17 +33,17 @@ import {setExportTemplate} from 'src/templates/actions'
 import * as copy from 'src/shared/copy/notifications'
 
 // Types
-import {AppState, Label} from 'src/types'
+import {AppState, Label, TaskTemplate} from 'src/types'
+import {RemoteDataState} from '@influxdata/clockface'
+import {Run} from 'src/tasks/components/TaskRunsPage'
 
 // Utils
-import {getDeep} from 'src/utils/wrappers'
 import {getErrorMessage} from 'src/utils/api'
 import {insertPreambleInScript} from 'src/shared/utils/insertPreambleInScript'
 import {TaskOptionKeys, TaskSchedule} from 'src/utils/taskOptionsToFluxScript'
 import {taskToTemplate} from 'src/shared/utils/resourceToTemplate'
-
-// Types
-import {RemoteDataState} from '@influxdata/clockface'
+import {isLimitError} from 'src/cloud/utils/limits'
+import {checkTaskLimits} from 'src/cloud/actions/limits'
 
 export type Action =
   | SetNewScript
@@ -49,7 +52,6 @@ export type Action =
   | SetCurrentScript
   | SetCurrentTask
   | SetShowInactive
-  | SetDropdownOrgID
   | SetTaskInterval
   | SetTaskCron
   | ClearTask
@@ -58,12 +60,20 @@ export type Action =
   | SetRuns
   | SetLogs
   | UpdateTask
+  | SetTaskStatus
 
 type GetStateFunc = () => AppState
 
 export interface SetAllTaskOptions {
   type: 'SET_ALL_TASK_OPTIONS'
   payload: Task
+}
+
+export interface SetTaskStatus {
+  type: 'SET_TASKS_STATUS'
+  payload: {
+    status: RemoteDataState
+  }
 }
 
 export interface ClearTask {
@@ -122,13 +132,6 @@ export interface SetShowInactive {
   payload: {}
 }
 
-export interface SetDropdownOrgID {
-  type: 'SET_DROPDOWN_ORG_ID'
-  payload: {
-    dropdownOrgID: string
-  }
-}
-
 export interface SetTaskOption {
   type: 'SET_TASK_OPTION'
   payload: {
@@ -164,12 +167,17 @@ export const setTaskOption = (taskOption: {
   value: string
 }): SetTaskOption => ({
   type: 'SET_TASK_OPTION',
-  payload: {...taskOption},
+  payload: taskOption,
+})
+
+export const setTasksStatus = (status: RemoteDataState): SetTaskStatus => ({
+  type: 'SET_TASKS_STATUS',
+  payload: {status},
 })
 
 export const setAllTaskOptions = (task: Task): SetAllTaskOptions => ({
   type: 'SET_ALL_TASK_OPTIONS',
-  payload: {...task},
+  payload: task,
 })
 
 export const clearTask = (): ClearTask => ({
@@ -206,11 +214,6 @@ export const setShowInactive = (): SetShowInactive => ({
   payload: {},
 })
 
-export const setDropdownOrgID = (dropdownOrgID: string): SetDropdownOrgID => ({
-  type: 'SET_DROPDOWN_ORG_ID',
-  payload: {dropdownOrgID},
-})
-
 export const setRuns = (runs: Run[], runStatus: RemoteDataState): SetRuns => ({
   type: 'SET_RUNS',
   payload: {runs, runStatus},
@@ -227,6 +230,28 @@ export const updateTask = (task: Task): UpdateTask => ({
 })
 
 // Thunks
+export const getTasks = () => async (
+  dispatch,
+  getState: GetStateFunc
+): Promise<void> => {
+  try {
+    dispatch(setTasksStatus(RemoteDataState.Loading))
+    const {
+      orgs: {org},
+    } = getState()
+
+    const tasks = await client.tasks.getAll(org.id)
+
+    dispatch(setTasks(tasks))
+    dispatch(setTasksStatus(RemoteDataState.Done))
+  } catch (e) {
+    dispatch(setTasksStatus(RemoteDataState.Error))
+    console.error(e)
+    const message = getErrorMessage(e)
+    dispatch(notify(tasksFetchFailed(message)))
+  }
+}
+
 export const addTaskLabelsAsync = (taskID: string, labels: Label[]) => async (
   dispatch
 ): Promise<void> => {
@@ -237,7 +262,7 @@ export const addTaskLabelsAsync = (taskID: string, labels: Label[]) => async (
     dispatch(updateTask(task))
   } catch (error) {
     console.error(error)
-    dispatch(copy.addTaskLabelFailed())
+    dispatch(notify(copy.addTaskLabelFailed()))
   }
 }
 
@@ -252,7 +277,7 @@ export const removeTaskLabelsAsync = (
     dispatch(updateTask(task))
   } catch (error) {
     console.error(error)
-    dispatch(copy.removeTaskLabelFailed())
+    dispatch(notify(copy.removeTaskLabelFailed()))
   }
 }
 
@@ -260,7 +285,7 @@ export const updateTaskStatus = (task: Task) => async dispatch => {
   try {
     await client.tasks.updateStatus(task.id, task.status)
 
-    dispatch(populateTasks())
+    dispatch(getTasks())
     dispatch(notify(taskUpdateSuccess()))
   } catch (e) {
     console.error(e)
@@ -273,7 +298,7 @@ export const updateTaskName = (task: Task) => async dispatch => {
   try {
     await client.tasks.update(task.id, task)
 
-    dispatch(populateTasks())
+    dispatch(getTasks())
     dispatch(notify(taskUpdateSuccess()))
   } catch (e) {
     console.error(e)
@@ -286,7 +311,7 @@ export const deleteTask = (task: Task) => async dispatch => {
   try {
     await client.tasks.delete(task.id)
 
-    dispatch(populateTasks())
+    dispatch(getTasks())
     dispatch(notify(taskDeleteSuccess()))
   } catch (e) {
     console.error(e)
@@ -300,70 +325,50 @@ export const cloneTask = (task: Task, _) => async dispatch => {
     await client.tasks.clone(task.id)
 
     dispatch(notify(taskCloneSuccess(task.name)))
-    dispatch(populateTasks())
-  } catch (e) {
-    console.error(e)
-    const message = getErrorMessage(e)
-    dispatch(notify(taskCloneFailed(task.name, message)))
+    dispatch(getTasks())
+    dispatch(checkTaskLimits())
+  } catch (error) {
+    console.error(error)
+    if (isLimitError(error)) {
+      dispatch(notify(copy.resourceLimitReached('tasks')))
+    } else {
+      const message = getErrorMessage(error)
+      dispatch(notify(taskCloneFailed(task.name, message)))
+    }
   }
 }
 
-export const populateTasks = () => async (
-  dispatch,
-  getState: GetStateFunc
-): Promise<void> => {
-  try {
-    const {orgs} = getState()
-
-    const user = await client.users.me()
-    const tasks = await client.tasks.getAllByUser(user)
-
-    const mappedTasks = tasks.map(task => {
-      const org = orgs.find(org => org.id === task.orgID)
-
-      return {
-        ...task,
-        organization: org,
-      }
-    })
-
-    dispatch(setTasks(mappedTasks))
-  } catch (e) {
-    console.error(e)
-    const message = getErrorMessage(e)
-    dispatch(notify(tasksFetchFailed(message)))
-  }
-}
-
-export const selectTaskByID = (id: string, route?: string) => async (
+export const selectTaskByID = (id: string) => async (
   dispatch
 ): Promise<void> => {
   try {
     const task = await client.tasks.get(id)
-
-    return dispatch(setCurrentTask({...task}))
+    dispatch(setCurrentTask(task))
   } catch (e) {
     console.error(e)
-    dispatch(goToTasks(route))
+    dispatch(goToTasks())
     const message = getErrorMessage(e)
     dispatch(notify(taskNotFound(message)))
   }
 }
 
-export const selectTask = (task: Task, route?: string) => async dispatch => {
-  if (route) {
-    dispatch(push(route))
-    return
-  }
-  dispatch(push(`/tasks/${task.id}`))
+export const selectTask = (task: Task) => async (
+  dispatch,
+  getState: GetStateFunc
+) => {
+  const {
+    orgs: {org},
+  } = getState()
+
+  dispatch(push(`/orgs/${org.id}/tasks/${task.id}`))
 }
 
-export const goToTasks = (route?: string) => async dispatch => {
-  if (route) {
-    dispatch(push(route))
-    return
-  }
-  dispatch(push('/tasks'))
+export const goToTasks = () => async (dispatch, getState: GetStateFunc) => {
+  const {
+    orgs: {org},
+  } = getState()
+
+  dispatch(push(`/orgs/${org.id}/tasks`))
 }
 
 export const cancel = () => async dispatch => {
@@ -371,31 +376,35 @@ export const cancel = () => async dispatch => {
   dispatch(goBack())
 }
 
-export const updateScript = (route?: string) => async (
-  dispatch,
-  getState: GetStateFunc
-) => {
+export const updateScript = () => async (dispatch, getState: GetStateFunc) => {
   try {
     const {
       tasks: {currentScript: script, currentTask: task, taskOptions},
     } = getState()
 
-    const updatedTask: Partial<Task> & {name: string; flux: string} = {
+    const updatedTask: Partial<Task> & {
+      name: string
+      flux: string
+      token: string
+    } = {
       flux: script,
       name: taskOptions.name,
       offset: taskOptions.offset,
+      token: null,
     }
 
     if (taskOptions.taskScheduleType === TaskSchedule.interval) {
       updatedTask.every = taskOptions.interval
+      updatedTask.cron = null
     } else {
       updatedTask.cron = taskOptions.cron
+      updatedTask.every = null
     }
 
     await client.tasks.update(task.id, updatedTask)
 
+    dispatch(goToTasks())
     dispatch(setCurrentTask(null))
-    dispatch(goToTasks(route))
     dispatch(notify(taskUpdateSuccess()))
   } catch (e) {
     console.error(e)
@@ -404,51 +413,32 @@ export const updateScript = (route?: string) => async (
   }
 }
 
-export const saveNewScript = (
-  script: string,
-  preamble: string,
-  orgName: string,
-  route?: string
-) => async (dispatch): Promise<void> => {
-  try {
-    const fluxScript = await insertPreambleInScript(script, preamble)
-
-    await client.tasks.create(orgName, fluxScript)
-
-    dispatch(setNewScript(''))
-    dispatch(clearTask())
-    dispatch(populateTasks())
-    dispatch(goToTasks(route))
-    dispatch(notify(taskCreatedSuccess()))
-  } catch (error) {
-    console.error(error)
-    const message = getErrorMessage(error)
-    dispatch(notify(taskNotCreated(message)))
-  }
-}
-
-export const importTask = (script: string) => async (
+export const saveNewScript = (script: string, preamble: string) => async (
   dispatch,
   getState: GetStateFunc
 ): Promise<void> => {
   try {
-    if (_.isEmpty(script)) {
-      dispatch(notify(taskImportFailed('File is empty')))
-      return
-    }
+    const fluxScript = await insertPreambleInScript(script, preamble)
 
-    const {orgs} = await getState()
-    const orgID = getDeep<string>(orgs, '0.id', '') // TODO org selection by user.
+    const {
+      orgs: {org},
+    } = getState()
+    await client.tasks.createByOrgID(org.id, fluxScript, null)
 
-    await client.tasks.create(orgID, script)
-
-    dispatch(populateTasks())
-
-    dispatch(notify(taskImportSuccess()))
+    dispatch(setNewScript(''))
+    dispatch(clearTask())
+    dispatch(getTasks())
+    dispatch(goToTasks())
+    dispatch(notify(taskCreatedSuccess()))
+    dispatch(checkTaskLimits())
   } catch (error) {
     console.error(error)
-    const message = getErrorMessage(error)
-    dispatch(notify(taskImportFailed(message)))
+    if (isLimitError(error)) {
+      dispatch(notify(copy.resourceLimitReached('tasks')))
+    } else {
+      const message = getErrorMessage(error)
+      dispatch(notify(taskNotCreated(message)))
+    }
   }
 }
 
@@ -456,9 +446,22 @@ export const getRuns = (taskID: string) => async (dispatch): Promise<void> => {
   try {
     dispatch(setRuns([], RemoteDataState.Loading))
 
-    const runs = await client.tasks.getRunsByTaskID(taskID)
+    const [runs] = await Promise.all([
+      client.tasks.getRunsByTaskID(taskID),
+      dispatch(selectTaskByID(taskID)),
+    ])
 
-    dispatch(setRuns(runs, RemoteDataState.Done))
+    const runsWithDuration = runs.map(run => {
+      const finished = new Date(run.finishedAt)
+      const started = new Date(run.startedAt)
+
+      return {
+        ...run,
+        duration: `${runDuration(finished, started)}`,
+      }
+    })
+
+    dispatch(setRuns(runsWithDuration, RemoteDataState.Done))
   } catch (error) {
     console.error(error)
     const message = getErrorMessage(error)
@@ -472,6 +475,8 @@ export const runTask = (taskID: string) => async dispatch => {
     await client.tasks.startRunByTaskID(taskID)
     dispatch(notify(taskRunSuccess()))
   } catch (error) {
+    const message = getErrorMessage(error)
+    dispatch(notify(copy.taskRunFailed(message)))
     console.error(error)
   }
 }
@@ -493,14 +498,51 @@ export const convertToTemplate = (taskID: string) => async (
 ): Promise<void> => {
   try {
     dispatch(setExportTemplate(RemoteDataState.Loading))
-
     const task = await client.tasks.get(taskID)
     const taskTemplate = taskToTemplate(task)
-    const orgID = task.orgID // TODO remove when org is implicit app state
 
-    dispatch(setExportTemplate(RemoteDataState.Done, taskTemplate, orgID))
+    dispatch(setExportTemplate(RemoteDataState.Done, taskTemplate))
   } catch (error) {
     dispatch(setExportTemplate(RemoteDataState.Error))
     dispatch(notify(copy.createTemplateFailed(error)))
   }
+}
+
+export const createTaskFromTemplate = (template: TaskTemplate) => async (
+  dispatch,
+  getState: GetStateFunc
+): Promise<void> => {
+  try {
+    const {
+      orgs: {org},
+    } = await getState()
+
+    await createTaskFromTemplateAJAX(template, org.id)
+
+    dispatch(getTasks())
+    dispatch(notify(importTaskSucceeded()))
+    dispatch(checkTaskLimits())
+  } catch (error) {
+    if (isLimitError(error)) {
+      dispatch(notify(copy.resourceLimitReached('tasks')))
+    } else {
+      dispatch(notify(importTaskFailed(error)))
+    }
+  }
+}
+
+export const runDuration = (finishedAt: Date, startedAt: Date): string => {
+  let timeTag = 'seconds'
+
+  if (isNaN(finishedAt.getTime()) || isNaN(startedAt.getTime())) {
+    return ''
+  }
+  let diff = (finishedAt.getTime() - startedAt.getTime()) / 1000
+
+  if (diff > 60) {
+    diff = Math.round(diff / 60)
+    timeTag = 'minutes'
+  }
+
+  return diff + ' ' + timeTag
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/csv"
 	"github.com/influxdata/flux/lang"
+	"github.com/influxdata/flux/repl"
 	platform "github.com/influxdata/influxdb"
 	platformhttp "github.com/influxdata/influxdb/http"
 	"github.com/influxdata/influxdb/kit/check"
@@ -52,9 +53,9 @@ func (s *SourceProxyQueryService) fluxQuery(ctx context.Context, w io.Writer, re
 	case lang.FluxCompiler:
 		request.Query = c.Query
 		request.Type = lang.FluxCompilerType
-	case lang.SpecCompiler:
+	case repl.Compiler:
 		request.Spec = c.Spec
-		request.Type = lang.SpecCompilerType
+		request.Type = repl.CompilerType
 	default:
 		return flux.Statistics{}, tracing.LogError(span, fmt.Errorf("compiler type not supported: %s", c.CompilerType()))
 	}
@@ -91,7 +92,6 @@ func (s *SourceProxyQueryService) fluxQuery(ctx context.Context, w io.Writer, re
 	hreq.Header.Set("Authorization", s.Token)
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq = hreq.WithContext(ctx)
-	tracing.InjectToHTTPRequest(span, hreq)
 
 	hc := newTraceClient(u.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(hreq)
@@ -139,7 +139,6 @@ func (s *SourceProxyQueryService) influxQuery(ctx context.Context, w io.Writer, 
 	params.Set("rp", compiler.RP)
 
 	hreq.URL.RawQuery = params.Encode()
-	tracing.InjectToHTTPRequest(span, hreq)
 
 	hc := newTraceClient(u.Scheme, s.InsecureSkipVerify)
 	resp, err := hc.Do(hreq)

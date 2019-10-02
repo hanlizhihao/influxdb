@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/influxdata/influxdb/kit/tracing"
-	"github.com/influxdata/influxdb/pkg/file"
+	"github.com/influxdata/influxdb/pkg/fs"
 	"github.com/influxdata/influxdb/pkg/limiter"
 	"github.com/influxdata/influxdb/pkg/metrics"
 	"github.com/influxdata/influxdb/query"
@@ -79,6 +79,11 @@ type TSMFile interface {
 	// OverlapsKeyRange returns true if the key range of the file intersects min and max.
 	OverlapsKeyRange(min, max []byte) bool
 
+	// OverlapsKeyPrefixRange returns true if the key range of the file
+	// intersects min and max, evaluating up to the length of min and max
+	// of the key range.
+	OverlapsKeyPrefixRange(min, max []byte) bool
+
 	// TimeRange returns the min and max time across all keys in the file.
 	TimeRange() (int64, int64)
 
@@ -112,7 +117,7 @@ type TSMFile interface {
 
 	// DeletePrefix removes the values for keys beginning with prefix. It calls dead with
 	// any keys that became dead as a result of this call.
-	DeletePrefix(prefix []byte, min, max int64, dead func([]byte)) error
+	DeletePrefix(prefix []byte, min, max int64, pred Predicate, dead func([]byte)) error
 
 	// HasTombstones returns true if file contains values that have been deleted.
 	HasTombstones() bool
@@ -149,6 +154,12 @@ type TSMFile interface {
 	// BlockIterator returns an iterator pointing to the first block in the file and
 	// allows sequential iteration to each and every block.
 	BlockIterator() *BlockIterator
+
+	// TimeRangeIterator returns an iterator over the keys, starting at the provided
+	// key. Calling the HasData accessor will return true if data exists for the
+	// interval [min, max] for the current key.
+	// Next must be called before calling any of the accessors.
+	TimeRangeIterator(key []byte, min, max int64) *TimeRangeIterator
 
 	// Free releases any resources held by the FileStore to free up system resources.
 	Free() error
@@ -188,8 +199,9 @@ type FileStore struct {
 	// recalculated
 	lastFileStats []FileStat
 
-	currentGeneration int
-	dir               string
+	currentGeneration     int        // internally maintained generation
+	currentGenerationFunc func() int // external generation
+	dir                   string
 
 	files           []TSMFile
 	tsmMMAPWillNeed bool          // If true then the kernel will be advised MMAP_WILLNEED for TSM files.
@@ -268,6 +280,11 @@ func (f *FileStore) ParseFileName(path string) (int, int, error) {
 	return f.parseFileName(path)
 }
 
+// SetCurrentGenerationFunc must be set before using FileStore.
+func (f *FileStore) SetCurrentGenerationFunc(fn func() int) {
+	f.currentGenerationFunc = fn
+}
+
 // WithLogger sets the logger on the file store.
 func (f *FileStore) WithLogger(log *zap.Logger) {
 	f.logger = log.With(zap.String("service", "filestore"))
@@ -292,42 +309,87 @@ type fileTracker struct {
 	metrics   *fileMetrics
 	labels    prometheus.Labels
 	diskBytes uint64
-	fileCount uint64
 }
 
 func newFileTracker(metrics *fileMetrics, defaultLabels prometheus.Labels) *fileTracker {
 	return &fileTracker{metrics: metrics, labels: defaultLabels}
 }
 
+// Labels returns a copy of the default labels used by the tracker's metrics.
+// The returned map is safe for modification.
 func (t *fileTracker) Labels() prometheus.Labels {
-	return t.labels
+	labels := make(prometheus.Labels, len(t.labels))
+	for k, v := range t.labels {
+		labels[k] = v
+	}
+	return labels
 }
 
 // Bytes returns the number of bytes in use on disk.
 func (t *fileTracker) Bytes() uint64 { return atomic.LoadUint64(&t.diskBytes) }
 
 // SetBytes sets the number of bytes in use on disk.
-func (t *fileTracker) SetBytes(bytes uint64) {
-	atomic.StoreUint64(&t.diskBytes, bytes)
-
+func (t *fileTracker) SetBytes(bytes map[int]uint64) {
+	total := uint64(0)
 	labels := t.Labels()
-	t.metrics.DiskSize.With(labels).Set(float64(bytes))
+	sizes := make(map[string]uint64)
+	for k, v := range bytes {
+		label := formatLevel(uint64(k))
+		sizes[label] += v
+		total += v
+	}
+	for k, v := range sizes {
+		labels["level"] = k
+		t.metrics.DiskSize.With(labels).Set(float64(v))
+	}
+	atomic.StoreUint64(&t.diskBytes, total)
 }
 
 // AddBytes increases the number of bytes.
-func (t *fileTracker) AddBytes(bytes uint64) {
+func (t *fileTracker) AddBytes(bytes uint64, level int) {
 	atomic.AddUint64(&t.diskBytes, bytes)
 
 	labels := t.Labels()
+	labels["level"] = formatLevel(uint64(level))
 	t.metrics.DiskSize.With(labels).Add(float64(bytes))
 }
 
 // SetFileCount sets the number of files in the FileStore.
-func (t *fileTracker) SetFileCount(files uint64) {
-	atomic.StoreUint64(&t.fileCount, files)
-
+func (t *fileTracker) SetFileCount(files map[int]uint64) {
 	labels := t.Labels()
-	t.metrics.Files.With(labels).Set(float64(files))
+	counts := make(map[string]uint64)
+	for k, v := range files {
+		label := formatLevel(uint64(k))
+		counts[label] += v
+	}
+	for k, v := range counts {
+		labels["level"] = k
+		t.metrics.Files.With(labels).Set(float64(v))
+	}
+}
+
+func (t *fileTracker) ClearFileCounts() {
+	labels := t.Labels()
+	for i := uint64(1); i <= 4; i++ {
+		labels["level"] = formatLevel(i)
+		t.metrics.Files.With(labels).Set(float64(0))
+	}
+}
+
+func (t *fileTracker) ClearDiskSizes() {
+	labels := t.Labels()
+	for i := uint64(1); i <= 4; i++ {
+		labels["level"] = formatLevel(i)
+		t.metrics.DiskSize.With(labels).Set(float64(0))
+	}
+}
+
+func formatLevel(level uint64) string {
+	if level >= 4 {
+		return "4+"
+	} else {
+		return fmt.Sprintf("%d", level)
+	}
 }
 
 // Count returns the number of TSM files currently loaded.
@@ -338,35 +400,32 @@ func (f *FileStore) Count() int {
 }
 
 // Files returns the slice of TSM files currently loaded. This is only used for
-// tests, and the files aren't guaranteed to stay valid in the presense of compactions.
+// tests, and the files aren't guaranteed to stay valid in the presence of compactions.
 func (f *FileStore) Files() []TSMFile {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.files
 }
 
-// Free releases any resources held by the FileStore.  The resources will be re-acquired
-// if necessary if they are needed after freeing them.
-func (f *FileStore) Free() error {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	for _, f := range f.files {
-		if err := f.Free(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // CurrentGeneration returns the current generation of the TSM files.
+// Delegates to currentGenerationFunc, if set. Only called by tests.
 func (f *FileStore) CurrentGeneration() int {
+	if fn := f.currentGenerationFunc; fn != nil {
+		return fn()
+	}
+
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	return f.currentGeneration
 }
 
 // NextGeneration increments the max file ID and returns the new value.
+// Delegates to currentGenerationFunc, if set.
 func (f *FileStore) NextGeneration() int {
+	if fn := f.currentGenerationFunc; fn != nil {
+		return fn()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.currentGeneration++
@@ -432,6 +491,31 @@ func (f *FileStore) Type(key []byte) (byte, error) {
 // Delete removes the keys from the set of keys available in this file.
 func (f *FileStore) Delete(keys [][]byte) error {
 	return f.DeleteRange(keys, math.MinInt64, math.MaxInt64)
+}
+
+type unrefs []TSMFile
+
+func (u *unrefs) Unref() {
+	for _, f := range *u {
+		f.Unref()
+	}
+}
+
+// ForEachFile calls fn for all TSM files or until fn returns false.
+// fn is called on the same goroutine as the caller.
+func (f *FileStore) ForEachFile(fn func(f TSMFile) bool) {
+	f.mu.RLock()
+	files := make(unrefs, 0, len(f.files))
+	defer files.Unref()
+
+	for _, f := range f.files {
+		f.Ref()
+		files = append(files, f)
+		if !fn(f) {
+			break
+		}
+	}
+	f.mu.RUnlock()
 }
 
 func (f *FileStore) Apply(fn func(r TSMFile) error) error {
@@ -558,7 +642,7 @@ func (f *FileStore) Open(ctx context.Context) error {
 			return err
 		}
 
-		if generation >= f.currentGeneration {
+		if f.currentGenerationFunc == nil && generation >= f.currentGeneration {
 			f.currentGeneration = generation + 1
 		}
 
@@ -587,7 +671,7 @@ func (f *FileStore) Open(ctx context.Context) error {
 			// the file, and continue loading the shard without it.
 			if err != nil {
 				f.logger.Error("Cannot read corrupt tsm file, renaming", zap.String("path", file.Name()), zap.Int("id", idx), zap.Error(err))
-				if e := os.Rename(file.Name(), file.Name()+"."+BadTSMFileExtension); e != nil {
+				if e := fs.RenameFile(file.Name(), file.Name()+"."+BadTSMFileExtension); e != nil {
 					f.logger.Error("Cannot rename corrupt tsm file", zap.String("path", file.Name()), zap.Int("id", idx), zap.Error(e))
 					readerC <- &res{r: df, err: fmt.Errorf("cannot rename corrupt file %s: %v", file.Name(), e)}
 					return
@@ -600,6 +684,12 @@ func (f *FileStore) Open(ctx context.Context) error {
 	}
 
 	var lm int64
+	counts := make(map[int]uint64, 4)
+	sizes := make(map[int]uint64, 4)
+	for i := 1; i <= 4; i++ {
+		counts[i] = 0
+		sizes[i] = 0
+	}
 	for range files {
 		res := <-readerC
 		if res.err != nil {
@@ -608,13 +698,19 @@ func (f *FileStore) Open(ctx context.Context) error {
 			continue
 		}
 		f.files = append(f.files, res.r)
+		name := filepath.Base(res.r.Stats().Path)
+		_, seq, err := f.parseFileName(name)
+		if err != nil {
+			return err
+		}
+		counts[seq]++
 
 		// Accumulate file store size stats
 		totalSize := uint64(res.r.Size())
 		for _, ts := range res.r.TombstoneFiles() {
 			totalSize += uint64(ts.Size)
 		}
-		f.tracker.AddBytes(totalSize)
+		sizes[seq] += totalSize
 
 		// Re-initialize the lastModified time for the file store
 		if res.r.LastModified() > lm {
@@ -626,7 +722,8 @@ func (f *FileStore) Open(ctx context.Context) error {
 	close(readerC)
 
 	sort.Sort(tsmReaders(f.files))
-	f.tracker.SetFileCount(uint64(len(f.files)))
+	f.tracker.SetBytes(sizes)
+	f.tracker.SetFileCount(counts)
 	return nil
 }
 
@@ -639,7 +736,7 @@ func (f *FileStore) Close() error {
 
 	f.lastFileStats = nil
 	f.files = nil
-	f.tracker.SetFileCount(uint64(0))
+	f.tracker.ClearFileCounts()
 
 	// Let other methods access this closed object while we do the actual closing.
 	f.mu.Unlock()
@@ -786,7 +883,7 @@ func (f *FileStore) replace(oldFiles, newFiles []string, updatedFn func(r []TSMF
 		if strings.HasSuffix(file, tsmTmpExt) {
 			// The new TSM files have a tmp extension.  First rename them.
 			newName = file[:len(file)-4]
-			if err := os.Rename(file, newName); err != nil {
+			if err := fs.RenameFile(file, newName); err != nil {
 				return err
 			}
 		}
@@ -906,7 +1003,7 @@ func (f *FileStore) replace(oldFiles, newFiles []string, updatedFn func(r []TSMF
 		}
 	}
 
-	if err := file.SyncDir(f.dir); err != nil {
+	if err := fs.SyncDir(f.dir); err != nil {
 		return err
 	}
 
@@ -925,18 +1022,26 @@ func (f *FileStore) replace(oldFiles, newFiles []string, updatedFn func(r []TSMF
 	f.lastFileStats = nil
 	f.files = active
 	sort.Sort(tsmReaders(f.files))
-	f.tracker.SetFileCount(uint64(len(f.files)))
+	f.tracker.ClearFileCounts()
+	f.tracker.ClearDiskSizes()
 
 	// Recalculate the disk size stat
-	var totalSize uint64
+	sizes := make(map[int]uint64, 4)
+	counts := make(map[int]uint64, 4)
 	for _, file := range f.files {
-		totalSize += uint64(file.Size())
+		size := uint64(file.Size())
 		for _, ts := range file.TombstoneFiles() {
-			totalSize += uint64(ts.Size)
+			size += uint64(ts.Size)
 		}
-
+		_, seq, err := f.parseFileName(file.Path())
+		if err != nil {
+			return err
+		}
+		sizes[seq] += size
+		counts[seq]++
 	}
-	f.tracker.SetBytes(totalSize)
+	f.tracker.SetBytes(sizes)
+	f.tracker.SetFileCount(counts)
 
 	return nil
 }
@@ -1353,6 +1458,11 @@ func (c *KeyCursor) seekDescending(t int64) {
 	}
 }
 
+// seekN returns the number of seek locations.
+func (c *KeyCursor) seekN() int {
+	return len(c.seeks)
+}
+
 // Next moves the cursor to the next position.
 // Data should be read by the ReadBlock functions.
 func (c *KeyCursor) Next() {
@@ -1389,7 +1499,7 @@ func (c *KeyCursor) nextAscending() {
 	}
 	c.current[0] = c.seeks[c.pos]
 
-	// If we have ovelapping blocks, append all their values so we can dedup
+	// If we have overlapping blocks, append all their values so we can dedup
 	for i := c.pos + 1; i < len(c.seeks); i++ {
 		if c.seeks[i].read() {
 			continue
@@ -1411,17 +1521,18 @@ func (c *KeyCursor) nextDescending() {
 
 	// Append the first matching block
 	if len(c.current) == 0 {
-		c.current = make([]*location, 1)
+		c.current = append(c.current, nil)
 	} else {
 		c.current = c.current[:1]
 	}
 	c.current[0] = c.seeks[c.pos]
 
-	// If we have ovelapping blocks, append all their values so we can dedup
+	// If we have overlapping blocks, append all their values so we can dedup
 	for i := c.pos; i >= 0; i-- {
 		if c.seeks[i].read() {
 			continue
 		}
+
 		c.current = append(c.current, c.seeks[i])
 	}
 }

@@ -1,3 +1,5 @@
+import {NotificationEndpoint} from '../../src/types'
+
 export const signin = (): Cypress.Chainable<Cypress.Response> => {
   return cy.fixture('user').then(({username, password}) => {
     return cy.setupUser().then(body => {
@@ -23,6 +25,60 @@ export const createDashboard = (
     url: '/api/v2/dashboards',
     body: {
       name,
+      orgID,
+    },
+  })
+}
+
+export const createCell = (
+  dbID: string,
+  dims: {x: number; y: number; height: number; width: number} = {
+    x: 0,
+    y: 0,
+    height: 4,
+    width: 4,
+  },
+  name?: string
+): Cypress.Chainable<Cypress.Response> => {
+  return cy.request({
+    method: 'POST',
+    url: `/api/v2/dashboards/${dbID}/cells`,
+    body: {
+      x: dims.x,
+      y: dims.y,
+      h: dims.height,
+      w: dims.width,
+      name: name,
+    },
+  })
+}
+
+export const createDashboardTemplate = (
+  orgID?: string,
+  name: string = 'Bashboard'
+): Cypress.Chainable<Cypress.Response> => {
+  return cy.request({
+    method: 'POST',
+    url: '/api/v2/documents/templates',
+    body: {
+      content: {
+        data: {
+          attributes: {name, description: ''},
+          relationships: {
+            label: {data: []},
+            cell: {data: []},
+            variable: {data: []},
+          },
+          type: 'dashboard',
+        },
+        included: [],
+      },
+      labels: [],
+      meta: {
+        description: `template created from dashboard: ${name}`,
+        version: '1',
+        name: `${name}-Template`,
+      },
       orgID,
     },
   })
@@ -56,12 +112,13 @@ export const createBucket = (
 }
 
 export const createTask = (
+  token: string,
   orgID?: string,
   name: string = '🦄ask'
 ): Cypress.Chainable<Cypress.Response> => {
   const flux = `option task = {
     name: "${name}",
-    every: 1d,
+    every: 24h,
     offset: 20m
   }
   from(bucket: "defbuck")
@@ -73,6 +130,7 @@ export const createTask = (
     body: {
       flux,
       orgID,
+      token,
     },
   })
 }
@@ -101,7 +159,11 @@ export const createVariable = (
 
 export const createLabel = (
   name?: string,
-  orgID?: string
+  orgID?: string,
+  properties: {description: string; color: string} = {
+    description: `test ${name}`,
+    color: '#ff0054',
+  }
 ): Cypress.Chainable<Cypress.Response> => {
   return cy.request({
     method: 'POST',
@@ -109,10 +171,7 @@ export const createLabel = (
     body: {
       name,
       orgID,
-      properties: {
-        description: `test ${name}`,
-        color: '#ff0054',
-      },
+      properties: properties,
     },
   })
 }
@@ -191,7 +250,7 @@ export const createScraper = (
 export const createTelegraf = (
   name?: string,
   description?: string,
-  organizationID?: string
+  orgID?: string
 ): Cypress.Chainable<Cypress.Response> => {
   return cy.request({
     method: 'POST',
@@ -201,8 +260,29 @@ export const createTelegraf = (
       description,
       agent: {collectionInterval: 10000},
       plugins: [],
-      organizationID,
+      orgID,
     },
+  })
+}
+
+/*
+[{action: 'write', resource: {type: 'views'}},
+      {action: 'write', resource: {type: 'documents'}},
+      {action: 'write', resource: {type: 'dashboards'}},
+      {action: 'write', resource: {type: 'buckets'}}]}
+ */
+
+export const createToken = (
+  orgId: string,
+  description: string,
+  status: string,
+  permissions: object[]
+): Cypress.Chainable<Cypress.Response> => {
+  return cy.request('POST', 'api/v2/authorizations', {
+    orgID: orgId,
+    description: description,
+    status: status,
+    permissions: permissions,
   })
 }
 
@@ -224,9 +304,25 @@ export const flush = () => {
   })
 }
 
+export const writeData = (
+  lines: string[]
+): Cypress.Chainable<Cypress.Response> => {
+  return cy.fixture('user').then(({org, bucket}) => {
+    cy.request({
+      method: 'POST',
+      url: '/api/v2/write?org=' + org + '&bucket=' + bucket,
+      body: lines.join('\n'),
+    })
+  })
+}
+
 // DOM node getters
 export const getByTestID = (dataTest: string): Cypress.Chainable => {
   return cy.get(`[data-testid="${dataTest}"]`)
+}
+
+export const getByTestIDSubStr = (dataTest: string): Cypress.Chainable => {
+  return cy.get(`[data-testid*="${dataTest}"]`)
 }
 
 export const getByInputName = (name: string): Cypress.Chainable => {
@@ -234,7 +330,7 @@ export const getByInputName = (name: string): Cypress.Chainable => {
 }
 
 export const getByTitle = (name: string): Cypress.Chainable => {
-  return cy.get(`[title=${name}]`)
+  return cy.get(`[title="${name}"]`)
 }
 
 // custom assertions
@@ -254,6 +350,16 @@ export const fluxEqual = (s1: string, s2: string): Cypress.Chainable => {
   return cy.wrap(strip1 === strip2)
 }
 
+// notification endpoints
+export const createEndpoint = (
+  endpoint: NotificationEndpoint
+): Cypress.Chainable<Cypress.Response> => {
+  return cy.request('POST', 'api/v2/notificationEndpoints', endpoint)
+}
+
+// notification endpoints
+Cypress.Commands.add('createEndpoint', createEndpoint)
+
 // assertions
 Cypress.Commands.add('fluxEqual', fluxEqual)
 
@@ -261,6 +367,7 @@ Cypress.Commands.add('fluxEqual', fluxEqual)
 Cypress.Commands.add('getByTestID', getByTestID)
 Cypress.Commands.add('getByInputName', getByInputName)
 Cypress.Commands.add('getByTitle', getByTitle)
+Cypress.Commands.add('getByTestIDSubStr', getByTestIDSubStr)
 
 // auth flow
 Cypress.Commands.add('signin', signin)
@@ -270,6 +377,8 @@ Cypress.Commands.add('setupUser', setupUser)
 
 // dashboards
 Cypress.Commands.add('createDashboard', createDashboard)
+Cypress.Commands.add('createDashboardTemplate', createDashboardTemplate)
+Cypress.Commands.add('createCell', createCell)
 
 // orgs
 Cypress.Commands.add('createOrg', createOrg)
@@ -289,9 +398,15 @@ Cypress.Commands.add('flush', flush)
 // tasks
 Cypress.Commands.add('createTask', createTask)
 
+// tokens
+Cypress.Commands.add('createToken', createToken)
+
 // variables
 Cypress.Commands.add('createVariable', createVariable)
 
-// Labels
+// labels
 Cypress.Commands.add('createLabel', createLabel)
 Cypress.Commands.add('createAndAddLabel', createAndAddLabel)
+
+// test
+Cypress.Commands.add('writeData', writeData)

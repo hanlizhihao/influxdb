@@ -1,31 +1,30 @@
 // Libraries
 import React, {PureComponent} from 'react'
 // Components
-import {Overlay} from 'src/clockface'
+import {Overlay} from '@influxdata/clockface'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
   children: any
-  visible: boolean
   title: string
-  maxWidth?: number
+  maxWidth: number
   onDismiss: () => void
 }
 
 @ErrorHandling
 class WizardOverlay extends PureComponent<Props> {
-  public static defaultProps: Partial<Props> = {
+  public static defaultProps = {
     maxWidth: 1200,
   }
 
   public render() {
-    const {visible, title, maxWidth, children, onDismiss} = this.props
+    const {title, maxWidth, children, onDismiss} = this.props
 
     return (
-      <Overlay visible={visible}>
+      <Overlay visible={true}>
         <Overlay.Container maxWidth={maxWidth}>
-          <Overlay.Heading title={title} onDismiss={onDismiss} />
+          <Overlay.Header title={title} onDismiss={onDismiss} />
           <Overlay.Body>
             <div className="data-loading--overlay">{children}</div>
           </Overlay.Body>

@@ -1,4 +1,4 @@
-import {Organization} from '@influxdata/influx'
+import {Organization} from '../../src/types'
 
 const newLabelName = 'click-me'
 const dashboardName = 'Bee Happy'
@@ -12,38 +12,65 @@ describe('Dashboards', () => {
       cy.wrap(body.org).as('org')
     })
 
-    cy.fixture('routes').then(({dashboards}) => {
-      cy.visit(dashboards)
+    cy.fixture('routes').then(({orgs}) => {
+      cy.get('@org').then(({id}: Organization) => {
+        cy.visit(`${orgs}/${id}/dashboards`)
+      })
     })
   })
 
   it('can create a dashboard from empty state', () => {
-    cy.getByTestID('empty-state')
-      .contains('Create')
-      .click()
+    cy.getByTestID('empty-dashboards-list').within(() => {
+      cy.getByTestID('add-resource-dropdown--button').click()
+    })
 
-    cy.getByTestID('dropdown--item New Dashboard').click()
+    cy.getByTestID('add-resource-dropdown--new').click()
 
-    cy.visit('/dashboards')
+    cy.fixture('routes').then(({orgs}) => {
+      cy.get('@org').then(({id}: Organization) => {
+        cy.visit(`${orgs}/${id}/dashboards`)
+      })
+    })
 
     cy.getByTestID('dashboard-card').should('have.length', 1)
   })
 
   it('can create a dashboard from the header', () => {
-    cy.get('.page-header--container')
-      .contains('Create')
-      .click()
+    cy.getByTestID('add-resource-dropdown--button').click()
 
-    cy.getByTestID('dropdown--item New Dashboard').click()
+    cy.getByTestID('add-resource-dropdown--new').click()
 
-    cy.visit('/dashboards')
+    cy.fixture('routes').then(({orgs}) => {
+      cy.get('@org').then(({id}: Organization) => {
+        cy.visit(`${orgs}/${id}/dashboards`)
+      })
+    })
+
+    cy.getByTestID('dashboard-card').should('have.length', 1)
+  })
+
+  it.only('can create a dashboard from a Template', () => {
+    cy.getByTestID('dashboard-card').should('have.length', 0)
+    cy.get('@org').then(({id}: Organization) => {
+      cy.createDashboardTemplate(id)
+    })
+
+    cy.getByTestID('add-resource-dropdown--button').click()
+
+    cy.getByTestID('add-resource-dropdown--template').click()
+
+    cy.getByTestID('template--Bashboard-Template').click()
+
+    cy.getByTestID('template-panel').should('exist')
+
+    cy.getByTestID('create-dashboard-button').click()
 
     cy.getByTestID('dashboard-card').should('have.length', 1)
   })
 
   describe('Dashboard List', () => {
     beforeEach(() => {
-      cy.get<Organization>('@org').then(({id}) => {
+      cy.get('@org').then(({id}: Organization) => {
         cy.createDashboard(id, dashboardName).then(({body}) => {
           cy.createAndAddLabel('dashboards', id, body.id, newLabelName)
         })
@@ -53,7 +80,11 @@ describe('Dashboards', () => {
         })
       })
 
-      cy.visit('/dashboards')
+      cy.fixture('routes').then(({orgs}) => {
+        cy.get('@org').then(({id}: Organization) => {
+          cy.visit(`${orgs}/${id}/dashboards`)
+        })
+      })
     })
 
     it('can delete a dashboard', () => {
@@ -82,7 +113,7 @@ describe('Dashboards', () => {
           .first()
           .click()
 
-        cy.get('.input-field')
+        cy.get('.cf-input-field')
           .type(newName)
           .type('{enter}')
       })
@@ -121,7 +152,7 @@ describe('Dashboards', () => {
       it('can add an existing label to a dashboard', () => {
         const labelName = 'swogglez'
 
-        cy.get<Organization>('@org').then(({id}) => {
+        cy.get('@org').then(({id}: Organization) => {
           cy.createLabel(labelName, id).then(() => {
             cy.getByTestID(`inline-labels--add`)
               .first()
@@ -174,7 +205,7 @@ describe('Dashboards', () => {
 
         cy.getByTestID('dashboard-card')
           .first()
-          .get('.label')
+          .get('.cf-label')
           .should('contain', newLabelName)
       })
 

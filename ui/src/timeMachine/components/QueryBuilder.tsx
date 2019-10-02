@@ -4,11 +4,12 @@ import {connect} from 'react-redux'
 import {range} from 'lodash'
 
 // Components
-import {Button, ButtonShape, IconFont} from '@influxdata/clockface'
 import TagSelector from 'src/timeMachine/components/TagSelector'
-import QueryBuilderDataCard from 'src/timeMachine/components/QueryBuilderDataCard'
 import FancyScrollbar from 'src/shared/components/fancy_scrollbar/FancyScrollbar'
 import FunctionSelector from 'src/timeMachine/components/FunctionSelector'
+import AddCardButton from 'src/timeMachine/components/AddCardButton'
+import BuilderCard from 'src/timeMachine/components/builderCard/BuilderCard'
+import BucketsSelector from 'src/timeMachine/components/queryBuilder/BucketsSelector'
 
 // Actions
 import {loadBuckets, addTagSelector} from 'src/timeMachine/actions/queryBuilder'
@@ -17,16 +18,17 @@ import {loadBuckets, addTagSelector} from 'src/timeMachine/actions/queryBuilder'
 import {getActiveQuery, getActiveTimeMachine} from 'src/timeMachine/selectors'
 
 // Types
-import {AppState} from 'src/types'
+import {Check, AppState} from 'src/types'
 import {RemoteDataState} from 'src/types'
 
 interface StateProps {
   tagFiltersLength: number
   moreTags: boolean
+  check: Partial<Check>
 }
 
 interface DispatchProps {
-  onLoadBuckets: () => Promise<void>
+  onLoadBuckets: typeof loadBuckets
   onAddTagSelector: () => void
 }
 
@@ -46,18 +48,31 @@ class TimeMachineQueryBuilder extends PureComponent<Props, State> {
       <div className="query-builder" data-testid="query-builder">
         <div className="query-builder--cards">
           <FancyScrollbar>
-            <div className="query-builder--tag-selectors">
-              <QueryBuilderDataCard />
+            <div className="builder-card--list">
+              <BuilderCard testID="bucket-selector">
+                <BuilderCard.Header title="From" />
+                <BucketsSelector />
+              </BuilderCard>
               {range(tagFiltersLength).map(i => (
                 <TagSelector key={i} index={i} />
               ))}
               {this.addButton}
             </div>
           </FancyScrollbar>
-          <FunctionSelector />
+          {this.functionSelector}
         </div>
       </div>
     )
+  }
+
+  private get functionSelector(): JSX.Element {
+    const {check} = this.props
+
+    if (check.type === 'deadman') {
+      return
+    }
+
+    return <FunctionSelector />
   }
 
   private get addButton(): JSX.Element {
@@ -67,31 +82,28 @@ class TimeMachineQueryBuilder extends PureComponent<Props, State> {
       return null
     }
 
-    return (
-      <Button
-        shape={ButtonShape.Square}
-        icon={IconFont.Plus}
-        onClick={onAddTagSelector}
-        customClass="query-builder--add-tag-selector"
-      />
-    )
+    return <AddCardButton onClick={onAddTagSelector} collapsible={false} />
   }
 }
 
 const mstp = (state: AppState): StateProps => {
   const tagFiltersLength = getActiveQuery(state).builderConfig.tags.length
-  const tags = getActiveTimeMachine(state).queryBuilder.tags
+  const {
+    queryBuilder: {tags},
+    alerting: {check},
+  } = getActiveTimeMachine(state)
 
   const {keys, keysStatus} = tags[tags.length - 1]
 
   return {
     tagFiltersLength,
     moreTags: !(keys.length === 0 && keysStatus === RemoteDataState.Done),
+    check,
   }
 }
 
 const mdtp = {
-  onLoadBuckets: loadBuckets as any,
+  onLoadBuckets: loadBuckets,
   onAddTagSelector: addTagSelector,
 }
 

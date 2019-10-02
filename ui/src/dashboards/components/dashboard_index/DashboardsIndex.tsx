@@ -3,55 +3,50 @@ import React, {PureComponent} from 'react'
 import {InjectedRouter} from 'react-router'
 import {connect} from 'react-redux'
 
-// Components
-import DashboardsIndexContents from 'src/dashboards/components/dashboard_index/DashboardsIndexContents'
-import {Page} from 'src/pageLayout'
-import SearchWidget from 'src/shared/components/search_widget/SearchWidget'
-import AddResourceDropdown from 'src/shared/components/AddResourceDropdown'
-
-// APIs
-import {createDashboard, cloneDashboard} from 'src/dashboards/apis/'
-
-// Actions
-import {
-  getDashboardsAsync,
-  deleteDashboardAsync,
-  updateDashboardAsync,
-  addDashboardLabelsAsync,
-  removeDashboardLabelsAsync,
-} from 'src/dashboards/actions'
-import {retainRangesDashTimeV1 as retainRangesDashTimeV1Action} from 'src/dashboards/actions/ranges'
-import {notify as notifyAction} from 'src/shared/actions/notifications'
-
-// Constants
-import {DEFAULT_DASHBOARD_NAME} from 'src/dashboards/constants/index'
-import {dashboardCreateFailed} from 'src/shared/copy/notifications'
-
-// Types
-import {Notification} from 'src/types/notifications'
-import {Links, Dashboard, AppState, Organization} from 'src/types'
-
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
+// Components
+import DashboardsIndexContents from 'src/dashboards/components/dashboard_index/DashboardsIndexContents'
+import {Page} from '@influxdata/clockface'
+import SearchWidget from 'src/shared/components/search_widget/SearchWidget'
+import AddResourceDropdown from 'src/shared/components/AddResourceDropdown'
+import PageTitleWithOrg from 'src/shared/components/PageTitleWithOrg'
+import GetAssetLimits from 'src/cloud/components/GetAssetLimits'
+import GetResources, {ResourceType} from 'src/shared/components/GetResources'
+import AssetLimitAlert from 'src/cloud/components/AssetLimitAlert'
+
+// Utils
+import {pageTitleSuffixer} from 'src/shared/utils/pageTitles'
+import {extractDashboardLimits} from 'src/cloud/utils/limits'
+
+// Actions
+import {
+  deleteDashboardAsync,
+  updateDashboardAsync,
+  createDashboard as createDashboardAction,
+  cloneDashboard as cloneDashboardAction,
+} from 'src/dashboards/actions'
+
+// Types
+import {AppState} from 'src/types'
+import {LimitStatus} from 'src/cloud/actions/limits'
+import {ComponentStatus} from '@influxdata/clockface'
+
 interface DispatchProps {
-  handleGetDashboards: typeof getDashboardsAsync
   handleDeleteDashboard: typeof deleteDashboardAsync
   handleUpdateDashboard: typeof updateDashboardAsync
-  notify: (message: Notification) => void
-  retainRangesDashTimeV1: (dashboardIDs: string[]) => void
-  onAddDashboardLabels: typeof addDashboardLabelsAsync
-  onRemoveDashboardLabels: typeof removeDashboardLabelsAsync
+  createDashboard: typeof createDashboardAction
+  cloneDashboard: typeof cloneDashboardAction
 }
 
 interface StateProps {
-  links: Links
-  dashboards: Dashboard[]
-  orgs: Organization[]
+  limitStatus: LimitStatus
 }
 
 interface OwnProps {
   router: InjectedRouter
+  params: {orgID: string}
 }
 
 type Props = DispatchProps & StateProps & OwnProps
@@ -70,54 +65,60 @@ class DashboardIndex extends PureComponent<Props, State> {
     }
   }
 
-  public async componentDidMount() {
-    const {handleGetDashboards, dashboards} = this.props
-    await handleGetDashboards()
-    const dashboardIDs = dashboards.map(d => d.id)
-    this.props.retainRangesDashTimeV1(dashboardIDs)
-  }
-
   public render() {
-    const {dashboards, notify, handleUpdateDashboard} = this.props
+    const {
+      createDashboard,
+      cloneDashboard,
+      handleUpdateDashboard,
+      handleDeleteDashboard,
+      limitStatus,
+    } = this.props
     const {searchTerm} = this.state
-
     return (
       <>
-        <Page titleTag="Dashboards">
+        <Page titleTag={pageTitleSuffixer(['Dashboards'])}>
           <Page.Header fullWidth={false}>
             <Page.Header.Left>
-              <Page.Title title="Dashboards" />
+              <PageTitleWithOrg title="Dashboards" />
             </Page.Header.Left>
             <Page.Header.Right>
               <AddResourceDropdown
-                onSelectNew={this.handleCreateDashboard}
+                onSelectNew={createDashboard}
                 onSelectImport={this.summonImportOverlay}
+                onSelectTemplate={this.summonImportFromTemplateOverlay}
                 resourceName="Dashboard"
+                canImportFromTemplate={true}
+                status={this.addResourceStatus}
               />
             </Page.Header.Right>
           </Page.Header>
           <Page.Contents fullWidth={false} scrollable={true}>
-            <div className="col-md-12">
-              <DashboardsIndexContents
-                filterComponent={() => (
-                  <SearchWidget
-                    placeholderText="Filter dashboards..."
-                    onSearch={this.handleFilterDashboards}
-                    searchTerm={searchTerm}
+            <GetResources resource={ResourceType.Dashboards}>
+              <GetResources resource={ResourceType.Labels}>
+                <GetAssetLimits>
+                  <AssetLimitAlert
+                    resourceName="dashboards"
+                    limitStatus={limitStatus}
                   />
-                )}
-                dashboards={dashboards}
-                onDeleteDashboard={this.handleDeleteDashboard}
-                onCreateDashboard={this.handleCreateDashboard}
-                onCloneDashboard={this.handleCloneDashboard}
-                onUpdateDashboard={handleUpdateDashboard}
-                notify={notify}
-                searchTerm={searchTerm}
-                showOwnerColumn={true}
-                onFilterChange={this.handleFilterDashboards}
-                onImportDashboard={this.summonImportOverlay}
-              />
-            </div>
+                  <DashboardsIndexContents
+                    filterComponent={
+                      <SearchWidget
+                        placeholderText="Filter dashboards..."
+                        onSearch={this.handleFilterDashboards}
+                        searchTerm={searchTerm}
+                      />
+                    }
+                    onDeleteDashboard={handleDeleteDashboard}
+                    onCreateDashboard={createDashboard}
+                    onCloneDashboard={cloneDashboard}
+                    onUpdateDashboard={handleUpdateDashboard}
+                    searchTerm={searchTerm}
+                    onFilterChange={this.handleFilterDashboards}
+                    onImportDashboard={this.summonImportOverlay}
+                  />
+                </GetAssetLimits>
+              </GetResources>
+            </GetResources>
           </Page.Contents>
         </Page>
         {this.props.children}
@@ -125,72 +126,50 @@ class DashboardIndex extends PureComponent<Props, State> {
     )
   }
 
-  private handleCreateDashboard = async (): Promise<void> => {
-    const {router, notify, orgs} = this.props
-    try {
-      const newDashboard = {
-        name: DEFAULT_DASHBOARD_NAME,
-        cells: [],
-        orgID: orgs[0].id,
-      }
-      const data = await createDashboard(newDashboard)
-      router.push(`/dashboards/${data.id}`)
-    } catch (error) {
-      notify(dashboardCreateFailed())
-    }
-  }
-
-  private handleCloneDashboard = async (
-    dashboard: Dashboard
-  ): Promise<void> => {
-    const {router, notify, orgs, dashboards} = this.props
-    try {
-      const data = await cloneDashboard(
-        {
-          ...dashboard,
-          orgID: orgs[0].id,
-        },
-        dashboards
-      )
-      router.push(`/dashboards/${data.id}`)
-    } catch (error) {
-      console.error(error)
-      notify(dashboardCreateFailed())
-    }
-  }
-
-  private handleDeleteDashboard = (dashboard: Dashboard) => {
-    this.props.handleDeleteDashboard(dashboard)
-  }
-
   private handleFilterDashboards = (searchTerm: string): void => {
     this.setState({searchTerm})
   }
 
   private summonImportOverlay = (): void => {
-    const {router} = this.props
-    router.push(`/dashboards/import`)
+    const {
+      router,
+      params: {orgID},
+    } = this.props
+    router.push(`/orgs/${orgID}/dashboards/import`)
+  }
+
+  private summonImportFromTemplateOverlay = (): void => {
+    const {
+      router,
+      params: {orgID},
+    } = this.props
+    router.push(`/orgs/${orgID}/dashboards/import/template`)
+  }
+
+  private get addResourceStatus(): ComponentStatus {
+    const {limitStatus} = this.props
+    if (limitStatus === LimitStatus.EXCEEDED) {
+      return ComponentStatus.Disabled
+    }
+    return ComponentStatus.Default
   }
 }
 
 const mstp = (state: AppState): StateProps => {
-  const {dashboards, links, orgs} = state
+  const {
+    cloud: {limits},
+  } = state
 
   return {
-    orgs,
-    dashboards,
-    links,
+    limitStatus: extractDashboardLimits(limits),
   }
 }
 
 const mdtp: DispatchProps = {
-  notify: notifyAction,
-  handleGetDashboards: getDashboardsAsync,
   handleDeleteDashboard: deleteDashboardAsync,
   handleUpdateDashboard: updateDashboardAsync,
-  retainRangesDashTimeV1: retainRangesDashTimeV1Action,
-  onAddDashboardLabels: addDashboardLabelsAsync,
-  onRemoveDashboardLabels: removeDashboardLabelsAsync,
+  createDashboard: createDashboardAction,
+  cloneDashboard: cloneDashboardAction,
 }
 
 export default connect<StateProps, DispatchProps, OwnProps>(

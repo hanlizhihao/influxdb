@@ -15,6 +15,7 @@ import (
 type OnboardingFields struct {
 	IDGenerator    platform.IDGenerator
 	TokenGenerator platform.TokenGenerator
+	TimeGenerator  platform.TimeGenerator
 	IsOnboarding   bool
 }
 
@@ -133,6 +134,7 @@ func Generate(
 				IDGenerator: &loopIDGenerator{
 					s: []string{oneID, twoID, threeID, fourID},
 				},
+				TimeGenerator:  mock.TimeGenerator{FakeValue: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)},
 				TokenGenerator: mock.NewTokenGenerator(oneToken, nil),
 				IsOnboarding:   true,
 			},
@@ -149,19 +151,27 @@ func Generate(
 				password: "password1",
 				results: &platform.OnboardingResults{
 					User: &platform.User{
-						ID:   MustIDBase16(oneID),
-						Name: "admin",
+						ID:     MustIDBase16(oneID),
+						Name:   "admin",
+						Status: platform.Active,
 					},
 					Org: &platform.Organization{
 						ID:   MustIDBase16(twoID),
 						Name: "org1",
+						CRUDLog: platform.CRUDLog{
+							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+							UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+						},
 					},
 					Bucket: &platform.Bucket{
 						ID:              MustIDBase16(threeID),
 						Name:            "bucket1",
-						Organization:    "org1",
-						OrganizationID:  MustIDBase16(twoID),
+						OrgID:           MustIDBase16(twoID),
 						RetentionPeriod: time.Hour * 24 * 7,
+						CRUDLog: platform.CRUDLog{
+							CreatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+							UpdatedAt: time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC),
+						},
 					},
 					Auth: &platform.Authorization{
 						ID:          MustIDBase16(fourID),
@@ -210,6 +220,8 @@ const (
 	twoID    = "020f755c3c082001"
 	threeID  = "020f755c3c082002"
 	fourID   = "020f755c3c082003"
+	fiveID   = "020f755c3c082004"
+	sixID    = "020f755c3c082005"
 	oneToken = "020f755c3c082008"
 )
 

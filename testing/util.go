@@ -28,14 +28,21 @@ func ErrorsEqual(t *testing.T, actual, expected error) {
 	}
 
 	if platform.ErrorCode(expected) != platform.ErrorCode(actual) {
-		t.Logf("\nexpected: %v\nactual %v\n\n", expected, actual)
+		t.Logf("\nexpected: %v\nactual: %v\n\n", expected, actual)
 		t.Errorf("expected error code %q but received %q", platform.ErrorCode(expected), platform.ErrorCode(actual))
 	}
 
 	if platform.ErrorMessage(expected) != platform.ErrorMessage(actual) {
-		t.Logf("\nexpected: %v\nactual %v\n\n", expected, actual)
+		t.Logf("\nexpected: %v\nactual: %v\n\n", expected, actual)
 		t.Errorf("expected error message %q but received %q", platform.ErrorMessage(expected), platform.ErrorMessage(actual))
 	}
+}
+
+// FloatPtr takes the ref of a float number.
+func FloatPtr(f float64) *float64 {
+	p := new(float64)
+	*p = f
+	return p
 }
 
 func idPtr(id platform.ID) *platform.ID {

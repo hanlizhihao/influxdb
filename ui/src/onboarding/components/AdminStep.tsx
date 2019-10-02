@@ -3,10 +3,9 @@ import React, {PureComponent, ChangeEvent} from 'react'
 import {getDeep} from 'src/utils/wrappers'
 
 // Components
-import {Form, Input} from '@influxdata/clockface'
-import {Grid, QuestionMarkTooltip} from 'src/clockface'
+import {Form, Input, Grid} from '@influxdata/clockface'
+import QuestionMarkTooltip from 'src/shared/components/question_mark_tooltip/QuestionMarkTooltip'
 import OnboardingButtons from 'src/onboarding/components/OnboardingButtons'
-import FancyScrollbar from 'src/shared/components/fancy_scrollbar/FancyScrollbar'
 
 // Actions
 import {setupAdmin} from 'src/onboarding/actions'
@@ -72,116 +71,129 @@ class AdminStep extends PureComponent<Props, State> {
       <div className="onboarding-step">
         <Form onSubmit={this.handleNext}>
           <div className="wizard-step--scroll-area">
-            <FancyScrollbar autoHide={false}>
-              <div className="wizard-step--scroll-content">
-                <h3 className="wizard-step--title">Setup Initial User</h3>
-                <h5 className="wizard-step--sub-title">
-                  You will be able to create additional Users, Buckets and
-                  Organizations later
-                </h5>
-                <Grid>
-                  <Grid.Row>
-                    <Grid.Column
-                      widthXS={Columns.Twelve}
-                      widthMD={Columns.Ten}
-                      offsetMD={Columns.One}
+            <div className="wizard-step--scroll-content">
+              <h3
+                className="wizard-step--title"
+                data-testid="admin-step--head-main"
+              >
+                Setup Initial User
+              </h3>
+              <h5
+                className="wizard-step--sub-title"
+                data-testid="admin-step--head-sub"
+              >
+                You will be able to create additional Users, Buckets and
+                Organizations later
+              </h5>
+              <Grid>
+                <Grid.Row>
+                  <Grid.Column
+                    widthXS={Columns.Twelve}
+                    widthMD={Columns.Ten}
+                    offsetMD={Columns.One}
+                  >
+                    <Form.Element label="Username">
+                      <Input
+                        value={username}
+                        onChange={this.handleUsername}
+                        titleText="Username"
+                        size={ComponentSize.Medium}
+                        icon={icon}
+                        status={status}
+                        disabledTitleText="Username has been set"
+                        autoFocus={true}
+                        testID="input-field--username"
+                      />
+                    </Form.Element>
+                  </Grid.Column>
+                  <Grid.Column
+                    widthXS={Columns.Six}
+                    widthMD={Columns.Five}
+                    offsetMD={Columns.One}
+                  >
+                    <Form.Element label="Password">
+                      <Input
+                        type={InputType.Password}
+                        value={password}
+                        onChange={this.handlePassword}
+                        titleText="Password"
+                        size={ComponentSize.Medium}
+                        icon={icon}
+                        status={status}
+                        disabledTitleText="Password has been set"
+                        testID="input-field--password"
+                      />
+                    </Form.Element>
+                  </Grid.Column>
+                  <Grid.Column widthXS={Columns.Six} widthMD={Columns.Five}>
+                    <Form.Element
+                      label="Confirm Password"
+                      errorMessage={
+                        isPassMismatched && 'Passwords do not match'
+                      }
                     >
-                      <Form.Element label="Username">
-                        <Input
-                          value={username}
-                          onChange={this.handleUsername}
-                          titleText="Username"
-                          size={ComponentSize.Medium}
-                          icon={icon}
-                          status={status}
-                          disabledTitleText="Username has been set"
-                          autoFocus={true}
-                        />
-                      </Form.Element>
-                    </Grid.Column>
-                    <Grid.Column
-                      widthXS={Columns.Six}
-                      widthMD={Columns.Five}
-                      offsetMD={Columns.One}
+                      <Input
+                        type={InputType.Password}
+                        value={confirmPassword}
+                        onChange={this.handleConfirmPassword}
+                        titleText="Confirm Password"
+                        size={ComponentSize.Medium}
+                        icon={icon}
+                        status={this.passwordStatus}
+                        disabledTitleText="password has been set"
+                        testID="input-field--password-chk"
+                      />
+                    </Form.Element>
+                  </Grid.Column>
+                  <Grid.Column
+                    widthXS={Columns.Twelve}
+                    widthMD={Columns.Ten}
+                    offsetMD={Columns.One}
+                  >
+                    <Form.Element
+                      label="Initial Organization Name"
+                      labelAddOn={this.orgTip}
+                      testID="form-elem--orgname"
                     >
-                      <Form.Element label="Password">
-                        <Input
-                          type={InputType.Password}
-                          value={password}
-                          onChange={this.handlePassword}
-                          titleText="Password"
-                          size={ComponentSize.Medium}
-                          icon={icon}
-                          status={status}
-                          disabledTitleText="Password has been set"
-                        />
-                      </Form.Element>
-                    </Grid.Column>
-                    <Grid.Column widthXS={Columns.Six} widthMD={Columns.Five}>
-                      <Form.Element
-                        label="Confirm Password"
-                        errorMessage={
-                          isPassMismatched && 'Passwords do not match'
-                        }
-                      >
-                        <Input
-                          type={InputType.Password}
-                          value={confirmPassword}
-                          onChange={this.handleConfirmPassword}
-                          titleText="Confirm Password"
-                          size={ComponentSize.Medium}
-                          icon={icon}
-                          status={this.passwordStatus}
-                          disabledTitleText="password has been set"
-                        />
-                      </Form.Element>
-                    </Grid.Column>
-                    <Grid.Column
-                      widthXS={Columns.Twelve}
-                      widthMD={Columns.Ten}
-                      offsetMD={Columns.One}
+                      <Input
+                        value={org}
+                        onChange={this.handleOrg}
+                        titleText="Initial Organization Name"
+                        size={ComponentSize.Medium}
+                        icon={icon}
+                        status={ComponentStatus.Default}
+                        placeholder="An organization is a workspace for a group of users."
+                        disabledTitleText="Initial organization name has been set"
+                        testID="input-field--orgname"
+                      />
+                    </Form.Element>
+                  </Grid.Column>
+                  <Grid.Column
+                    widthXS={Columns.Twelve}
+                    widthMD={Columns.Ten}
+                    offsetMD={Columns.One}
+                  >
+                    <Form.Element
+                      label="Initial Bucket Name"
+                      labelAddOn={this.bucketTip}
+                      testID="form-elem--bucketname"
                     >
-                      <Form.Element
-                        label="Initial Organization Name"
-                        labelAddOn={this.orgTip}
-                      >
-                        <Input
-                          value={org}
-                          onChange={this.handleOrg}
-                          titleText="Initial Organization Name"
-                          size={ComponentSize.Medium}
-                          icon={icon}
-                          status={ComponentStatus.Default}
-                          placeholder="An organization is a workspace for a group of users."
-                          disabledTitleText="Initial organization name has been set"
-                        />
-                      </Form.Element>
-                    </Grid.Column>
-                    <Grid.Column
-                      widthXS={Columns.Twelve}
-                      widthMD={Columns.Ten}
-                      offsetMD={Columns.One}
-                    >
-                      <Form.Element
-                        label="Initial Bucket Name"
-                        labelAddOn={this.bucketTip}
-                      >
-                        <Input
-                          value={bucket}
-                          onChange={this.handleBucket}
-                          titleText="Initial Bucket Name"
-                          size={ComponentSize.Medium}
-                          icon={icon}
-                          status={status}
-                          placeholder="A bucket is where your time series data is stored with a retention policy."
-                          disabledTitleText="Initial bucket name has been set"
-                        />
-                      </Form.Element>
-                    </Grid.Column>
-                  </Grid.Row>
-                </Grid>
-              </div>
-            </FancyScrollbar>
+                      <Input
+                        value={bucket}
+                        onChange={this.handleBucket}
+                        titleText="Initial Bucket Name"
+                        size={ComponentSize.Medium}
+                        icon={icon}
+                        status={status}
+                        placeholder="A bucket is where your time series data is stored with a retention policy."
+                        disabledTitleText="Initial bucket name has been set"
+                        testID="input-field--bucketname"
+                      />
+                    </Form.Element>
+                  </Grid.Column>
+                </Grid.Row>
+              </Grid>
+            </div>
           </div>
           <OnboardingButtons
             nextButtonStatus={this.nextButtonStatus}
@@ -232,7 +244,7 @@ class AdminStep extends PureComponent<Props, State> {
   private orgTip = (): JSX.Element => {
     return (
       <QuestionMarkTooltip
-        tipID="admin_org_tooltip"
+        testID="admin_org_tooltip"
         tipContent="An organization is a workspace for a group of users requiring access to time series data, dashboards, and other resources.
         You can create organizations for different functional groups, teams, or projects."
       />
@@ -242,7 +254,7 @@ class AdminStep extends PureComponent<Props, State> {
   private bucketTip = (): JSX.Element => {
     return (
       <QuestionMarkTooltip
-        tipID="admin_bucket_tooltip"
+        testID="admin_bucket_tooltip"
         tipContent="A bucket is where your time series data is stored with a retention policy."
       />
     )

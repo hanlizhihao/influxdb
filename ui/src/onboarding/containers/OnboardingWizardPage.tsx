@@ -6,13 +6,11 @@ import {withRouter, WithRouterProps} from 'react-router'
 // APIs
 import {client} from 'src/utils/api'
 
-// Actions
-import {notify as notifyAction} from 'src/shared/actions/notifications'
-
 // Components
 import {
   Button,
   EmptyState,
+  AppWrapper,
   TechnoSpinner,
   SpinnerContainer,
 } from '@influxdata/clockface'
@@ -23,7 +21,7 @@ import Notifications from 'src/shared/components/notifications/Notifications'
 
 // Types
 import {ComponentColor, ComponentSize} from '@influxdata/clockface'
-import {Notification, NotificationFunc, RemoteDataState} from 'src/types'
+import {RemoteDataState, AppState} from 'src/types'
 import {Links} from 'src/types/links'
 
 interface State {
@@ -42,14 +40,7 @@ interface ConnectedStateProps {
   links: Links
 }
 
-interface ConnectedDispatchProps {
-  notify: (message: Notification | NotificationFunc) => void
-}
-
-type Props = PassedProps &
-  WithRouterProps &
-  ConnectedStateProps &
-  ConnectedDispatchProps
+type Props = PassedProps & WithRouterProps & ConnectedStateProps
 
 @ErrorHandling
 export class OnboardingWizardPage extends PureComponent<Props, State> {
@@ -108,11 +99,11 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
     }
 
     return (
-      <SpinnerContainer
-        loading={this.state.loading}
-        spinnerComponent={<TechnoSpinner />}
-      >
-        <div className="chronograf-root">
+      <AppWrapper>
+        <SpinnerContainer
+          loading={this.state.loading}
+          spinnerComponent={<TechnoSpinner />}
+        >
           <Notifications inPresentationMode={true} />
           <OnboardingWizard
             onDecrementCurrentStepIndex={this.handleDecrementStepIndex}
@@ -122,8 +113,8 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
             currentStepIndex={+params.stepID}
             onCompleteSetup={this.handleCompleteSetup}
           />
-        </div>
-      </SpinnerContainer>
+        </SpinnerContainer>
+      </AppWrapper>
     )
   }
 
@@ -164,17 +155,9 @@ export class OnboardingWizardPage extends PureComponent<Props, State> {
   }
 }
 
-const mstp = ({links}) => ({links})
+const mstp = ({links}: AppState) => ({links})
 
-const mdtp = {
-  notify: notifyAction,
-}
-
-export default connect<
-  ConnectedStateProps,
-  ConnectedDispatchProps,
-  PassedProps
->(
+export default connect<ConnectedStateProps, null, PassedProps>(
   mstp,
-  mdtp
+  null
 )(withRouter<Props>(OnboardingWizardPage))

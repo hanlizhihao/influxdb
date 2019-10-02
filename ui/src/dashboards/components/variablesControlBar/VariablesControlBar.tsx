@@ -2,8 +2,7 @@
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
 import {isEmpty} from 'lodash'
-import {DragDropContext} from 'react-dnd'
-import HTML5Backend from 'react-dnd-html5-backend'
+import classnames from 'classnames'
 
 // Components
 import {
@@ -11,6 +10,7 @@ import {
   TechnoSpinner,
   SpinnerContainer,
 } from '@influxdata/clockface'
+import ErrorBoundary from 'src/shared/components/ErrorBoundary'
 
 // Utils
 import {
@@ -19,21 +19,19 @@ import {
   getDashboardVariablesStatus,
 } from 'src/variables/selectors'
 
-// Styles
-import 'src/dashboards/components/variablesControlBar/VariablesControlBar.scss'
-
 // Actions
 import {moveVariable} from 'src/variables/actions'
 
 // Types
 import {AppState} from 'src/types'
-import {Variable} from '@influxdata/influx'
+import {IVariable as Variable} from '@influxdata/influx'
 import {ComponentSize} from '@influxdata/clockface'
 
 // Decorators
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import {RemoteDataState} from 'src/types'
 import DraggableDropdown from 'src/dashboards/components/variablesControlBar/DraggableDropdown'
+import withDragDropContext from 'src/shared/decorators/withDragDropContext'
 
 interface OwnProps {
   dashboardID: string
@@ -43,6 +41,7 @@ interface StateProps {
   variables: Variable[]
   valuesStatus: RemoteDataState
   variablesStatus: RemoteDataState
+  inPresentationMode: boolean
 }
 
 interface DispatchProps {
@@ -67,11 +66,17 @@ class VariablesControlBar extends PureComponent<Props, State> {
     ) {
       return {initialLoading: RemoteDataState.Done}
     }
+
+    return {}
   }
 
   render() {
     return (
-      <div className="variables-control-bar">
+      <div
+        className={classnames('variables-control-bar', {
+          'presentation-mode': this.props.inPresentationMode,
+        })}
+      >
         <SpinnerContainer
           loading={this.state.initialLoading}
           spinnerComponent={<TechnoSpinner diameterPixels={50} />}
@@ -87,7 +92,7 @@ class VariablesControlBar extends PureComponent<Props, State> {
     return (
       <EmptyState
         size={ComponentSize.ExtraSmall}
-        customClass="variables-control-bar--empty"
+        className="variables-control-bar--empty"
       >
         <EmptyState.Text text="To see variable controls here, use a variable in a cell query" />
       </EmptyState>
@@ -99,14 +104,15 @@ class VariablesControlBar extends PureComponent<Props, State> {
     return (
       <>
         {variables.map((v, i) => (
-          <DraggableDropdown
-            key={v.id}
-            name={v.name}
-            id={v.id}
-            index={i}
-            dashboardID={dashboardID}
-            moveDropdown={this.handleMoveDropdown}
-          />
+          <ErrorBoundary key={v.id}>
+            <DraggableDropdown
+              name={v.name}
+              id={v.id}
+              index={i}
+              dashboardID={dashboardID}
+              moveDropdown={this.handleMoveDropdown}
+            />
+          </ErrorBoundary>
         ))}
         {valuesStatus === RemoteDataState.Loading && (
           <TechnoSpinner diameterPixels={18} />
@@ -143,10 +149,16 @@ const mstp = (state: AppState, props: OwnProps): StateProps => {
   const valuesStatus = getDashboardValuesStatus(state, props.dashboardID)
   const variablesStatus = getDashboardVariablesStatus(state)
 
-  return {variables, valuesStatus, variablesStatus}
+  const {
+    app: {
+      ephemeral: {inPresentationMode},
+    },
+  } = state
+
+  return {variables, valuesStatus, variablesStatus, inPresentationMode}
 }
 
-export default DragDropContext(HTML5Backend)(
+export default withDragDropContext(
   connect<StateProps, DispatchProps, OwnProps>(
     mstp,
     mdtp

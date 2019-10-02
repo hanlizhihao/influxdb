@@ -6,7 +6,7 @@ import _ from 'lodash'
 import {Button, ComponentColor, ComponentSize} from '@influxdata/clockface'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 // Types
-import {Organization} from '@influxdata/influx'
+import {Organization} from 'src/types'
 
 interface OwnProps {
   orgs: Organization[]
@@ -24,6 +24,7 @@ class CompletionAdvancedButton extends PureComponent<Props> {
         color={ComponentColor.Success}
         size={ComponentSize.Large}
         onClick={this.handleAdvanced}
+        testID="button--advanced"
       />
     )
   }
@@ -32,7 +33,7 @@ class CompletionAdvancedButton extends PureComponent<Props> {
     const {router, orgs, onExit} = this.props
     const id = _.get(orgs, '0.id', null)
     if (id) {
-      router.push(`/organizations/${id}/buckets`)
+      router.push(`/orgs/${id}/load-data/buckets`)
     } else {
       onExit()
     }

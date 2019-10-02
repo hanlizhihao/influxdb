@@ -11,7 +11,7 @@ vendor
 # binary databases
 influxd.bolt
 
-# Project distirbution
+# Project distribution
 /dist
 
 # Project binaries.
@@ -27,9 +27,9 @@ influxd.bolt
 
 ui/node_modules
 ui/npm-error.log
-ui/yarn.lock
 ui/build
 ui/.cache
+ui/package-lock.json
 
 # e2e test artifacts
 ui/cypress/screenshots
@@ -39,6 +39,9 @@ ui/src/api/.gitignore
 ui/src/api/.openapi-generator-ignore
 ui/src/api/.openapi-generator/VERSION
 ui/src/api/git_push.sh
+
+# UI generated typescript types
+ui/src/client/index.ts
 
 http/swagger_gen.go
 

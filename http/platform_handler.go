@@ -24,10 +24,12 @@ func setCORSResponseHeaders(w http.ResponseWriter, r *http.Request) {
 
 // NewPlatformHandler returns a platform handler that serves the API and associated assets.
 func NewPlatformHandler(b *APIBackend) *PlatformHandler {
-	h := NewAuthenticationHandler()
+	h := NewAuthenticationHandler(b.HTTPErrorHandler)
 	h.Handler = NewAPIHandler(b)
 	h.AuthorizationService = b.AuthorizationService
 	h.SessionService = b.SessionService
+	h.SessionRenewDisabled = b.SessionRenewDisabled
+	h.UserService = b.UserService
 
 	h.RegisterNoAuthRoute("GET", "/api/v2")
 	h.RegisterNoAuthRoute("POST", "/api/v2/signin")

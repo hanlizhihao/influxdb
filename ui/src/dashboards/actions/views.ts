@@ -1,13 +1,28 @@
 // Utils
+import {getView as getViewFromState} from 'src/dashboards/selectors'
+
+// APIs
 import {
   getView as getViewAJAX,
   updateView as updateViewAJAX,
 } from 'src/dashboards/apis/'
 
+// Constants
+import * as copy from 'src/shared/copy/notifications'
+
+// Actions
+import {
+  notify,
+  Action as NotificationAction,
+} from 'src/shared/actions/notifications'
+import {setActiveTimeMachine} from 'src/timeMachine/actions'
+
 // Types
-import {RemoteDataState} from 'src/types'
+import {RemoteDataState, QueryView, GetState} from 'src/types'
 import {Dispatch} from 'redux'
 import {View} from 'src/types'
+import {Action as TimeMachineAction} from 'src/timeMachine/actions'
+import {TimeMachineID} from 'src/types'
 
 export type Action = SetViewAction | SetViewsAction | ResetViewsAction
 
@@ -81,5 +96,29 @@ export const updateView = (dashboardID: string, view: View) => async (
     return newView
   } catch {
     dispatch(setView(viewID, null, RemoteDataState.Error))
+  }
+}
+
+export const getViewForTimeMachine = (
+  dashboardID: string,
+  cellID: string,
+  timeMachineID: TimeMachineID
+) => async (
+  dispatch: Dispatch<Action | TimeMachineAction | NotificationAction>,
+  getState: GetState
+): Promise<void> => {
+  const state = getState()
+  dispatch(setView(cellID, null, RemoteDataState.Loading))
+  try {
+    let view = getViewFromState(state, cellID) as QueryView
+
+    if (!view) {
+      view = (await getViewAJAX(dashboardID, cellID)) as QueryView
+    }
+
+    dispatch(setActiveTimeMachine(timeMachineID, {view}))
+  } catch (e) {
+    dispatch(notify(copy.getViewFailed(e.message)))
+    dispatch(setView(cellID, null, RemoteDataState.Error))
   }
 }

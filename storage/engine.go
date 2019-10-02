@@ -30,19 +30,29 @@ var timeBytes = []byte("time")
 // it's closed.
 var ErrEngineClosed = errors.New("engine is closed")
 
+// runner lets us mock out the retention enforcer in tests
+type runner interface{ run() }
+
+// runnable is a function that lets the caller know if they can proceed with their
+// task. A runnable returns a function that should be called by the caller to
+// signal they finished their task.
+type runnable func() (done func())
+
 type Engine struct {
 	config   Config
 	path     string
 	engineID *int // Not used by default.
 	nodeID   *int // Not used by default.
 
-	mu                sync.RWMutex
-	closing           chan struct{} //closing returns the zero value when the engine is shutting down.
-	index             *tsi1.Index
-	sfile             *tsdb.SeriesFile
-	engine            *tsm1.Engine
-	wal               *wal.WAL
-	retentionEnforcer *retentionEnforcer
+	mu      sync.RWMutex
+	closing chan struct{} //closing returns the zero value when the engine is shutting down.
+	index   *tsi1.Index
+	sfile   *tsdb.SeriesFile
+	engine  *tsm1.Engine
+	wal     *wal.WAL
+
+	retentionEnforcer        runner
+	retentionEnforcerLimiter runnable
 
 	defaultMetricLabels prometheus.Labels
 
@@ -60,6 +70,13 @@ type Option func(*Engine)
 func WithTSMFilenameFormatter(fn tsm1.FormatFileNameFunc) Option {
 	return func(e *Engine) {
 		e.engine.WithFormatFileNameFunc(fn)
+	}
+}
+
+// WithCurrentGenerationFunc sets a function for obtaining the current generation.
+func WithCurrentGenerationFunc(fn func() int) Option {
+	return func(e *Engine) {
+		e.engine.WithCurrentGenerationFunc(fn)
 	}
 }
 
@@ -86,7 +103,17 @@ func WithNodeID(id int) Option {
 // metrics are labelled correctly.
 func WithRetentionEnforcer(finder BucketFinder) Option {
 	return func(e *Engine) {
-		e.retentionEnforcer = newRetentionEnforcer(e, finder)
+		e.retentionEnforcer = newRetentionEnforcer(e, e.engine, finder)
+	}
+}
+
+// WithRetentionEnforcerLimiter sets a limiter used to control when the
+// retention enforcer can proceed. If this option is not used then the default
+// limiter (or the absence of one) is a no-op, and no limitations will be put
+// on running the retention enforcer.
+func WithRetentionEnforcerLimiter(f runnable) Option {
+	return func(e *Engine) {
+		e.retentionEnforcerLimiter = f
 	}
 }
 
@@ -116,6 +143,7 @@ func NewEngine(path string, c Config, options ...Option) *Engine {
 
 	// Initialize series file.
 	e.sfile = tsdb.NewSeriesFile(c.GetSeriesFilePath(path))
+	e.sfile.LargeWriteThreshold = c.TSDB.LargeSeriesWriteThreshold
 
 	// Initialise index.
 	e.index = tsi1.NewIndex(e.sfile, c.Index,
@@ -139,8 +167,9 @@ func NewEngine(path string, c Config, options ...Option) *Engine {
 	e.engine.SetDefaultMetricLabels(e.defaultMetricLabels)
 	e.sfile.SetDefaultMetricLabels(e.defaultMetricLabels)
 	e.index.SetDefaultMetricLabels(e.defaultMetricLabels)
-	if e.wal != nil {
-		e.wal.SetDefaultMetricLabels(e.defaultMetricLabels)
+	e.wal.SetDefaultMetricLabels(e.defaultMetricLabels)
+	if r, ok := e.retentionEnforcer.(*retentionEnforcer); ok {
+		r.SetDefaultMetricLabels(e.defaultMetricLabels)
 	}
 
 	return e
@@ -163,7 +192,9 @@ func (e *Engine) WithLogger(log *zap.Logger) {
 	e.index.WithLogger(e.logger)
 	e.engine.WithLogger(e.logger)
 	e.wal.WithLogger(e.logger)
-	e.retentionEnforcer.WithLogger(e.logger)
+	if r, ok := e.retentionEnforcer.(*retentionEnforcer); ok {
+		r.WithLogger(e.logger)
+	}
 }
 
 // PrometheusCollectors returns all the prometheus collectors associated with
@@ -174,7 +205,7 @@ func (e *Engine) PrometheusCollectors() []prometheus.Collector {
 	metrics = append(metrics, tsi1.PrometheusCollectors()...)
 	metrics = append(metrics, tsm1.PrometheusCollectors()...)
 	metrics = append(metrics, wal.PrometheusCollectors()...)
-	metrics = append(metrics, e.retentionEnforcer.PrometheusCollectors()...)
+	metrics = append(metrics, RetentionPrometheusCollectors()...)
 	return metrics
 }
 
@@ -210,7 +241,9 @@ func (e *Engine) Open(ctx context.Context) (err error) {
 	// TODO(edd) background tasks will be run in priority order via a scheduler.
 	// For now we will just run on an interval as we only have the retention
 	// policy enforcer.
-	e.runRetentionEnforcer()
+	if e.retentionEnforcer != nil {
+		e.runRetentionEnforcer()
+	}
 
 	return nil
 }
@@ -249,7 +282,15 @@ func (e *Engine) replayWAL() error {
 			return err
 
 		case *wal.DeleteBucketRangeWALEntry:
-			return e.deleteBucketRangeLocked(en.OrgID, en.BucketID, en.Min, en.Max)
+			var pred tsm1.Predicate
+			if len(en.Predicate) > 0 {
+				pred, err = tsm1.UnmarshalPredicate(en.Predicate)
+				if err != nil {
+					return err
+				}
+			}
+
+			return e.deleteBucketRangeLocked(context.Background(), en.OrgID, en.BucketID, en.Min, en.Max, pred)
 		}
 
 		return nil
@@ -279,11 +320,6 @@ func (e *Engine) runRetentionEnforcer() {
 		return
 	}
 
-	if e.retentionEnforcer != nil {
-		// Set default metric labels on retention enforcer.
-		e.retentionEnforcer.metrics = newRetentionMetrics(e.defaultMetricLabels)
-	}
-
 	l := e.logger.With(zap.String("component", "retention_enforcer"), logger.DurationLiteral("check_interval", interval))
 	l.Info("Starting")
 
@@ -299,7 +335,36 @@ func (e *Engine) runRetentionEnforcer() {
 				l.Info("Stopping")
 				return
 			case <-ticker.C:
-				e.retentionEnforcer.run()
+				// canRun will signal to this goroutine that the enforcer can
+				// run. It will also carry from the blocking goroutine a function
+				// that needs to be called when the enforcer has finished its work.
+				canRun := make(chan func())
+
+				// This goroutine blocks until the retention enforcer has permission
+				// to proceed.
+				go func() {
+					if e.retentionEnforcerLimiter != nil {
+						// The limiter will block until the enforcer can proceed.
+						// The limiter returns a function that needs to be called
+						// when the enforcer has finished its work.
+						canRun <- e.retentionEnforcerLimiter()
+						return
+					}
+					canRun <- func() {}
+				}()
+
+				// Is it possible to get a slot? We need to be able to close
+				// whilst waiting...
+				select {
+				case <-e.closing:
+					l.Info("Stopping")
+					return
+				case done := <-canRun:
+					e.retentionEnforcer.run()
+					if done != nil {
+						done()
+					}
+				}
 			}
 		}
 	}()
@@ -310,6 +375,9 @@ func (e *Engine) runRetentionEnforcer() {
 func (e *Engine) Close() error {
 	e.mu.RLock()
 	if e.closing == nil {
+		e.mu.RUnlock()
+		// Unusual if an engine is closed more than once, so note it.
+		e.logger.Info("Close() called on already-closed engine")
 		return nil // Already closed
 	}
 
@@ -510,12 +578,17 @@ func (e *Engine) CommitSegments(ctx context.Context, segs []string, fn func() er
 }
 
 // DeleteBucket deletes an entire bucket from the storage engine.
-func (e *Engine) DeleteBucket(orgID, bucketID platform.ID) error {
-	return e.DeleteBucketRange(orgID, bucketID, math.MinInt64, math.MaxInt64)
+func (e *Engine) DeleteBucket(ctx context.Context, orgID, bucketID platform.ID) error {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+	return e.DeleteBucketRange(ctx, orgID, bucketID, math.MinInt64, math.MaxInt64)
 }
 
 // DeleteBucketRange deletes an entire bucket from the storage engine.
-func (e *Engine) DeleteBucketRange(orgID, bucketID platform.ID, min, max int64) error {
+func (e *Engine) DeleteBucketRange(ctx context.Context, orgID, bucketID platform.ID, min, max int64) error {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if e.closing == nil {
@@ -523,22 +596,48 @@ func (e *Engine) DeleteBucketRange(orgID, bucketID platform.ID, min, max int64) 
 	}
 
 	// Add the delete to the WAL to be replayed if there is a crash or shutdown.
-	if _, err := e.wal.DeleteBucketRange(orgID, bucketID, min, max); err != nil {
+	if _, err := e.wal.DeleteBucketRange(orgID, bucketID, min, max, nil); err != nil {
 		return err
 	}
 
-	return e.deleteBucketRangeLocked(orgID, bucketID, min, max)
+	return e.deleteBucketRangeLocked(ctx, orgID, bucketID, min, max, nil)
+}
+
+// DeleteBucketRangePredicate deletes data within a bucket from the storage engine. Any data
+// deleted must be in [min, max], and the key must match the predicate if provided.
+func (e *Engine) DeleteBucketRangePredicate(ctx context.Context, orgID, bucketID platform.ID, min, max int64, pred tsm1.Predicate) error {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.closing == nil {
+		return ErrEngineClosed
+	}
+
+	// Marshal the predicate to add it to the WAL.
+	predData, err := pred.Marshal()
+	if err != nil {
+		return err
+	}
+
+	// Add the delete to the WAL to be replayed if there is a crash or shutdown.
+	if _, err := e.wal.DeleteBucketRange(orgID, bucketID, min, max, predData); err != nil {
+		return err
+	}
+
+	return e.deleteBucketRangeLocked(ctx, orgID, bucketID, min, max, pred)
 }
 
 // deleteBucketRangeLocked does the work of deleting a bucket range and must be called under
 // some sort of lock.
-func (e *Engine) deleteBucketRangeLocked(orgID, bucketID platform.ID, min, max int64) error {
+func (e *Engine) deleteBucketRangeLocked(ctx context.Context, orgID, bucketID platform.ID, min, max int64, pred tsm1.Predicate) error {
 	// TODO(edd): we need to clean up how we're encoding the prefix so that we
 	// don't have to remember to get it right everywhere we need to touch TSM data.
 	encoded := tsdb.EncodeName(orgID, bucketID)
 	name := models.EscapeMeasurement(encoded[:])
 
-	return e.engine.DeleteBucketRange(name, min, max)
+	return e.engine.DeletePrefixRange(ctx, name, min, max, pred)
 }
 
 // SeriesCardinality returns the number of series in the engine.
@@ -568,7 +667,7 @@ func (e *Engine) ApplyFnToSeriesIDSet(fn func(*tsdb.SeriesIDSet)) {
 }
 
 // MeasurementCardinalityStats returns cardinality stats for all measurements.
-func (e *Engine) MeasurementCardinalityStats() tsi1.MeasurementCardinalityStats {
+func (e *Engine) MeasurementCardinalityStats() (tsi1.MeasurementCardinalityStats, error) {
 	return e.index.MeasurementCardinalityStats()
 }
 

@@ -1,4 +1,7 @@
-import normalizer from 'src/normalizers/dashboardTime'
+import {
+  normalizeGetLocalStorage,
+  normalizeSetLocalStorage,
+} from 'src/normalizers/localStorage'
 import {VERSION} from 'src/shared/constants'
 import {
   newVersion,
@@ -10,7 +13,6 @@ import {LocalStorage} from 'src/types/localStorage'
 export const loadLocalStorage = (): LocalStorage => {
   try {
     const serializedState = localStorage.getItem('state')
-
     const state = JSON.parse(serializedState) || {}
 
     if (state.VERSION && state.VERSION !== VERSION) {
@@ -21,31 +23,19 @@ export const loadLocalStorage = (): LocalStorage => {
 
     delete state.VERSION
 
-    return state
+    return normalizeGetLocalStorage(state)
   } catch (error) {
     console.error(loadLocalSettingsFailed(error).message)
   }
 }
 
-export const saveToLocalStorage = ({
-  app: {persisted},
-  ranges,
-  variables,
-  userSettings,
-}: LocalStorage): void => {
+export const saveToLocalStorage = (state: LocalStorage): void => {
   try {
-    const appPersisted = {app: {persisted}}
     window.localStorage.setItem(
       'state',
-      JSON.stringify({
-        ...appPersisted,
-        VERSION,
-        ranges: normalizer(ranges),
-        variables,
-        userSettings,
-      })
+      JSON.stringify(normalizeSetLocalStorage(state))
     )
   } catch (err) {
-    console.error('Unable to save data explorer: ', JSON.parse(err))
+    console.error('Unable to save state to local storage: ', JSON.parse(err))
   }
 }

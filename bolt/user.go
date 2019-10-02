@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/coreos/bbolt"
+	bolt "github.com/coreos/bbolt"
+	influxdb "github.com/influxdata/influxdb"
 	platform "github.com/influxdata/influxdb"
 	platformcontext "github.com/influxdata/influxdb/context"
 )
@@ -226,6 +227,7 @@ func (c *Client) CreateUser(ctx context.Context, u *platform.User) error {
 		}
 
 		u.ID = c.IDGenerator.ID()
+		u.Status = influxdb.Active
 
 		if err := c.appendUserEventToLog(ctx, tx, u.ID, userCreatedEvent); err != nil {
 			return err
@@ -322,6 +324,10 @@ func (c *Client) updateUser(ctx context.Context, tx *bolt.Tx, id platform.ID, up
 			}
 		}
 		u.Name = *upd.Name
+	}
+
+	if upd.Status != nil {
+		u.Status = *upd.Status
 	}
 
 	if err := c.appendUserEventToLog(ctx, tx, u.ID, userUpdatedEvent); err != nil {
@@ -476,5 +482,5 @@ func (c *Client) appendUserEventToLog(ctx context.Context, tx *bolt.Tx, id platf
 		return err
 	}
 
-	return c.addLogEntry(ctx, tx, k, v, c.time())
+	return c.addLogEntry(ctx, tx, k, v, c.Now())
 }

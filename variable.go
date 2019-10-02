@@ -47,8 +47,10 @@ type Variable struct {
 	ID             ID                 `json:"id,omitempty"`
 	OrganizationID ID                 `json:"orgID,omitempty"`
 	Name           string             `json:"name"`
+	Description    string             `json:"description"`
 	Selected       []string           `json:"selected"`
 	Arguments      *VariableArguments `json:"arguments"`
+	CRUDLog
 }
 
 // DefaultVariableFindOptions are the default find options for variables.
@@ -83,9 +85,10 @@ func (f VariableFilter) QueryParams() map[string][]string {
 
 // A VariableUpdate describes a set of changes that can be applied to a Variable
 type VariableUpdate struct {
-	Name      string             `json:"name"`
-	Selected  []string           `json:"selected"`
-	Arguments *VariableArguments `json:"arguments"`
+	Name        string             `json:"name"`
+	Selected    []string           `json:"selected"`
+	Description string             `json:"description"`
+	Arguments   *VariableArguments `json:"arguments"`
 }
 
 // A VariableArguments contains arguments used when expanding a Variable
@@ -129,7 +132,7 @@ func (m *Variable) Valid() error {
 
 // Valid returns an error if a Variable changeset is not valid
 func (u *VariableUpdate) Valid() error {
-	if u.Name == "" && u.Selected == nil && u.Arguments == nil {
+	if u.Name == "" && u.Description == "" && u.Selected == nil && u.Arguments == nil {
 		return fmt.Errorf("no fields supplied in update")
 	}
 
@@ -148,6 +151,10 @@ func (u *VariableUpdate) Apply(m *Variable) error {
 
 	if u.Arguments != nil {
 		m.Arguments = u.Arguments
+	}
+
+	if u.Description != "" {
+		m.Description = u.Description
 	}
 
 	return nil

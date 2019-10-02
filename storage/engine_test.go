@@ -5,14 +5,19 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/kit/prom/promtest"
 	"github.com/influxdata/influxdb/models"
 	"github.com/influxdata/influxdb/storage"
+	"github.com/influxdata/influxdb/storage/reads/datatypes"
 	"github.com/influxdata/influxdb/tsdb"
+	"github.com/influxdata/influxdb/tsdb/tsm1"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestEngine_WriteAndIndex(t *testing.T) {
@@ -21,7 +26,7 @@ func TestEngine_WriteAndIndex(t *testing.T) {
 
 	// Calling WritePoints when the engine is not open will return
 	// ErrEngineClosed.
-	if got, exp := engine.Write1xPoints(nil), storage.ErrEngineClosed; got != exp {
+	if got, exp := engine.Engine.WritePoints(context.TODO(), nil), storage.ErrEngineClosed; got != exp {
 		t.Fatalf("got %v, expected %v", got, exp)
 	}
 
@@ -29,17 +34,21 @@ func TestEngine_WriteAndIndex(t *testing.T) {
 
 	pt := models.MustNewPoint(
 		"cpu",
-		models.Tags{{Key: []byte("host"), Value: []byte("server")}},
+		models.Tags{
+			{Key: models.MeasurementTagKeyBytes, Value: []byte("cpu")},
+			{Key: []byte("host"), Value: []byte("server")},
+			{Key: models.FieldKeyTagKeyBytes, Value: []byte("value")},
+		},
 		map[string]interface{}{"value": 1.0},
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err != nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err != nil {
 		t.Fatal(err)
 	}
 
 	pt.SetTime(time.Unix(2, 3))
-	if err := engine.Write1xPoints([]models.Point{pt}); err != nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,7 +66,7 @@ func TestEngine_WriteAndIndex(t *testing.T) {
 
 	// and ensure that we can still write data
 	pt.SetTime(time.Unix(2, 6))
-	if err := engine.Write1xPoints([]models.Point{pt}); err != nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -74,7 +83,7 @@ func TestEngine_TimeTag(t *testing.T) {
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err == nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err == nil {
 		t.Fatal("expected error: got nil")
 	}
 
@@ -85,7 +94,7 @@ func TestEngine_TimeTag(t *testing.T) {
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err == nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err == nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -102,7 +111,7 @@ func TestEngine_InvalidTag(t *testing.T) {
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err == nil {
+	if err := engine.WritePoints(context.TODO(), []models.Point{pt}); err == nil {
 		fmt.Println(pt.String())
 		t.Fatal("expected error: got nil")
 	}
@@ -114,7 +123,7 @@ func TestEngine_InvalidTag(t *testing.T) {
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err == nil {
+	if err := engine.WritePoints(context.TODO(), []models.Point{pt}); err == nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -124,25 +133,34 @@ func TestWrite_TimeField(t *testing.T) {
 	defer engine.Close()
 	engine.MustOpen()
 
+	name := tsdb.EncodeNameString(engine.org, engine.bucket)
+
 	pt := models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{}),
+		name,
+		models.NewTags(map[string]string{models.FieldKeyTagKey: "time", models.MeasurementTagKey: "cpu"}),
 		map[string]interface{}{"time": 1.0},
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err == nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err == nil {
 		t.Fatal("expected error: got nil")
 	}
 
-	pt = models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{}),
-		map[string]interface{}{"value": 1.1, "time": 1.0},
+	var points []models.Point
+	points = append(points, models.MustNewPoint(
+		name,
+		models.NewTags(map[string]string{models.FieldKeyTagKey: "time", models.MeasurementTagKey: "cpu"}),
+		map[string]interface{}{"time": 1.0},
 		time.Unix(1, 2),
-	)
+	))
+	points = append(points, models.MustNewPoint(
+		name,
+		models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu"}),
+		map[string]interface{}{"value": 1.1},
+		time.Unix(1, 2),
+	))
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err == nil {
+	if err := engine.Engine.WritePoints(context.TODO(), points); err == nil {
 		t.Fatal("expected error: got nil")
 	}
 }
@@ -152,28 +170,32 @@ func TestEngine_WriteAddNewField(t *testing.T) {
 	defer engine.Close()
 	engine.MustOpen()
 
-	pt := models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
+	name := tsdb.EncodeNameString(engine.org, engine.bucket)
+
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{models.MustNewPoint(
+		name,
+		models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu", "host": "server"}),
 		map[string]interface{}{"value": 1.0},
 		time.Unix(1, 2),
-	)
-
-	err := engine.Write1xPoints([]models.Point{pt})
-	if err != nil {
-		t.Fatal(err)
+	)}); err != nil {
+		t.Fatalf(err.Error())
 	}
 
-	pt = models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
-		map[string]interface{}{"value": 1.0, "value2": 2.0},
-		time.Unix(1, 2),
-	)
-
-	err = engine.Write1xPoints([]models.Point{pt})
-	if err != nil {
-		t.Fatal(err)
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{
+		models.MustNewPoint(
+			name,
+			models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu", "host": "server"}),
+			map[string]interface{}{"value": 1.0},
+			time.Unix(1, 2),
+		),
+		models.MustNewPoint(
+			name,
+			models.NewTags(map[string]string{models.FieldKeyTagKey: "value2", models.MeasurementTagKey: "cpu", "host": "server"}),
+			map[string]interface{}{"value2": 2.0},
+			time.Unix(1, 2),
+		),
+	}); err != nil {
+		t.Fatalf(err.Error())
 	}
 
 	if got, exp := engine.SeriesCardinality(), int64(2); got != exp {
@@ -186,27 +208,34 @@ func TestEngine_DeleteBucket(t *testing.T) {
 	defer engine.Close()
 	engine.MustOpen()
 
-	pt := models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
+	orgID, _ := influxdb.IDFromString("3131313131313131")
+	bucketID, _ := influxdb.IDFromString("8888888888888888")
+
+	err := engine.Engine.WritePoints(context.TODO(), []models.Point{models.MustNewPoint(
+		tsdb.EncodeNameString(engine.org, engine.bucket),
+		models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu", "host": "server"}),
 		map[string]interface{}{"value": 1.0},
 		time.Unix(1, 2),
-	)
-
-	err := engine.Write1xPoints([]models.Point{pt})
+	)})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pt = models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
-		map[string]interface{}{"value": 1.0, "value2": 2.0},
-		time.Unix(1, 3),
-	)
-
 	// Same org, different bucket.
-	err = engine.Write1xPointsWithOrgBucket([]models.Point{pt}, "3131313131313131", "8888888888888888")
+	err = engine.Engine.WritePoints(context.TODO(), []models.Point{
+		models.MustNewPoint(
+			tsdb.EncodeNameString(*orgID, *bucketID),
+			models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu", "host": "server"}),
+			map[string]interface{}{"value": 1.0},
+			time.Unix(1, 3),
+		),
+		models.MustNewPoint(
+			tsdb.EncodeNameString(*orgID, *bucketID),
+			models.NewTags(map[string]string{models.FieldKeyTagKey: "value2", models.MeasurementTagKey: "cpu", "host": "server"}),
+			map[string]interface{}{"value2": 2.0},
+			time.Unix(1, 3),
+		),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +245,7 @@ func TestEngine_DeleteBucket(t *testing.T) {
 	}
 
 	// Remove the original bucket.
-	if err := engine.DeleteBucket(engine.org, engine.bucket); err != nil {
+	if err := engine.DeleteBucket(context.Background(), engine.org, engine.bucket); err != nil {
 		t.Fatal(err)
 	}
 
@@ -224,6 +253,103 @@ func TestEngine_DeleteBucket(t *testing.T) {
 	if got, exp := engine.SeriesCardinality(), int64(2); got != exp {
 		t.Fatalf("got %d series, exp %d series in index", got, exp)
 	}
+}
+
+func TestEngine_DeleteBucket_Predicate(t *testing.T) {
+	engine := NewDefaultEngine()
+	defer engine.Close()
+	engine.MustOpen()
+
+	p := func(m, f string, kvs ...string) models.Point {
+		tags := map[string]string{models.FieldKeyTagKey: f, models.MeasurementTagKey: m}
+		for i := 0; i < len(kvs)-1; i += 2 {
+			tags[kvs[i]] = kvs[i+1]
+		}
+		return models.MustNewPoint(
+			tsdb.EncodeNameString(engine.org, engine.bucket),
+			models.NewTags(tags),
+			map[string]interface{}{"value": 1.0},
+			time.Unix(1, 2),
+		)
+	}
+
+	err := engine.Engine.WritePoints(context.TODO(), []models.Point{
+		p("cpu", "value", "tag1", "val1"),
+		p("cpu", "value", "tag2", "val2"),
+		p("cpu", "value", "tag3", "val3"),
+		p("mem", "value", "tag1", "val1"),
+		p("mem", "value", "tag2", "val2"),
+		p("mem", "value", "tag3", "val3"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check the series cardinality.
+	if got, exp := engine.SeriesCardinality(), int64(6); got != exp {
+		t.Fatalf("got %d series, exp %d series in index", got, exp)
+	}
+
+	// Construct a predicate to remove tag2
+	pred, err := tsm1.NewProtobufPredicate(&datatypes.Predicate{
+		Root: &datatypes.Node{
+			NodeType: datatypes.NodeTypeComparisonExpression,
+			Value:    &datatypes.Node_Comparison_{Comparison: datatypes.ComparisonEqual},
+			Children: []*datatypes.Node{
+				{NodeType: datatypes.NodeTypeTagRef,
+					Value: &datatypes.Node_TagRefValue{TagRefValue: "tag2"},
+				},
+				{NodeType: datatypes.NodeTypeLiteral,
+					Value: &datatypes.Node_StringValue{StringValue: "val2"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove the matching series.
+	if err := engine.DeleteBucketRangePredicate(context.Background(), engine.org, engine.bucket,
+		math.MinInt64, math.MaxInt64, pred); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check only matching series were removed.
+	if got, exp := engine.SeriesCardinality(), int64(4); got != exp {
+		t.Fatalf("got %d series, exp %d series in index", got, exp)
+	}
+
+	// Delete based on field key.
+	pred, err = tsm1.NewProtobufPredicate(&datatypes.Predicate{
+		Root: &datatypes.Node{
+			NodeType: datatypes.NodeTypeComparisonExpression,
+			Value:    &datatypes.Node_Comparison_{Comparison: datatypes.ComparisonEqual},
+			Children: []*datatypes.Node{
+				{NodeType: datatypes.NodeTypeTagRef,
+					Value: &datatypes.Node_TagRefValue{TagRefValue: models.FieldKeyTagKey},
+				},
+				{NodeType: datatypes.NodeTypeLiteral,
+					Value: &datatypes.Node_StringValue{StringValue: "value"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove the matching series.
+	if err := engine.DeleteBucketRangePredicate(context.Background(), engine.org, engine.bucket,
+		math.MinInt64, math.MaxInt64, pred); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check only matching series were removed.
+	if got, exp := engine.SeriesCardinality(), int64(0); got != exp {
+		t.Fatalf("got %d series, exp %d series in index", got, exp)
+	}
+
 }
 
 func TestEngine_OpenClose(t *testing.T) {
@@ -243,6 +369,41 @@ func TestEngine_OpenClose(t *testing.T) {
 	}
 }
 
+func TestEngine_InitializeMetrics(t *testing.T) {
+	engine := NewDefaultEngine()
+
+	engine.MustOpen()
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(engine.PrometheusCollectors()...)
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	files := promtest.MustFindMetric(t, mfs, "storage_tsm_files_total", prometheus.Labels{
+		"node_id":   fmt.Sprint(engine.nodeID),
+		"engine_id": fmt.Sprint(engine.engineID),
+		"level":     "1",
+	})
+	if m, got, exp := files, files.GetGauge().GetValue(), 0.0; got != exp {
+		t.Errorf("[%s] got %v, expected %v", m, got, exp)
+	}
+
+	bytes := promtest.MustFindMetric(t, mfs, "storage_tsm_files_disk_bytes", prometheus.Labels{
+		"node_id":   fmt.Sprint(engine.nodeID),
+		"engine_id": fmt.Sprint(engine.engineID),
+		"level":     "1",
+	})
+	if m, got, exp := bytes, bytes.GetGauge().GetValue(), 0.0; got != exp {
+		t.Errorf("[%s] got %v, expected %v", m, got, exp)
+	}
+
+	if err := engine.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Ensures that when a shard is closed, it removes any series meta-data
 // from the index.
 func TestEngineClose_RemoveIndex(t *testing.T) {
@@ -252,12 +413,16 @@ func TestEngineClose_RemoveIndex(t *testing.T) {
 
 	pt := models.MustNewPoint(
 		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
+		models.Tags{
+			{Key: models.MeasurementTagKeyBytes, Value: []byte("cpu")},
+			{Key: []byte("host"), Value: []byte("server")},
+			{Key: models.FieldKeyTagKeyBytes, Value: []byte("value")},
+		},
 		map[string]interface{}{"value": 1.0},
 		time.Unix(1, 2),
 	)
 
-	err := engine.Write1xPoints([]models.Point{pt})
+	err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,18 +444,22 @@ func TestEngine_WALDisabled(t *testing.T) {
 	config := storage.NewConfig()
 	config.WAL.Enabled = false
 
-	engine := NewEngine(config)
+	engine := NewEngine(config, rand.Int(), rand.Int())
 	defer engine.Close()
 	engine.MustOpen()
 
 	pt := models.MustNewPoint(
 		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
+		models.Tags{
+			{Key: models.MeasurementTagKeyBytes, Value: []byte("cpu")},
+			{Key: []byte("host"), Value: []byte("server")},
+			{Key: models.FieldKeyTagKeyBytes, Value: []byte("value")},
+		},
 		map[string]interface{}{"value": 1.0},
 		time.Unix(1, 2),
 	)
 
-	if err := engine.Write1xPoints([]models.Point{pt}); err != nil {
+	if err := engine.Engine.WritePoints(context.TODO(), []models.Point{pt}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -300,20 +469,22 @@ func TestEngine_WriteConflictingBatch(t *testing.T) {
 	defer engine.Close()
 	engine.MustOpen()
 
-	pt1 := models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
-		map[string]interface{}{"value": 1.0},
-		time.Unix(1, 2),
-	)
-	pt2 := models.MustNewPoint(
-		"cpu",
-		models.NewTags(map[string]string{"host": "server"}),
-		map[string]interface{}{"value": 2},
-		time.Unix(1, 2),
-	)
+	name := tsdb.EncodeNameString(engine.org, engine.bucket)
 
-	err := engine.Write1xPoints([]models.Point{pt1, pt2})
+	err := engine.Engine.WritePoints(context.TODO(), []models.Point{
+		models.MustNewPoint(
+			name,
+			models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu", "host": "server"}),
+			map[string]interface{}{"value": 1.0},
+			time.Unix(1, 2),
+		),
+		models.MustNewPoint(
+			name,
+			models.NewTags(map[string]string{models.FieldKeyTagKey: "value", models.MeasurementTagKey: "cpu", "host": "server"}),
+			map[string]interface{}{"value": 2},
+			time.Unix(1, 2),
+		),
+	})
 	if _, ok := err.(tsdb.PartialWriteError); !ok {
 		t.Fatal("expected partial write error. got:", err)
 	}
@@ -335,7 +506,7 @@ func BenchmarkDeleteBucket(b *testing.B) {
 			)
 		}
 
-		if err := engine.Write1xPoints(points); err != nil {
+		if err := engine.Engine.WritePoints(context.TODO(), points); err != nil {
 			panic(err)
 		}
 	}
@@ -346,7 +517,7 @@ func BenchmarkDeleteBucket(b *testing.B) {
 		b.Run(fmt.Sprintf("cardinality_%d", card), func(b *testing.B) {
 			setup(card)
 			for i := 0; i < b.N; i++ {
-				if err := engine.DeleteBucket(engine.org, engine.bucket); err != nil {
+				if err := engine.DeleteBucket(context.Background(), engine.org, engine.bucket); err != nil {
 					b.Fatal(err)
 				}
 
@@ -366,14 +537,16 @@ type Engine struct {
 	path        string
 	org, bucket influxdb.ID
 
+	engineID int
+	nodeID   int
 	*storage.Engine
 }
 
 // NewEngine create a new wrapper around a storage engine.
-func NewEngine(c storage.Config) *Engine {
+func NewEngine(c storage.Config, engineID, nodeID int) *Engine {
 	path, _ := ioutil.TempDir("", "storage_engine_test")
 
-	engine := storage.NewEngine(path, c)
+	engine := storage.NewEngine(path, c, storage.WithEngineID(engineID), storage.WithNodeID(nodeID))
 
 	org, err := influxdb.IDFromString("3131313131313131")
 	if err != nil {
@@ -386,16 +559,18 @@ func NewEngine(c storage.Config) *Engine {
 	}
 
 	return &Engine{
-		path:   path,
-		org:    *org,
-		bucket: *bucket,
-		Engine: engine,
+		path:     path,
+		org:      *org,
+		bucket:   *bucket,
+		engineID: engineID,
+		nodeID:   nodeID,
+		Engine:   engine,
 	}
 }
 
 // NewDefaultEngine returns a new Engine with a default configuration.
 func NewDefaultEngine() *Engine {
-	return NewEngine(storage.NewConfig())
+	return NewEngine(storage.NewConfig(), rand.Int(), rand.Int())
 }
 
 // MustOpen opens the engine or panicks.
@@ -403,36 +578,6 @@ func (e *Engine) MustOpen() {
 	if err := e.Engine.Open(context.Background()); err != nil {
 		panic(err)
 	}
-}
-
-// Write1xPoints converts old style points into the new 2.0 engine format.
-// This allows us to use the old `models` package helper functions and still write
-// the points in the correct format.
-func (e *Engine) Write1xPoints(pts []models.Point) error {
-	points, err := tsdb.ExplodePoints(e.org, e.bucket, pts)
-	if err != nil {
-		return err
-	}
-	return e.Engine.WritePoints(context.TODO(), points)
-}
-
-// Write1xPointsWithOrgBucket writes 1.x points with the provided org and bucket id strings.
-func (e *Engine) Write1xPointsWithOrgBucket(pts []models.Point, org, bucket string) error {
-	o, err := influxdb.IDFromString(org)
-	if err != nil {
-		return err
-	}
-
-	b, err := influxdb.IDFromString(bucket)
-	if err != nil {
-		return err
-	}
-
-	points, err := tsdb.ExplodePoints(*o, *b, pts)
-	if err != nil {
-		return err
-	}
-	return e.Engine.WritePoints(context.TODO(), points)
 }
 
 // Close closes the engine and removes all temporary data.

@@ -3,14 +3,12 @@
   ------------------------------------------------------------------------------
 */
 
-@import 'src/style/modules';
-
 $cell--header-size: 36px;
 
 .cell {
   background-color: $g3-castle;
   border-radius: $radius;
-  transform: translate3d(0,0,0); // gpu boost
+  transform: translate3d(0, 0, 0); // gpu boost
 }
 
 .cell--view {
@@ -25,17 +23,21 @@ $cell--header-size: 36px;
   z-index: $z--cell-view;
 
   > .single-stat {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
     border-radius: $radius;
   }
 
   .time-machine-tables {
     padding-top: 0;
   }
+
+  .time-series-container {
+    padding-top: $ix-marg-a;
+  }
+}
+
+.empty-graph-error--copy {
+  z-index: 1;
+  float: right;
 }
 
 .cell--view-empty {
@@ -49,27 +51,19 @@ $cell--header-size: 36px;
   @extend %no-user-select;
   padding: 0 $ix-marg-d $ix-marg-d $ix-marg-d;
   overflow: hidden;
-  
-  .empty-graph-error {
-    position: absolute;
-    top: $ix-marg-c;
-    right: $ix-marg-c;
-    bottom: $ix-marg-c;
-    left: $ix-marg-c;
-  }
 
-  .empty-graph-error--scroll {
-    z-index: 0;
-    position: absolute;
-  }
-
-  .empty-graph-error--copy {
-    z-index: 1;
+  &.error {
+    font-size: 40px;
+    color: $c-dreamsicle;
   }
 }
 
+.cell--error-message {
+  white-space: normal;
+}
+
 .dashboard .cell--view-empty .empty-graph-error {
-    top: $ix-marg-c + $cell--header-size;
+  top: $ix-marg-c + $cell--header-size;
 }
 
 .cell--header {
@@ -107,7 +101,7 @@ $cell--header-size: 36px;
   transform: translateY(-50%);
   width: 100%;
   pointer-events: none;
-  
+
   .cell--header-note & {
     padding-left: $cell--header-size;
   }
@@ -129,7 +123,7 @@ $cell--header-size: 36px;
     opacity: 1;
   }
 
-  & > span.icon {
+  & > span.cf-icon {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -174,6 +168,21 @@ $cell--header-size: 36px;
   .cell--header:hover .cell--header-bar {
     opacity: 1;
   }
+}
+
+.time-series-container {
+  width: 100%;
+  height: 100%;
+  padding: $ix-marg-c;
+
+  &.time-series-container--alert-check {
+    padding-right: $ix-marg-c + 30px;
+    overflow: hidden;
+  }
+}
+
+.giraffe-tooltip-container {
+  z-index: $z--dygraph-legend;
 }
 
 /* Drag & Resize State */

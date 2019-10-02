@@ -3,19 +3,19 @@
   ------------------------------------------------------------------------------
 */
 
-@import 'src/style/modules';
-
-$rename-dash-title-padding: 8px;
+$rename-dash-title-padding: 4px;
 
 .renamable-page-title {
   height: $form-sm-height;
   width: 100%;
   min-width: 29vw;
   max-width: 42vw;
+  display: flex;
 }
 
 .renamable-page-title--title,
-.input.renamable-page-title--input > input {
+.renamable-page-title--input-prefix,
+.cf-input.renamable-page-title--input > input {
   font-size: $page-title-size;
   font-weight: $page-title-weight;
   font-family: $ix-text-font;
@@ -42,7 +42,7 @@ $rename-dash-title-padding: 8px;
   height: $form-sm-height;
   line-height: $form-sm-height - ($ix-border * 2);
   
-  .icon {
+  .cf-icon {
     position: absolute;
     font-size: 15px;
     top: 50%;
@@ -60,7 +60,7 @@ $rename-dash-title-padding: 8px;
     border-color: $g3-castle;
   }
 
-  &:hover .icon {
+  &:hover .cf-icon {
     opacity: 1;
   }
 
@@ -70,8 +70,20 @@ $rename-dash-title-padding: 8px;
   }
 }
 
+.renamable-page-title--input-prefix {
+  border-radius: $radius;
+  position: relative;
+  white-space: nowrap;
+  @include no-user-select();
+  color: $g17-whisper;
+  transition: color 0.25s ease, background-color 0.25s ease, border-color 0.25s ease;
+  border: $ix-border solid transparent;
+  height: $form-sm-height;
+  line-height: $form-sm-height - ($ix-border * 2);
+}
+
 /* Ensure placeholder text matches font weight of title */
-.input.renamable-page-title--input > input {
+.cf-input.renamable-page-title--input > input {
   &::-webkit-input-placeholder {
       font-weight: $page-title-weight !important;
     }

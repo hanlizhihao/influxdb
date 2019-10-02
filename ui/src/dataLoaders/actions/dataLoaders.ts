@@ -9,6 +9,7 @@ import {
   ILabelProperties,
 } from '@influxdata/influx'
 import {createAuthorization} from 'src/authorizations/apis'
+import {postWrite} from 'src/client'
 
 // Utils
 import {createNewPlugin} from 'src/dataLoaders/utils/pluginConfigs'
@@ -44,6 +45,7 @@ import {notify} from 'src/shared/actions/notifications'
 import {
   TelegrafConfigCreationError,
   TelegrafConfigCreationSuccess,
+  readWriteCardinalityLimitReached,
 } from 'src/shared/copy/notifications'
 
 type GetState = () => AppState
@@ -318,6 +320,7 @@ export const addPluginBundleWithPlugins = (bundle: BundleName) => dispatch => {
           name: p,
           active: false,
           configured: isConfigured,
+          templateID: telegrafPluginsInfo[p].templateID,
         }
       })
     )
@@ -343,7 +346,10 @@ export const createOrUpdateTelegrafConfigAsync = () => async (
         telegrafConfigName,
         telegrafConfigDescription,
       },
-      steps: {org, bucket},
+      steps: {bucket},
+    },
+    orgs: {
+      org: {name},
     },
   } = getState()
 
@@ -353,7 +359,7 @@ export const createOrUpdateTelegrafConfigAsync = () => async (
     config: {
       urls: [`${window.location.origin}`],
       token: '$INFLUX_TOKEN',
-      organization: org,
+      organization: name,
       bucket,
     },
   }
@@ -388,15 +394,16 @@ const createTelegraf = async (dispatch, getState, plugins) => {
     const {
       dataLoading: {
         dataLoaders: {telegrafConfigName, telegrafConfigDescription},
-        steps: {bucket, orgID, bucketID},
+        steps: {bucket, bucketID},
       },
+      orgs: {org},
     } = getState()
 
     const telegrafRequest: TelegrafRequest = {
       name: telegrafConfigName,
       description: telegrafConfigDescription,
       agent: {collectionInterval: DEFAULT_COLLECTION_INTERVAL},
-      organizationID: orgID,
+      orgID: org.id,
       plugins,
     }
 
@@ -409,7 +416,7 @@ const createTelegraf = async (dispatch, getState, plugins) => {
         resource: {
           type: PermissionResource.TypeEnum.Buckets,
           id: bucketID,
-          orgID,
+          orgID: org.id,
         },
       },
       {
@@ -417,14 +424,14 @@ const createTelegraf = async (dispatch, getState, plugins) => {
         resource: {
           type: PermissionResource.TypeEnum.Telegrafs,
           id: tc.id,
-          orgID,
+          orgID: org.id,
         },
       },
     ]
 
     const token = {
       name: `${telegrafConfigName} token`,
-      orgID,
+      orgID: org.id,
       description: `WRITE ${bucket} bucket / READ ${telegrafConfigName} telegraf config`,
       permissions,
     }
@@ -446,7 +453,7 @@ const createTelegraf = async (dispatch, getState, plugins) => {
     } as ILabelProperties // hack to make compiler work
 
     const createdLabel = await client.labels.create({
-      orgID,
+      orgID: org.id,
       name: '@influxdata.token',
       properties,
     })
@@ -517,12 +524,15 @@ export const setActiveLPTab = (
 
 interface SetLPStatus {
   type: 'SET_LP_STATUS'
-  payload: {lpStatus: RemoteDataState}
+  payload: {lpStatus: RemoteDataState; lpError: string}
 }
 
-export const setLPStatus = (lpStatus: RemoteDataState): SetLPStatus => ({
+export const setLPStatus = (
+  lpStatus: RemoteDataState,
+  lpError: string = ''
+): SetLPStatus => ({
   type: 'SET_LP_STATUS',
-  payload: {lpStatus},
+  payload: {lpStatus, lpError},
 })
 
 interface SetPrecision {
@@ -543,10 +553,20 @@ export const writeLineProtocolAction = (
 ) => async dispatch => {
   try {
     dispatch(setLPStatus(RemoteDataState.Loading))
-    await client.write.create(org, bucket, body, {precision})
-    dispatch(setLPStatus(RemoteDataState.Done))
+
+    const resp = await postWrite({data: body, query: {org, bucket, precision}})
+
+    if (resp.status === 204) {
+      dispatch(setLPStatus(RemoteDataState.Done))
+    } else if (resp.status === 429) {
+      dispatch(notify(readWriteCardinalityLimitReached(resp.data.message)))
+      dispatch(setLPStatus(RemoteDataState.Error))
+    } else {
+      throw new Error(_.get(resp, 'data.message', 'Failed to write data'))
+    }
   } catch (error) {
-    dispatch(setLPStatus(RemoteDataState.Error))
+    console.error(error)
+    dispatch(setLPStatus(RemoteDataState.Error, error.message))
   }
 }
 

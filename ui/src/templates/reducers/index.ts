@@ -6,20 +6,19 @@ import {RemoteDataState} from 'src/types'
 export interface TemplatesState {
   status: RemoteDataState
   items: TemplateSummary[]
-  exportTemplate: {status: RemoteDataState; item: DocumentCreate; orgID: string}
+  exportTemplate: {status: RemoteDataState; item: DocumentCreate}
 }
 
-const defaultState = (): TemplatesState => ({
+export const defaultState = (): TemplatesState => ({
   status: RemoteDataState.NotStarted,
   items: [],
   exportTemplate: {
     status: RemoteDataState.NotStarted,
     item: null,
-    orgID: null,
   },
 })
 
-const templatesReducer = (
+export const templatesReducer = (
   state: TemplatesState = defaultState(),
   action: Actions
 ): TemplatesState =>
@@ -42,20 +41,28 @@ const templatesReducer = (
         return
       }
 
+      case ActionTypes.SetTemplateSummary: {
+        const updated = draftState.items.map(t => {
+          if (t.id === action.payload.id) {
+            return action.payload.templateSummary
+          }
+
+          return t
+        })
+
+        draftState.items = updated
+
+        return
+      }
+
       case ActionTypes.SetExportTemplate: {
-        const {status, item, orgID} = action.payload
+        const {status, item} = action.payload
         draftState.exportTemplate.status = status
 
         if (item) {
           draftState.exportTemplate.item = item
         } else {
           draftState.exportTemplate.item = null
-        }
-
-        if (orgID) {
-          draftState.exportTemplate.orgID = orgID
-        } else {
-          draftState.exportTemplate.orgID = null
         }
         return
       }

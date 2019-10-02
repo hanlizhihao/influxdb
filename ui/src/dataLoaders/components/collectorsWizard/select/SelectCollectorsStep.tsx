@@ -18,7 +18,7 @@ import {
 import {setBucketInfo} from 'src/dataLoaders/actions/steps'
 
 // Types
-import {Bucket} from '@influxdata/influx'
+import {Bucket} from 'src/types'
 import {ComponentStatus} from '@influxdata/clockface'
 import {CollectorsStepProps} from 'src/dataLoaders/components/collectorsWizard/CollectorsWizard'
 import {TelegrafPlugin, BundleName} from 'src/types/dataLoaders'
@@ -96,9 +96,9 @@ export class SelectCollectorsStep extends PureComponent<Props> {
   }
 
   private handleSelectBucket = (bucket: Bucket) => {
-    const {organization, organizationID, id, name} = bucket
+    const {orgID, id, name} = bucket
 
-    this.props.onSetBucketInfo(organization, organizationID, name, id)
+    this.props.onSetBucketInfo(orgID, name, id)
   }
 
   private handleTogglePluginBundle = (

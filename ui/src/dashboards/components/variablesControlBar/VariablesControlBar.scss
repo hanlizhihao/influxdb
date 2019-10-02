@@ -1,5 +1,3 @@
-@import 'src/style/modules';
-
 $variables-control-bar--height: $page-header-size -
   (($page-header-size - $form-sm-height) / 2);
 
@@ -19,16 +17,16 @@ $variables-control-bar--gutter: $ix-marg-a;
       100% - #{$variables-control-bar--height + $page-header-size}
     ) !important;
   }
-
-  .variable-dropdown {
-    margin: 0 $variables-control-bar--gutter / 2;
+  
+  .variable-dropdown--container {
+    margin-right: $variables-control-bar--gutter;
+    padding-bottom: 5px;
   }
 
   .variables-spinner-container {
     height: $variables-control-bar--height;
   }
 }
-
 
 .variables-control-bar--empty {
   background-color: $g3-castle;
@@ -39,4 +37,13 @@ $variables-control-bar--gutter: $ix-marg-a;
 
 .variables-control-bar > .techno-spinner {
   margin-left: 10px;
+}
+
+.variables-control-bar.presentation-mode {
+  padding: 8px 0px 0px 8px;
+  min-height: 0px;
+}
+
+.variable-dropdown--container {
+  position: relative;
 }

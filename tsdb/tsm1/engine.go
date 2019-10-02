@@ -25,7 +25,6 @@ import (
 	"github.com/influxdata/influxdb/tsdb"
 	"github.com/influxdata/influxdb/tsdb/tsi1"
 	"github.com/influxdata/influxql"
-	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -156,6 +155,7 @@ type Engine struct {
 	enableCompactionsOnOpen bool
 
 	compactionTracker   *compactionTracker // Used to track state of compactions.
+	readTracker         *readTracker       // Used to track number of reads.
 	defaultMetricLabels prometheus.Labels  // N.B this must not be mutated after Open is called.
 
 	// Limiter for concurrent compactions.
@@ -239,6 +239,10 @@ func (e *Engine) WithFormatFileNameFunc(formatFileNameFunc FormatFileNameFunc) {
 func (e *Engine) WithParseFileNameFunc(parseFileNameFunc ParseFileNameFunc) {
 	e.FileStore.WithParseFileNameFunc(parseFileNameFunc)
 	e.Compactor.WithParseFileNameFunc(parseFileNameFunc)
+}
+
+func (e *Engine) WithCurrentGenerationFunc(fn func() int) {
+	e.Compactor.FileStore.SetCurrentGenerationFunc(fn)
 }
 
 func (e *Engine) WithFileStoreObserver(obs FileStoreObserver) {
@@ -419,11 +423,6 @@ func (e *Engine) disableSnapshotCompactions() {
 	e.mu.Lock()
 	e.snapDone = nil
 	e.mu.Unlock()
-
-	// If the cache is empty, free up its resources as well.
-	if e.Cache.Size() == 0 {
-		e.Cache.Free()
-	}
 }
 
 // ScheduleFullCompaction will force the engine to fully compact all data stored.
@@ -431,7 +430,7 @@ func (e *Engine) disableSnapshotCompactions() {
 // TSM files.  This is an expensive operation.
 func (e *Engine) ScheduleFullCompaction(ctx context.Context) error {
 	// Snapshot any data in the cache
-	if err := e.WriteSnapshot(ctx); err != nil {
+	if err := e.WriteSnapshot(ctx, CacheStatusFullCompaction); err != nil {
 		return err
 	}
 
@@ -496,6 +495,7 @@ func (e *Engine) initTrackers() {
 	e.compactionTracker = newCompactionTracker(bms.compactionMetrics, e.defaultMetricLabels)
 	e.FileStore.tracker = newFileTracker(bms.fileMetrics, e.defaultMetricLabels)
 	e.Cache.tracker = newCacheTracker(bms.cacheMetrics, e.defaultMetricLabels)
+	e.readTracker = newReadTracker(bms.readMetrics, e.defaultMetricLabels)
 
 	e.scheduler.setCompactionTracker(e.compactionTracker)
 }
@@ -585,12 +585,6 @@ func (e *Engine) WithLogger(log *zap.Logger) {
 func (e *Engine) IsIdle() bool {
 	cacheEmpty := e.Cache.Size() == 0
 	return cacheEmpty && e.compactionTracker.AllActive() == 0 && e.CompactionPlan.FullyCompacted()
-}
-
-// Free releases any resources held by the engine to free up memory or CPU.
-func (e *Engine) Free() error {
-	e.Cache.Free()
-	return e.FileStore.Free()
 }
 
 // WritePoints saves the set of points in the engine.
@@ -781,8 +775,23 @@ func (t *compactionTracker) SetOptimiseQueue(length uint64) { t.SetQueue(4, leng
 // SetFullQueue sets the queue depth for Full compactions.
 func (t *compactionTracker) SetFullQueue(length uint64) { t.SetQueue(5, length) }
 
+func (e *Engine) WriteSnapshot(ctx context.Context, status CacheStatus) error {
+	start := time.Now()
+	err := e.writeSnapshot(ctx)
+	if err != nil && err != errCompactionsDisabled {
+		e.logger.Info("Error writing snapshot", zap.Error(err))
+	}
+	e.compactionTracker.SnapshotAttempted(err == nil || err == errCompactionsDisabled ||
+		err == ErrSnapshotInProgress, status, time.Since(start))
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // WriteSnapshot will snapshot the cache and write a new TSM file with its contents, releasing the snapshot when done.
-func (e *Engine) WriteSnapshot(ctx context.Context) error {
+func (e *Engine) writeSnapshot(ctx context.Context) error {
 	span, ctx := tracing.StartSpanFromContext(ctx)
 	defer span.Finish()
 
@@ -791,7 +800,7 @@ func (e *Engine) WriteSnapshot(ctx context.Context) error {
 
 	started := time.Now()
 
-	log, logEnd := logger.NewOperation(e.logger, "Cache snapshot", "tsm1_cache_snapshot")
+	log, logEnd := logger.NewOperation(ctx, e.logger, "Cache snapshot", "tsm1_cache_snapshot")
 	defer func() {
 		elapsed := time.Since(started)
 		log.Info("Snapshot for path written",
@@ -880,15 +889,13 @@ func (e *Engine) compactCache() {
 				continue
 			}
 
-			span, ctx := opentracing.StartSpanFromContext(context.Background(), "Engine.compactCache <-t.C")
+			span, ctx := tracing.StartSpanFromContextWithOperationName(context.Background(), "compact cache")
 			span.LogKV("path", e.path)
 
-			start := time.Now()
-			err := e.WriteSnapshot(ctx)
-			if err != nil && err != errCompactionsDisabled {
+			err := e.WriteSnapshot(ctx, status)
+			if err != nil && err != errCompactionsDisabled && err != ErrSnapshotInProgress {
 				e.logger.Info("Error writing snapshot", zap.Error(err))
 			}
-			e.compactionTracker.SnapshotAttempted(err == nil || err == errCompactionsDisabled, status, time.Since(start))
 
 			span.Finish()
 		}
@@ -901,10 +908,12 @@ type CacheStatus int
 
 // Possible types of Cache status
 const (
-	CacheStatusOkay         CacheStatus = iota // Cache is Okay - do not snapshot.
-	CacheStatusSizeExceeded                    // The cache is large enough to be snapshotted.
-	CacheStatusAgeExceeded                     // The cache is past the age threshold to be snapshotted.
-	CacheStatusColdNoWrites                    // The cache has not been written to for long enough that it should be snapshotted.
+	CacheStatusOkay           CacheStatus = iota // Cache is Okay - do not snapshot.
+	CacheStatusSizeExceeded                      // The cache is large enough to be snapshotted.
+	CacheStatusAgeExceeded                       // The cache is past the age threshold to be snapshotted.
+	CacheStatusColdNoWrites                      // The cache has not been written to for long enough that it should be snapshotted.
+	CacheStatusRetention                         // The cache was snapshotted before running retention.
+	CacheStatusFullCompaction                    // The cache was snapshotted as part of a full compaction.
 )
 
 // ShouldCompactCache returns a status indicating if the Cache should be
@@ -937,6 +946,17 @@ func (e *Engine) ShouldCompactCache(t time.Time) CacheStatus {
 	return CacheStatusOkay
 }
 
+func (e *Engine) lastModified() time.Time {
+	fsTime := e.FileStore.LastModified()
+	cacheTime := e.Cache.LastWriteTime()
+
+	if cacheTime.After(fsTime) {
+		return cacheTime
+	}
+
+	return fsTime
+}
+
 func (e *Engine) compact(wg *sync.WaitGroup) {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
@@ -952,11 +972,13 @@ func (e *Engine) compact(wg *sync.WaitGroup) {
 
 		case <-t.C:
 
+			span, ctx := tracing.StartSpanFromContext(context.Background())
+
 			// Find our compaction plans
 			level1Groups := e.CompactionPlan.PlanLevel(1)
 			level2Groups := e.CompactionPlan.PlanLevel(2)
 			level3Groups := e.CompactionPlan.PlanLevel(3)
-			level4Groups := e.CompactionPlan.Plan(e.FileStore.LastModified())
+			level4Groups := e.CompactionPlan.Plan(e.lastModified())
 			e.compactionTracker.SetOptimiseQueue(uint64(len(level4Groups)))
 
 			// If no full compactions are need, see if an optimize is needed
@@ -977,22 +999,24 @@ func (e *Engine) compact(wg *sync.WaitGroup) {
 			e.scheduler.setDepth(4, len(level4Groups))
 
 			// Find the next compaction that can run and try to kick it off
-			if level, runnable := e.scheduler.next(); runnable {
+			level, runnable := e.scheduler.next()
+			if runnable {
+				span.LogKV("level", level)
 				switch level {
 				case 1:
-					if e.compactHiPriorityLevel(level1Groups[0], 1, false, wg) {
+					if e.compactHiPriorityLevel(ctx, level1Groups[0], 1, false, wg) {
 						level1Groups = level1Groups[1:]
 					}
 				case 2:
-					if e.compactHiPriorityLevel(level2Groups[0], 2, false, wg) {
+					if e.compactHiPriorityLevel(ctx, level2Groups[0], 2, false, wg) {
 						level2Groups = level2Groups[1:]
 					}
 				case 3:
-					if e.compactLoPriorityLevel(level3Groups[0], 3, true, wg) {
+					if e.compactLoPriorityLevel(ctx, level3Groups[0], 3, true, wg) {
 						level3Groups = level3Groups[1:]
 					}
 				case 4:
-					if e.compactFull(level4Groups[0], wg) {
+					if e.compactFull(ctx, level4Groups[0], wg) {
 						level4Groups = level4Groups[1:]
 					}
 				}
@@ -1003,13 +1027,17 @@ func (e *Engine) compact(wg *sync.WaitGroup) {
 			e.CompactionPlan.Release(level2Groups)
 			e.CompactionPlan.Release(level3Groups)
 			e.CompactionPlan.Release(level4Groups)
+
+			if runnable {
+				span.Finish()
+			}
 		}
 	}
 }
 
 // compactHiPriorityLevel kicks off compactions using the high priority policy. It returns
 // true if the compaction was started
-func (e *Engine) compactHiPriorityLevel(grp CompactionGroup, level compactionLevel, fast bool, wg *sync.WaitGroup) bool {
+func (e *Engine) compactHiPriorityLevel(ctx context.Context, grp CompactionGroup, level compactionLevel, fast bool, wg *sync.WaitGroup) bool {
 	s := e.levelCompactionStrategy(grp, fast, level)
 	if s == nil {
 		return false
@@ -1024,7 +1052,7 @@ func (e *Engine) compactHiPriorityLevel(grp CompactionGroup, level compactionLev
 			defer wg.Done()
 			defer e.compactionTracker.DecActive(level)
 			defer e.compactionLimiter.Release()
-			s.Apply()
+			s.Apply(ctx)
 			// Release the files in the compaction plan
 			e.CompactionPlan.Release([]CompactionGroup{s.group})
 		}()
@@ -1037,7 +1065,7 @@ func (e *Engine) compactHiPriorityLevel(grp CompactionGroup, level compactionLev
 
 // compactLoPriorityLevel kicks off compactions using the lo priority policy. It returns
 // the plans that were not able to be started
-func (e *Engine) compactLoPriorityLevel(grp CompactionGroup, level compactionLevel, fast bool, wg *sync.WaitGroup) bool {
+func (e *Engine) compactLoPriorityLevel(ctx context.Context, grp CompactionGroup, level compactionLevel, fast bool, wg *sync.WaitGroup) bool {
 	s := e.levelCompactionStrategy(grp, fast, level)
 	if s == nil {
 		return false
@@ -1051,7 +1079,7 @@ func (e *Engine) compactLoPriorityLevel(grp CompactionGroup, level compactionLev
 			defer wg.Done()
 			defer e.compactionTracker.DecActive(level)
 			defer e.compactionLimiter.Release()
-			s.Apply()
+			s.Apply(ctx)
 			// Release the files in the compaction plan
 			e.CompactionPlan.Release([]CompactionGroup{s.group})
 		}()
@@ -1062,7 +1090,7 @@ func (e *Engine) compactLoPriorityLevel(grp CompactionGroup, level compactionLev
 
 // compactFull kicks off full and optimize compactions using the lo priority policy. It returns
 // the plans that were not able to be started.
-func (e *Engine) compactFull(grp CompactionGroup, wg *sync.WaitGroup) bool {
+func (e *Engine) compactFull(ctx context.Context, grp CompactionGroup, wg *sync.WaitGroup) bool {
 	s := e.fullCompactionStrategy(grp, false)
 	if s == nil {
 		return false
@@ -1076,7 +1104,7 @@ func (e *Engine) compactFull(grp CompactionGroup, wg *sync.WaitGroup) bool {
 			defer wg.Done()
 			defer e.compactionTracker.DecFullActive()
 			defer e.compactionLimiter.Release()
-			s.Apply()
+			s.Apply(ctx)
 			// Release the files in the compaction plan
 			e.CompactionPlan.Release([]CompactionGroup{s.group})
 		}()
@@ -1102,20 +1130,25 @@ type compactionStrategy struct {
 }
 
 // Apply concurrently compacts all the groups in a compaction strategy.
-func (s *compactionStrategy) Apply() {
-	s.compactGroup()
+func (s *compactionStrategy) Apply(ctx context.Context) {
+	s.compactGroup(ctx)
 }
 
 // compactGroup executes the compaction strategy against a single CompactionGroup.
-func (s *compactionStrategy) compactGroup() {
+func (s *compactionStrategy) compactGroup(ctx context.Context) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
 	now := time.Now()
 	group := s.group
-	log, logEnd := logger.NewOperation(s.logger, "TSM compaction", "tsm1_compact_group")
+	log, logEnd := logger.NewOperation(ctx, s.logger, "TSM compaction", "tsm1_compact_group")
 	defer logEnd()
 
 	log.Info("Beginning compaction", zap.Int("tsm1_files_n", len(group)))
+	span.LogKV("file qty", len(group), "fast", s.fast)
 	for i, f := range group {
 		log.Info("Compacting file", zap.Int("tsm1_index", i), zap.String("tsm1_file", f))
+		span.LogKV("compact file", "start", "tsm1_index", i, "tsm1_file", f)
 	}
 
 	var (
@@ -1130,6 +1163,7 @@ func (s *compactionStrategy) compactGroup() {
 	}
 
 	if err != nil {
+		tracing.LogError(span, err)
 		_, inProgress := err.(errCompactionInProgress)
 		if err == errCompactionsDisabled || inProgress {
 			log.Info("Aborted compaction", zap.Error(err))
@@ -1147,14 +1181,24 @@ func (s *compactionStrategy) compactGroup() {
 	}
 
 	if err := s.fileStore.ReplaceWithCallback(group, files, nil); err != nil {
+		tracing.LogError(span, err)
 		log.Info("Error replacing new TSM files", zap.Error(err))
 		s.tracker.Attempted(s.level, false, "", 0)
 		time.Sleep(time.Second)
+
+		// Remove the new snapshot files. We will try again.
+		for _, file := range files {
+			if err := os.Remove(file); err != nil {
+				log.Error("Unable to remove file", zap.String("path", file), zap.Error(err))
+			}
+		}
+
 		return
 	}
 
 	for i, f := range files {
 		log.Info("Compacted file", zap.Int("tsm1_index", i), zap.String("tsm1_file", f))
+		span.LogKV("compact file", "end", "tsm1_index", i, "tsm1_file", f)
 	}
 	log.Info("Finished compacting files", zap.Int("tsm1_files_n", len(files)))
 	s.tracker.Attempted(s.level, true, "", time.Since(now))
@@ -1322,6 +1366,15 @@ func SeriesFieldKeyBytes(seriesKey, field string) []byte {
 	return b
 }
 
+// AppendSeriesFieldKeyBytes combines seriesKey and field such
+// that can be used to search a TSM index. The value is appended to dst and
+// the extended buffer returned.
+func AppendSeriesFieldKeyBytes(dst, seriesKey, field []byte) []byte {
+	dst = append(dst, seriesKey...)
+	dst = append(dst, KeyFieldSeparatorBytes...)
+	return append(dst, field...)
+}
+
 var (
 	blockToFieldType = [8]influxql.DataType{
 		BlockFloat64:  influxql.Float,
@@ -1345,4 +1398,41 @@ func SeriesAndFieldFromCompositeKey(key []byte) ([]byte, []byte) {
 		return key, nil
 	}
 	return key[:sep], key[sep+len(keyFieldSeparator):]
+}
+
+// readTracker tracks reads from the engine.
+type readTracker struct {
+	metrics *readMetrics
+	labels  prometheus.Labels
+	cursors uint64
+	seeks   uint64
+}
+
+func newReadTracker(metrics *readMetrics, defaultLabels prometheus.Labels) *readTracker {
+	t := &readTracker{metrics: metrics, labels: defaultLabels}
+	t.AddCursors(0)
+	t.AddSeeks(0)
+	return t
+}
+
+// Labels returns a copy of the default labels used by the tracker's metrics.
+// The returned map is safe for modification.
+func (t *readTracker) Labels() prometheus.Labels {
+	labels := make(prometheus.Labels, len(t.labels))
+	for k, v := range t.labels {
+		labels[k] = v
+	}
+	return labels
+}
+
+// AddCursors increases the number of cursors.
+func (t *readTracker) AddCursors(n uint64) {
+	atomic.AddUint64(&t.cursors, n)
+	t.metrics.Cursors.With(t.labels).Add(float64(n))
+}
+
+// AddSeeks increases the number of location seeks.
+func (t *readTracker) AddSeeks(n uint64) {
+	atomic.AddUint64(&t.seeks, n)
+	t.metrics.Seeks.With(t.labels).Add(float64(n))
 }

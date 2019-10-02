@@ -7,33 +7,39 @@ import (
 	"github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/authorizer"
 	"github.com/influxdata/influxdb/chronograf/server"
+	"github.com/influxdata/influxdb/http/metric"
+	"github.com/influxdata/influxdb/kit/prom"
 	"github.com/influxdata/influxdb/query"
 	"github.com/influxdata/influxdb/storage"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 // APIHandler is a collection of all the service handlers.
 type APIHandler struct {
-	BucketHandler        *BucketHandler
-	UserHandler          *UserHandler
-	OrgHandler           *OrgHandler
-	AuthorizationHandler *AuthorizationHandler
-	DashboardHandler     *DashboardHandler
-	LabelHandler         *LabelHandler
-	AssetHandler         *AssetHandler
-	ChronografHandler    *ChronografHandler
-	ScraperHandler       *ScraperHandler
-	SourceHandler        *SourceHandler
-	VariableHandler      *VariableHandler
-	TaskHandler          *TaskHandler
-	TelegrafHandler      *TelegrafHandler
-	QueryHandler         *FluxHandler
-	ProtoHandler         *ProtoHandler
-	WriteHandler         *WriteHandler
-	DocumentHandler      *DocumentHandler
-	SetupHandler         *SetupHandler
-	SessionHandler       *SessionHandler
-	SwaggerHandler       http.Handler
+	influxdb.HTTPErrorHandler
+	BucketHandler               *BucketHandler
+	UserHandler                 *UserHandler
+	OrgHandler                  *OrgHandler
+	AuthorizationHandler        *AuthorizationHandler
+	DashboardHandler            *DashboardHandler
+	LabelHandler                *LabelHandler
+	AssetHandler                *AssetHandler
+	ChronografHandler           *ChronografHandler
+	ScraperHandler              *ScraperHandler
+	SourceHandler               *SourceHandler
+	VariableHandler             *VariableHandler
+	TaskHandler                 *TaskHandler
+	CheckHandler                *CheckHandler
+	TelegrafHandler             *TelegrafHandler
+	QueryHandler                *FluxHandler
+	WriteHandler                *WriteHandler
+	DocumentHandler             *DocumentHandler
+	SetupHandler                *SetupHandler
+	SessionHandler              *SessionHandler
+	SwaggerHandler              http.Handler
+	NotificationRuleHandler     *NotificationRuleHandler
+	NotificationEndpointHandler *NotificationEndpointHandler
 }
 
 // APIBackend is all services and associated parameters required to construct
@@ -41,9 +47,14 @@ type APIHandler struct {
 type APIBackend struct {
 	AssetsPath string // if empty then assets are served from bindata.
 	Logger     *zap.Logger
+	influxdb.HTTPErrorHandler
+	SessionRenewDisabled bool
 
 	NewBucketService func(*influxdb.Source) (influxdb.BucketService, error)
 	NewQueryService  func(*influxdb.Source) (query.ProxyQueryService, error)
+
+	WriteEventRecorder metric.EventRecorder
+	QueryEventRecorder metric.EventRecorder
 
 	PointsWriter                    storage.PointsWriter
 	AuthorizationService            influxdb.AuthorizationService
@@ -65,20 +76,38 @@ type APIBackend struct {
 	InfluxQLService                 query.ProxyQueryService
 	FluxService                     query.ProxyQueryService
 	TaskService                     influxdb.TaskService
+	CheckService                    influxdb.CheckService
 	TelegrafService                 influxdb.TelegrafConfigStore
 	ScraperTargetStoreService       influxdb.ScraperTargetStoreService
 	SecretService                   influxdb.SecretService
 	LookupService                   influxdb.LookupService
 	ChronografService               *server.Service
-	ProtoService                    influxdb.ProtoService
 	OrgLookupService                authorizer.OrganizationService
-	ViewService                     influxdb.ViewService
 	DocumentService                 influxdb.DocumentService
+	NotificationRuleStore           influxdb.NotificationRuleStore
+	NotificationEndpointService     influxdb.NotificationEndpointService
+}
+
+// PrometheusCollectors exposes the prometheus collectors associated with an APIBackend.
+func (b *APIBackend) PrometheusCollectors() []prometheus.Collector {
+	var cs []prometheus.Collector
+
+	if pc, ok := b.WriteEventRecorder.(prom.PrometheusCollector); ok {
+		cs = append(cs, pc.PrometheusCollectors()...)
+	}
+
+	if pc, ok := b.QueryEventRecorder.(prom.PrometheusCollector); ok {
+		cs = append(cs, pc.PrometheusCollectors()...)
+	}
+
+	return cs
 }
 
 // NewAPIHandler constructs all api handlers beneath it and returns an APIHandler
 func NewAPIHandler(b *APIBackend) *APIHandler {
-	h := &APIHandler{}
+	h := &APIHandler{
+		HTTPErrorHandler: b.HTTPErrorHandler,
+	}
 
 	internalURM := b.UserResourceMappingService
 	b.UserResourceMappingService = authorizer.NewURMService(b.OrgLookupService, b.UserResourceMappingService)
@@ -114,7 +143,9 @@ func NewAPIHandler(b *APIBackend) *APIHandler {
 	h.AuthorizationHandler = NewAuthorizationHandler(authorizationBackend)
 
 	scraperBackend := NewScraperBackend(b)
-	scraperBackend.ScraperStorageService = authorizer.NewScraperTargetStoreService(b.ScraperTargetStoreService, b.UserResourceMappingService)
+	scraperBackend.ScraperStorageService = authorizer.NewScraperTargetStoreService(b.ScraperTargetStoreService,
+		b.UserResourceMappingService,
+		b.OrganizationService)
 	h.ScraperHandler = NewScraperHandler(scraperBackend)
 
 	sourceBackend := NewSourceBackend(b)
@@ -133,16 +164,30 @@ func NewAPIHandler(b *APIBackend) *APIHandler {
 	telegrafBackend.TelegrafService = authorizer.NewTelegrafConfigService(b.TelegrafService, b.UserResourceMappingService)
 	h.TelegrafHandler = NewTelegrafHandler(telegrafBackend)
 
+	notificationRuleBackend := NewNotificationRuleBackend(b)
+	notificationRuleBackend.NotificationRuleStore = authorizer.NewNotificationRuleStore(b.NotificationRuleStore,
+		b.UserResourceMappingService, b.OrganizationService)
+	h.NotificationRuleHandler = NewNotificationRuleHandler(notificationRuleBackend)
+
+	notificationEndpointBackend := NewNotificationEndpointBackend(b)
+	notificationEndpointBackend.NotificationEndpointService = authorizer.NewNotificationEndpointService(b.NotificationEndpointService,
+		b.UserResourceMappingService, b.OrganizationService)
+	h.NotificationEndpointHandler = NewNotificationEndpointHandler(notificationEndpointBackend)
+
+	checkBackend := NewCheckBackend(b)
+	checkBackend.CheckService = authorizer.NewCheckService(b.CheckService,
+		b.UserResourceMappingService, b.OrganizationService)
+	h.CheckHandler = NewCheckHandler(checkBackend)
+
 	writeBackend := NewWriteBackend(b)
 	h.WriteHandler = NewWriteHandler(writeBackend)
 
 	fluxBackend := NewFluxBackend(b)
 	h.QueryHandler = NewFluxHandler(fluxBackend)
 
-	h.ProtoHandler = NewProtoHandler(NewProtoBackend(b))
-	h.ChronografHandler = NewChronografHandler(b.ChronografService)
-	h.SwaggerHandler = newSwaggerLoader(b.Logger.With(zap.String("service", "swagger-loader")))
-	h.LabelHandler = NewLabelHandler(authorizer.NewLabelService(b.LabelService))
+	h.ChronografHandler = NewChronografHandler(b.ChronografService, b.HTTPErrorHandler)
+	h.SwaggerHandler = newSwaggerLoader(b.Logger.With(zap.String("service", "swagger-loader")), b.HTTPErrorHandler)
+	h.LabelHandler = NewLabelHandler(authorizer.NewLabelService(b.LabelService), b.HTTPErrorHandler)
 
 	return h
 }
@@ -156,16 +201,16 @@ var apiLinks = map[string]interface{}{
 	"external": map[string]string{
 		"statusFeed": "https://www.influxdata.com/feed/json",
 	},
-	"labels":    "/api/v2/labels",
-	"variables": "/api/v2/variables",
-	"me":        "/api/v2/me",
-	"orgs":      "/api/v2/orgs",
-	"protos":    "/api/v2/protos",
+	"labels":                "/api/v2/labels",
+	"variables":             "/api/v2/variables",
+	"me":                    "/api/v2/me",
+	"notificationRules":     "/api/v2/notificationRules",
+	"notificationEndpoints": "/api/v2/notificationEndpoints",
+	"orgs":                  "/api/v2/orgs",
 	"query": map[string]string{
 		"self":        "/api/v2/query",
 		"ast":         "/api/v2/query/ast",
 		"analyze":     "/api/v2/query/analyze",
-		"spec":        "/api/v2/query/spec",
 		"suggestions": "/api/v2/query/suggestions",
 	},
 	"setup":    "/api/v2/setup",
@@ -180,6 +225,7 @@ var apiLinks = map[string]interface{}{
 		"health":  "/health",
 	},
 	"tasks":     "/api/v2/tasks",
+	"checks":    "/api/v2/checks",
 	"telegrafs": "/api/v2/telegrafs",
 	"users":     "/api/v2/users",
 	"write":     "/api/v2/write",
@@ -188,8 +234,7 @@ var apiLinks = map[string]interface{}{
 func (h *APIHandler) serveLinks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if err := encodeResponse(ctx, w, http.StatusOK, apiLinks); err != nil {
-		EncodeError(ctx, err, w)
-		return
+		h.HandleHTTPError(ctx, err, w)
 	}
 }
 
@@ -276,18 +321,28 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasPrefix(r.URL.Path, "/api/v2/checks") {
+		h.CheckHandler.ServeHTTP(w, r)
+		return
+	}
+
 	if strings.HasPrefix(r.URL.Path, "/api/v2/telegrafs") {
 		h.TelegrafHandler.ServeHTTP(w, r)
 		return
 	}
 
-	if strings.HasPrefix(r.URL.Path, "/api/v2/variables") {
-		h.VariableHandler.ServeHTTP(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api/v2/notificationRules") {
+		h.NotificationRuleHandler.ServeHTTP(w, r)
 		return
 	}
 
-	if strings.HasPrefix(r.URL.Path, "/api/v2/protos") {
-		h.ProtoHandler.ServeHTTP(w, r)
+	if strings.HasPrefix(r.URL.Path, "/api/v2/notificationEndpoints") {
+		h.NotificationEndpointHandler.ServeHTTP(w, r)
+		return
+	}
+
+	if strings.HasPrefix(r.URL.Path, "/api/v2/variables") {
+		h.VariableHandler.ServeHTTP(w, r)
 		return
 	}
 
@@ -306,5 +361,5 @@ func (h *APIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	notFoundHandler(w, r)
+	baseHandler{HTTPErrorHandler: h.HTTPErrorHandler}.notFound(w, r)
 }

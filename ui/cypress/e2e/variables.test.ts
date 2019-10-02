@@ -1,4 +1,4 @@
-import {Organization} from '@influxdata/influx'
+import {Organization} from '../../src/types'
 
 describe('Variables', () => {
   beforeEach(() => {
@@ -6,16 +6,16 @@ describe('Variables', () => {
 
     cy.signin().then(({body}) => {
       cy.wrap(body.org).as('org')
-      cy.visit(`organizations/${body.org.id}/variables`)
+      cy.visit(`orgs/${body.org.id}/settings/variables`)
     })
   })
 
   it('can create a variable', () => {
-    cy.get('.empty-state').within(() => {
+    cy.get('.cf-empty-state').within(() => {
       cy.contains('Create').click()
     })
 
-    cy.getByTestID('dropdown--item New Variable').click()
+    cy.getByTestID('add-resource-dropdown--new').click()
 
     cy.getByInputName('name').type('Little Variable')
     cy.getByTestID('flux-editor').within(() => {
@@ -28,7 +28,7 @@ describe('Variables', () => {
       .contains('Create')
       .click()
 
-    cy.getByTestID('variable-row').should('have.length', 1)
+    cy.getByTestID('resource-card').should('have.length', 1)
   })
 
   it.skip('can delete a variable', () => {
@@ -37,12 +37,12 @@ describe('Variables', () => {
       cy.createVariable(id)
     })
 
-    cy.getByTestID('variable-row').should('have.length', 2)
+    cy.getByTestID('resource-card').should('have.length', 2)
 
     cy.getByTestID('confirmation-button')
       .first()
       .click({force: true})
 
-    cy.getByTestID('variable-row').should('have.length', 1)
+    cy.getByTestID('resource-card').should('have.length', 1)
   })
 })

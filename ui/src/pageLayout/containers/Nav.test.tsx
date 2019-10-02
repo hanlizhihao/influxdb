@@ -1,30 +1,52 @@
 // Libraries
 import React from 'react'
 import {render} from 'react-testing-library'
-import {IconFont} from 'src/clockface'
+import _ from 'lodash'
 
 // Components
-import NavMenu from 'src/pageLayout/components/NavMenu'
+import {NavMenu, Icon, IconFont} from '@influxdata/clockface'
+
+// Utils
+import {getNavItemActivation} from 'src/pageLayout/utils'
+
+// Constants
+const DASHBOARDS_NAV_ITEM = 'Dashboards'
+const TASKS_NAV_ITEM = 'Tasks'
 
 function Nav(props) {
   const {pathname} = props
+
   return (
-    <>
+    <NavMenu>
       <NavMenu.Item
-        title="Dashboards"
-        link="/dashboards"
-        icon={IconFont.Dashboards}
-        location={pathname}
-        highlightPaths={['dashboards']}
+        titleLink={className => (
+          <a href="#" className={className}>
+            {DASHBOARDS_NAV_ITEM}
+          </a>
+        )}
+        iconLink={className => (
+          <a href="#" className={className}>
+            <Icon glyph={IconFont.Dashboards} />
+          </a>
+        )}
+        active={getNavItemActivation(['dashboards'], pathname)}
+        testID={`nav-menu--item ${DASHBOARDS_NAV_ITEM}`}
       />
       <NavMenu.Item
-        title="Organizations"
-        link="/organizations"
-        icon={IconFont.UsersDuo}
-        location={pathname}
-        highlightPaths={['organizations']}
+        titleLink={className => (
+          <a href="#" className={className}>
+            {TASKS_NAV_ITEM}
+          </a>
+        )}
+        iconLink={className => (
+          <a href="#" className={className}>
+            <Icon glyph={IconFont.Calendar} />
+          </a>
+        )}
+        active={getNavItemActivation(['tasks'], pathname)}
+        testID={`nav-menu--item ${TASKS_NAV_ITEM}`}
       />
-    </>
+    </NavMenu>
   )
 }
 
@@ -39,13 +61,13 @@ const setup = (override?) => {
 
 describe('Nav', () => {
   it('only highlights one nav item', () => {
-    const pathname = '/organizations/036ef4599dddb000/dashboards'
+    const pathname = '/orgs/036ef4599dddb000/dashboards'
     const {getByTestId} = setup({pathname})
 
-    const dashItem = getByTestId(`nav-menu-item ${IconFont.Dashboards}`)
-    const orgItem = getByTestId(`nav-menu-item ${IconFont.UsersDuo}`)
+    const dashItem = getByTestId(`nav-menu--item ${DASHBOARDS_NAV_ITEM}`)
+    const tasksItem = getByTestId(`nav-menu--item ${TASKS_NAV_ITEM}`)
 
-    expect(dashItem.className).not.toContain('active')
-    expect(orgItem.className).toContain('active')
+    expect(dashItem.className).toContain('active')
+    expect(tasksItem.className).not.toContain('active')
   })
 })

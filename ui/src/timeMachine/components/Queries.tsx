@@ -7,81 +7,83 @@ import TimeMachineFluxEditor from 'src/timeMachine/components/TimeMachineFluxEdi
 import CSVExportButton from 'src/shared/components/CSVExportButton'
 import TimeMachineQueriesSwitcher from 'src/timeMachine/components/QueriesSwitcher'
 import TimeMachineRefreshDropdown from 'src/timeMachine/components/RefreshDropdown'
-import TimeRangeDropdown from 'src/shared/components/TimeRangeDropdown'
-import TimeMachineQueryTab from 'src/timeMachine/components/QueryTab'
+import TimeRangeDropdown, {
+  RangeType,
+} from 'src/shared/components/TimeRangeDropdown'
 import TimeMachineQueryBuilder from 'src/timeMachine/components/QueryBuilder'
 import SubmitQueryButton from 'src/timeMachine/components/SubmitQueryButton'
 import RawDataToggle from 'src/timeMachine/components/RawDataToggle'
+import QueryTabs from 'src/timeMachine/components/QueryTabs'
 import {
-  Button,
-  IconFont,
-  Alignment,
-  ButtonShape,
   ComponentSize,
-  ComponentColor,
-  ComponentSpacer,
+  FlexBox,
+  FlexDirection,
+  JustifyContent,
 } from '@influxdata/clockface'
 
 // Actions
-import {addQuery} from 'src/timeMachine/actions'
+import {setAutoRefresh} from 'src/timeMachine/actions'
 import {setTimeRange} from 'src/timeMachine/actions'
 
 // Utils
-import {getActiveTimeMachine, getActiveQuery} from 'src/timeMachine/selectors'
+import {
+  getActiveTimeMachine,
+  getIsInCheckOverlay,
+  getActiveQuery,
+} from 'src/timeMachine/selectors'
 
 // Types
-import {AppState, DashboardQuery, QueryEditMode, TimeRange} from 'src/types'
-import {DashboardDraftQuery} from 'src/types/dashboards'
+import {
+  AppState,
+  DashboardQuery,
+  TimeRange,
+  AutoRefresh,
+  AutoRefreshStatus,
+} from 'src/types'
 
 interface StateProps {
   activeQuery: DashboardQuery
-  draftQueries: DashboardDraftQuery[]
   timeRange: TimeRange
+  autoRefresh: AutoRefresh
+  isInCheckOverlay: boolean
 }
 
 interface DispatchProps {
-  onAddQuery: typeof addQuery
   onSetTimeRange: typeof setTimeRange
+  onSetAutoRefresh: typeof setAutoRefresh
 }
 
 type Props = StateProps & DispatchProps
 
 class TimeMachineQueries extends PureComponent<Props> {
   public render() {
-    const {draftQueries, onAddQuery, timeRange, onSetTimeRange} = this.props
+    const {timeRange, isInCheckOverlay} = this.props
 
     return (
       <div className="time-machine-queries">
         <div className="time-machine-queries--controls">
-          <div className="time-machine-queries--tabs">
-            {draftQueries.map((query, queryIndex) => (
-              <TimeMachineQueryTab
-                key={queryIndex}
-                queryIndex={queryIndex}
-                query={query}
-              />
-            ))}
-            <Button
-              customClass="time-machine-queries--new"
-              shape={ButtonShape.Square}
-              icon={IconFont.PlusSkinny}
-              size={ComponentSize.ExtraSmall}
-              color={ComponentColor.Default}
-              onClick={onAddQuery}
-            />
-          </div>
+          <QueryTabs />
           <div className="time-machine-queries--buttons">
-            <ComponentSpacer align={Alignment.Right}>
+            <FlexBox
+              direction={FlexDirection.Row}
+              justifyContent={JustifyContent.FlexEnd}
+              margin={ComponentSize.Small}
+            >
               <RawDataToggle />
-              <CSVExportButton />
-              <TimeMachineRefreshDropdown />
-              <TimeRangeDropdown
-                timeRange={timeRange}
-                onSetTimeRange={onSetTimeRange}
-              />
-              <TimeMachineQueriesSwitcher />
+              {!isInCheckOverlay && (
+                <>
+                  <CSVExportButton />
+                  <TimeMachineRefreshDropdown />
+                  <TimeRangeDropdown
+                    timeRange={timeRange}
+                    onSetTimeRange={this.handleSetTimeRange}
+                    centerPicker={true}
+                  />
+                  <TimeMachineQueriesSwitcher />
+                </>
+              )}
               <SubmitQueryButton />
-            </ComponentSpacer>
+            </FlexBox>
           </div>
         </div>
         <div className="time-machine-queries--body">{this.queryEditor}</div>
@@ -89,12 +91,35 @@ class TimeMachineQueries extends PureComponent<Props> {
     )
   }
 
+  private handleSetTimeRange = (
+    timeRange: TimeRange,
+    rangeType: RangeType = RangeType.Relative
+  ) => {
+    const {autoRefresh, onSetAutoRefresh, onSetTimeRange} = this.props
+
+    onSetTimeRange(timeRange)
+
+    if (rangeType === RangeType.Absolute) {
+      onSetAutoRefresh({...autoRefresh, status: AutoRefreshStatus.Disabled})
+      return
+    }
+
+    if (autoRefresh.status === AutoRefreshStatus.Disabled) {
+      if (autoRefresh.interval === 0) {
+        onSetAutoRefresh({...autoRefresh, status: AutoRefreshStatus.Paused})
+        return
+      }
+
+      onSetAutoRefresh({...autoRefresh, status: AutoRefreshStatus.Active})
+    }
+  }
+
   private get queryEditor(): JSX.Element {
     const {activeQuery} = this.props
 
-    if (activeQuery.editMode === QueryEditMode.Builder) {
+    if (activeQuery.editMode === 'builder') {
       return <TimeMachineQueryBuilder />
-    } else if (activeQuery.editMode === QueryEditMode.Advanced) {
+    } else if (activeQuery.editMode === 'advanced') {
       return <TimeMachineFluxEditor />
     } else {
       return null
@@ -103,16 +128,21 @@ class TimeMachineQueries extends PureComponent<Props> {
 }
 
 const mstp = (state: AppState) => {
-  const {draftQueries, timeRange} = getActiveTimeMachine(state)
+  const {timeRange, autoRefresh} = getActiveTimeMachine(state)
 
   const activeQuery = getActiveQuery(state)
 
-  return {timeRange, activeQuery, draftQueries}
+  return {
+    timeRange,
+    activeQuery,
+    autoRefresh,
+    isInCheckOverlay: getIsInCheckOverlay(state),
+  }
 }
 
 const mdtp = {
-  onAddQuery: addQuery,
   onSetTimeRange: setTimeRange,
+  onSetAutoRefresh: setAutoRefresh,
 }
 
 export default connect<StateProps, DispatchProps>(

@@ -2,17 +2,22 @@ package influxdb
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 )
 
-// BucketType defines known system-buckets.
-type BucketType int
-
+// TasksSystemBucketID and MonitoringSystemBucketID are IDs that are reserved for system buckets.
+// If any system bucket IDs are added, Bucket.IsSystem must be updated to include them.
 const (
-	// BucketTypeLogs defines the bucket ID of the system logs.
-	BucketTypeLogs = BucketType(iota + 10)
+	// TasksSystemBucketID is the fixed ID for our tasks system bucket
+	TasksSystemBucketID = ID(10)
+	// MonitoringSystemBucketID is the fixed ID for our monitoring system bucket
+	MonitoringSystemBucketID = ID(11)
+
+	// BucketTypeUser is a user created bucket
+	BucketTypeUser = BucketType(0)
+	// BucketTypeSystem is an internally created bucket that cannot be deleted/renamed.
+	BucketTypeSystem = BucketType(1)
 )
 
 // InfiniteRetention is default infinite retention period.
@@ -21,11 +26,30 @@ const InfiniteRetention = 0
 // Bucket is a bucket. 🎉
 type Bucket struct {
 	ID                  ID            `json:"id,omitempty"`
-	OrganizationID      ID            `json:"orgID,omitempty"`
-	Organization        string        `json:"organization,omitempty"`
+	OrgID               ID            `json:"orgID,omitempty"`
+	Type                BucketType    `json:"type"`
 	Name                string        `json:"name"`
+	Description         string        `json:"description"`
 	RetentionPolicyName string        `json:"rp,omitempty"` // This to support v1 sources
 	RetentionPeriod     time.Duration `json:"retentionPeriod"`
+	CRUDLog
+}
+
+// BucketType differentiates system buckets from user buckets.
+type BucketType int
+
+// String converts a BucketType into a human-readable string.
+func (bt BucketType) String() string {
+	if bt == BucketTypeSystem {
+		return "system"
+	}
+	return "user"
+}
+
+// TODO(jade): move this logic to a type set directly on Bucket.
+// IsSystem returns true if a bucket is a known system bucket
+func (b *Bucket) IsSystem() bool {
+	return b.ID == TasksSystemBucketID || b.ID == MonitoringSystemBucketID
 }
 
 // ops for buckets error and buckets op logs.
@@ -65,6 +89,7 @@ type BucketService interface {
 // Only fields which are set are updated.
 type BucketUpdate struct {
 	Name            *string        `json:"name,omitempty"`
+	Description     *string        `json:"description,omitempty"`
 	RetentionPeriod *time.Duration `json:"retentionPeriod,omitempty"`
 }
 
@@ -73,7 +98,7 @@ type BucketFilter struct {
 	ID             *ID
 	Name           *string
 	OrganizationID *ID
-	Organization   *string
+	Org            *string
 }
 
 // QueryParams Converts BucketFilter fields to url query params.
@@ -91,8 +116,8 @@ func (f BucketFilter) QueryParams() map[string][]string {
 		qp["orgID"] = []string{f.OrganizationID.String()}
 	}
 
-	if f.Organization != nil {
-		qp["org"] = []string{*f.Organization}
+	if f.Org != nil {
+		qp["org"] = []string{*f.Org}
 	}
 
 	return qp
@@ -112,13 +137,8 @@ func (f BucketFilter) String() string {
 	if f.OrganizationID != nil {
 		parts = append(parts, "Org ID: "+f.OrganizationID.String())
 	}
-	if f.Organization != nil {
-		parts = append(parts, "Org Name: "+*f.Organization)
+	if f.Org != nil {
+		parts = append(parts, "Org Name: "+*f.Org)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-// InternalBucketID returns the ID for an organization's specified internal bucket
-func InternalBucketID(t BucketType) (*ID, error) {
-	return IDFromString(fmt.Sprintf("%d", t))
 }

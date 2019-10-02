@@ -8,17 +8,19 @@ import {
   TaskTemplate,
   TemplateBase,
   Task,
+  VariableTemplate,
 } from 'src/types'
 import {IDashboard, Cell} from '@influxdata/influx'
 import {client} from 'src/utils/api'
 
 import {
   findIncludedsFromRelationships,
-  findLabelIDsToAdd,
   findLabelsToCreate,
   findIncludedFromRelationship,
   findVariablesToCreate,
   findIncludedVariables,
+  hasLabelsRelationships,
+  getLabelRelationships,
 } from 'src/templates/utils/'
 
 // Create Dashboard Templates
@@ -45,49 +47,62 @@ export const createDashboardFromTemplate = async (
     throw new Error('Failed to create dashboard from template')
   }
 
+  // associate imported label id with new label
+  const labelMap = await createLabelsFromTemplate(template, orgID)
+
   await Promise.all([
-    await createDashboardLabelsFromTemplate(template, createdDashboard),
+    await addDashboardLabelsFromTemplate(template, labelMap, createdDashboard),
     await createCellsFromTemplate(template, createdDashboard),
   ])
-  createVariablesFromTemplate(template, orgID)
+
+  await createVariablesFromTemplate(template, labelMap, orgID)
 
   const dashboard = await client.dashboards.get(createdDashboard.id)
   return dashboard
 }
 
-const createDashboardLabelsFromTemplate = async (
+const addDashboardLabelsFromTemplate = async (
   template: DashboardTemplate,
+  labelMap: LabelMap,
   dashboard: IDashboard
 ) => {
-  const templateLabels = await createLabelsFromTemplate(
-    template,
-    dashboard.orgID
-  )
-  await client.dashboards.addLabels(dashboard.id, templateLabels)
+  const labelRelationships = getLabelRelationships(template.content.data)
+  const labelIDs = labelRelationships.map(l => labelMap[l.id] || '')
+
+  await client.dashboards.addLabels(dashboard.id, labelIDs)
 }
+
+type LabelMap = {[importedID: string]: CreatedLabelID}
+type CreatedLabelID = string
 
 const createLabelsFromTemplate = async <T extends TemplateBase>(
   template: T,
   orgID: string
-) => {
+): Promise<LabelMap> => {
   const {
     content: {data, included},
   } = template
 
-  if (!data.relationships || !data.relationships[TemplateType.Label]) {
-    return
+  const labeledResources = [data, ...included].filter(r =>
+    hasLabelsRelationships(r)
+  )
+
+  if (_.isEmpty(labeledResources)) {
+    return {}
   }
 
-  const labelRelationships = data.relationships[TemplateType.Label].data
+  const labelRelationships = _.flatMap(labeledResources, r =>
+    getLabelRelationships(r)
+  )
 
-  const labelsIncluded = findIncludedsFromRelationships<LabelIncluded>(
+  const includedLabels = findIncludedsFromRelationships<LabelIncluded>(
     included,
     labelRelationships
   )
 
-  const existingLabels = await client.labels.getAll()
+  const existingLabels = await client.labels.getAll(orgID)
 
-  const labelsToCreate = findLabelsToCreate(existingLabels, labelsIncluded).map(
+  const labelsToCreate = findLabelsToCreate(existingLabels, includedLabels).map(
     l => ({
       orgID,
       name: _.get(l, 'attributes.name', ''),
@@ -96,14 +111,17 @@ const createLabelsFromTemplate = async <T extends TemplateBase>(
   )
 
   const createdLabels = await client.labels.createAll(labelsToCreate)
+  const allLabels = [...createdLabels, ...existingLabels]
 
-  // IDs of newly created labels that should be added to dashboard
-  const createdLabelIDs = createdLabels.map(l => l.id || '')
+  const labelMap: LabelMap = {}
 
-  // IDs of existing labels that should be added to dashboard
-  const existingLabelIDs = findLabelIDsToAdd(existingLabels, labelsIncluded)
+  includedLabels.forEach(label => {
+    const createdLabel = allLabels.find(l => l.name === label.attributes.name)
 
-  return [...createdLabelIDs, ...existingLabelIDs]
+    labelMap[label.id] = createdLabel.id
+  })
+
+  return labelMap
 }
 
 const createCellsFromTemplate = async (
@@ -173,7 +191,8 @@ const createViewsFromTemplate = async (
 }
 
 const createVariablesFromTemplate = async (
-  template: DashboardTemplate,
+  template: DashboardTemplate | VariableTemplate,
+  labelMap: LabelMap,
   orgID: string
 ) => {
   const {
@@ -184,14 +203,26 @@ const createVariablesFromTemplate = async (
   }
   const variablesIncluded = findIncludedVariables(included)
 
-  const existingVariables = await client.variables.getAll()
+  const existingVariables = await client.variables.getAll(orgID)
 
   const variablesToCreate = findVariablesToCreate(
     existingVariables,
     variablesIncluded
   ).map(v => ({...v.attributes, orgID}))
 
-  await client.variables.createAll(variablesToCreate)
+  const createdVariables = await client.variables.createAll(variablesToCreate)
+
+  const allVars = [...existingVariables, ...createdVariables]
+
+  const addLabelsToVars = variablesIncluded.map(async includedVar => {
+    const variable = allVars.find(v => v.name === includedVar.attributes.name)
+    const labelRelationships = getLabelRelationships(includedVar)
+    const labelIDs = labelRelationships.map(l => labelMap[l.id] || '')
+
+    await client.variables.addLabels(variable.id, labelIDs)
+  })
+
+  await Promise.all(addLabelsToVars)
 }
 
 export const createTaskFromTemplate = async (
@@ -209,23 +240,60 @@ export const createTaskFromTemplate = async (
 
   const flux = content.data.attributes.flux
 
-  const createdTask = await client.tasks.createByOrgID(orgID, flux)
+  const createdTask = await client.tasks.createByOrgID(orgID, flux, null)
 
   if (!createdTask || !createdTask.id) {
     throw new Error('Could not create task')
   }
 
-  await createTaskLabelsFromTemplate(template, createdTask)
+  // associate imported label.id with created label
+  const labelMap = await createLabelsFromTemplate(template, orgID)
+
+  await addTaskLabelsFromTemplate(template, labelMap, createdTask)
 
   const task = await client.tasks.get(createdTask.id)
 
   return task
 }
 
-const createTaskLabelsFromTemplate = async (
+const addTaskLabelsFromTemplate = async (
   template: TaskTemplate,
+  labelMap: LabelMap,
   task: Task
 ) => {
-  const templateLabels = await createLabelsFromTemplate(template, task.orgID)
-  await client.tasks.addLabels(task.id, templateLabels)
+  const relationships = getLabelRelationships(template.content.data)
+  const labelIDs = relationships.map(l => labelMap[l.id] || '')
+  await client.tasks.addLabels(task.id, labelIDs)
+}
+
+export const createVariableFromTemplate = async (
+  template: VariableTemplate,
+  orgID: string
+) => {
+  const {content} = template
+
+  if (
+    content.data.type !== TemplateType.Variable ||
+    template.meta.version !== '1'
+  ) {
+    throw new Error('Can not create variable from this template')
+  }
+
+  const createdVariable = await client.variables.create({
+    ...content.data.attributes,
+    orgID,
+  })
+
+  if (!createdVariable || !createdVariable.id) {
+    throw new Error('Failed to create variable from template')
+  }
+
+  // associate imported label.id with created label
+  const labelsMap = await createLabelsFromTemplate(template, orgID)
+
+  await createVariablesFromTemplate(template, labelsMap, orgID)
+
+  const variable = await client.variables.get(createdVariable.id)
+
+  return variable
 }

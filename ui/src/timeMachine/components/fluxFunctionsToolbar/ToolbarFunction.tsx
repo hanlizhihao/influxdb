@@ -10,8 +10,8 @@ import {FluxToolbarFunction} from 'src/types/shared'
 
 interface Props {
   func: FluxToolbarFunction
-  onClickFunction: (name: string, example: string) => void
-  testID?: string
+  onClickFunction: (func: FluxToolbarFunction) => void
+  testID: string
 }
 
 interface State {
@@ -19,7 +19,7 @@ interface State {
 }
 
 class ToolbarFunction extends PureComponent<Props, State> {
-  public static defaultProps: Partial<Props> = {
+  public static defaultProps = {
     testID: 'toolbar-function',
   }
 
@@ -83,7 +83,7 @@ class ToolbarFunction extends PureComponent<Props, State> {
   private handleClickFunction = () => {
     const {func, onClickFunction} = this.props
 
-    onClickFunction(func.name, func.example)
+    onClickFunction(func)
   }
 }
 

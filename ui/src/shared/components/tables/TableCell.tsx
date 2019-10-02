@@ -1,7 +1,6 @@
 // Libraries
 import React, {PureComponent} from 'react'
 import _ from 'lodash'
-import moment from 'moment'
 import classnames from 'classnames'
 
 // Constants
@@ -13,14 +12,14 @@ import {generateThresholdsListHexs} from 'src/shared/constants/colorOperations'
 
 // Types
 import {SortOptions, FieldOption} from 'src/types/dashboards'
-import {TableView} from 'src/types/dashboards'
+import {TableViewProperties} from 'src/types/dashboards'
 import {CellRendererProps} from 'src/shared/components/tables/TableGraphTable'
 
 interface Props extends CellRendererProps {
   sortOptions: SortOptions
   data: string
   dataType: string
-  properties: TableView
+  properties: TableViewProperties
   hoveredRowIndex: number
   hoveredColumnIndex: number
   isTimeVisible: boolean
@@ -29,6 +28,7 @@ interface Props extends CellRendererProps {
   onClickFieldName: (data: string) => void
   onHover: (e: React.MouseEvent<HTMLElement>) => void
   resolvedFieldOptions: FieldOption[]
+  timeFormatter: (time: string) => string
 }
 
 class TableCell extends PureComponent<Props> {
@@ -190,11 +190,11 @@ class TableCell extends PureComponent<Props> {
   }
 
   private get contents(): string {
-    const {properties, data, dataType} = this.props
-    const {timeFormat, decimalPlaces} = properties
+    const {properties, data, dataType, timeFormatter} = this.props
+    const {decimalPlaces} = properties
 
     if (dataType.includes('dateTime')) {
-      return moment(data).format(timeFormat)
+      return timeFormatter(data)
     }
 
     if (_.isString(data) && this.isFieldName) {

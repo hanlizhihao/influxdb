@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/ast"
 	"github.com/influxdata/flux/ast/edit"
 	"github.com/influxdata/flux/parser"
@@ -21,39 +20,93 @@ const (
 
 	TaskStatusActive   = "active"
 	TaskStatusInactive = "inactive"
+
+	TaskTypeWildcard = "*"
 )
 
 // Task is a task. 🎊
 type Task struct {
-	ID              ID     `json:"id"`
-	OrganizationID  ID     `json:"orgID"`
-	Organization    string `json:"org"`
-	AuthorizationID ID     `json:"authorizationID"`
-	Name            string `json:"name"`
-	Status          string `json:"status"`
-	Flux            string `json:"flux"`
-	Every           string `json:"every,omitempty"`
-	Cron            string `json:"cron,omitempty"`
-	Offset          string `json:"offset,omitempty"`
-	LatestCompleted string `json:"latestCompleted,omitempty"`
-	CreatedAt       string `json:"createdAt,omitempty"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
+	ID              ID             `json:"id"`
+	Type            string         `json:"type,omitempty"`
+	OrganizationID  ID             `json:"orgID"`
+	Organization    string         `json:"org"`
+	AuthorizationID ID             `json:"-"`
+	Authorization   *Authorization `json:"-"`
+	OwnerID         ID             `json:"ownerID"`
+	Name            string         `json:"name"`
+	Description     string         `json:"description,omitempty"`
+	Status          string         `json:"status"`
+	Flux            string         `json:"flux"`
+	Every           string         `json:"every,omitempty"`
+	Cron            string         `json:"cron,omitempty"`
+	Offset          string         `json:"offset,omitempty"`
+	LatestCompleted string         `json:"latestCompleted,omitempty"`
+	CreatedAt       string         `json:"createdAt,omitempty"`
+	UpdatedAt       string         `json:"updatedAt,omitempty"`
 }
 
-// Run is a record created when a run of a task is scheduled.
+// EffectiveCron returns the effective cron string of the options.
+// If the cron option was specified, it is returned.
+// If the every option was specified, it is converted into a cron string using "@every".
+// Otherwise, the empty string is returned.
+// The value of the offset option is not considered.
+func (t *Task) EffectiveCron() string {
+	if t.Cron != "" {
+		return t.Cron
+	}
+	if t.Every != "" {
+		return "@every " + t.Every
+	}
+	return ""
+}
+
+// LatestCompletedTime gives the time.Time that the task was last queued to be run in RFC3339 format.
+func (t *Task) LatestCompletedTime() (time.Time, error) {
+	tm := t.LatestCompleted
+	if tm == "" {
+		tm = t.CreatedAt
+	}
+	return time.Parse(time.RFC3339, tm)
+}
+
+// OffsetDuration gives the time.Duration of the Task's Offset property, which represents a delay before execution
+func (t *Task) OffsetDuration() (time.Duration, error) {
+	if t.Offset == "" {
+		return time.Duration(0), nil
+	}
+	return time.ParseDuration(t.Offset)
+}
+
+// Run is a record createId when a run of a task is scheduled.
 type Run struct {
 	ID           ID     `json:"id,omitempty"`
 	TaskID       ID     `json:"taskID"`
 	Status       string `json:"status"`
-	ScheduledFor string `json:"scheduledFor"`
-	StartedAt    string `json:"startedAt,omitempty"`
-	FinishedAt   string `json:"finishedAt,omitempty"`
-	RequestedAt  string `json:"requestedAt,omitempty"`
-	Log          []Log  `json:"log"`
+	ScheduledFor string `json:"scheduledFor"`          // ScheduledFor is the time the task is scheduled to run at
+	StartedAt    string `json:"startedAt,omitempty"`   // StartedAt is the time the executor begins running the task
+	FinishedAt   string `json:"finishedAt,omitempty"`  // FinishedAt is the time the executor finishes running the task
+	RequestedAt  string `json:"requestedAt,omitempty"` // RequestedAt is the time the coordinator told the scheduler to schedule the task
+	Log          []Log  `json:"log,omitempty"`
+}
+
+// ScheduledForTime gives the time.Time that the run is scheduled for.
+func (r *Run) ScheduledForTime() (time.Time, error) {
+	return time.Parse(time.RFC3339, r.ScheduledFor)
+}
+
+// StartedAtTime gives the time.Time that the run was started.
+func (r *Run) StartedAtTime() (time.Time, error) {
+	return time.Parse(time.RFC3339Nano, r.StartedAt)
+}
+
+// RequestedAtTime gives the time.Time that the run was requested.
+func (r *Run) RequestedAtTime() (time.Time, error) {
+	return time.Parse(time.RFC3339, r.RequestedAt)
 }
 
 // Log represents a link to a log resource
 type Log struct {
+	RunID   ID     `json:"runID,omitempty"`
 	Time    string `json:"time"`
 	Message string `json:"message"`
 }
@@ -103,11 +156,13 @@ type TaskService interface {
 
 // TaskCreate is the set of values to create a task.
 type TaskCreate struct {
+	Type           string `json:"type,omitempty"`
 	Flux           string `json:"flux"`
+	Description    string `json:"description,omitempty"`
 	Status         string `json:"status,omitempty"`
 	OrganizationID ID     `json:"orgID,omitempty"`
 	Organization   string `json:"org,omitempty"`
-	Token          string `json:"token,omitempty"`
+	OwnerID        ID     `json:"-"`
 }
 
 func (t TaskCreate) Validate() error {
@@ -124,100 +179,107 @@ func (t TaskCreate) Validate() error {
 
 // TaskUpdate represents updates to a task. Options updates override any options set in the Flux field.
 type TaskUpdate struct {
-	Flux   *string `json:"flux,omitempty"`
-	Status *string `json:"status,omitempty"`
+	Flux        *string `json:"flux,omitempty"`
+	Status      *string `json:"status,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// LatestCompleted us to set latest completed on startup to skip task catchup
+	LatestCompleted *string `json:"-"`
+
 	// Options gets unmarshalled from json as if it was flat, with the same level as Flux and Status.
 	Options options.Options // when we unmarshal this gets unmarshalled from flat key-values
-
-	// Optional token override.
-	Token string `json:"token,omitempty"`
 }
 
 func (t *TaskUpdate) UnmarshalJSON(data []byte) error {
 	// this is a type so we can marshal string into durations nicely
 	jo := struct {
-		Flux   *string `json:"flux,omitempty"`
-		Status *string `json:"status,omitempty"`
-		Name   string  `json:"name,omitempty"`
+		Flux        *string `json:"flux,omitempty"`
+		Status      *string `json:"status,omitempty"`
+		Name        string  `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"`
 
 		// Cron is a cron style time schedule that can be used in place of Every.
 		Cron string `json:"cron,omitempty"`
 
 		// Every represents a fixed period to repeat execution.
 		// It gets marshalled from a string duration, i.e.: "10s" is 10 seconds
-		Every flux.Duration `json:"every,omitempty"`
+		Every options.Duration `json:"every,omitempty"`
 
 		// Offset represents a delay before execution.
 		// It gets marshalled from a string duration, i.e.: "10s" is 10 seconds
-		Offset *flux.Duration `json:"offset,omitempty"`
+		Offset *options.Duration `json:"offset,omitempty"`
 
 		Concurrency *int64 `json:"concurrency,omitempty"`
 
 		Retry *int64 `json:"retry,omitempty"`
-
-		Token string `json:"token,omitempty"`
 	}{}
 
 	if err := json.Unmarshal(data, &jo); err != nil {
 		return err
 	}
 	t.Options.Name = jo.Name
+	t.Description = jo.Description
 	t.Options.Cron = jo.Cron
-	t.Options.Every = time.Duration(jo.Every)
+	t.Options.Every = jo.Every
 	if jo.Offset != nil {
-		offset := time.Duration(*jo.Offset)
+		offset := *jo.Offset
 		t.Options.Offset = &offset
 	}
 	t.Options.Concurrency = jo.Concurrency
 	t.Options.Retry = jo.Retry
 	t.Flux = jo.Flux
 	t.Status = jo.Status
-	t.Token = jo.Token
-
 	return nil
 }
 
 func (t TaskUpdate) MarshalJSON() ([]byte, error) {
 	jo := struct {
-		Flux   *string `json:"flux,omitempty"`
-		Status *string `json:"status,omitempty"`
-		Name   string  `json:"name,omitempty"`
+		Flux        *string `json:"flux,omitempty"`
+		Status      *string `json:"status,omitempty"`
+		Name        string  `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"`
 
 		// Cron is a cron style time schedule that can be used in place of Every.
 		Cron string `json:"cron,omitempty"`
 
 		// Every represents a fixed period to repeat execution.
-		Every flux.Duration `json:"every,omitempty"`
+		Every options.Duration `json:"every,omitempty"`
 
 		// Offset represents a delay before execution.
-		Offset *flux.Duration `json:"offset,omitempty"`
+		Offset *options.Duration `json:"offset,omitempty"`
 
 		Concurrency *int64 `json:"concurrency,omitempty"`
 
 		Retry *int64 `json:"retry,omitempty"`
-
-		Token string `json:"token,omitempty"`
 	}{}
 	jo.Name = t.Options.Name
 	jo.Cron = t.Options.Cron
-	jo.Every = flux.Duration(t.Options.Every)
+	jo.Every = t.Options.Every
+	jo.Description = t.Description
 	if t.Options.Offset != nil {
-		offset := flux.Duration(*t.Options.Offset)
+		offset := *t.Options.Offset
 		jo.Offset = &offset
 	}
 	jo.Concurrency = t.Options.Concurrency
 	jo.Retry = t.Options.Retry
 	jo.Flux = t.Flux
 	jo.Status = t.Status
-	jo.Token = t.Token
 	return json.Marshal(jo)
 }
 
 func (t TaskUpdate) Validate() error {
 	switch {
-	case t.Options.Every != 0 && t.Options.Cron != "":
+	case !t.Options.Every.IsZero() && t.Options.Cron != "":
 		return errors.New("cannot specify both every and cron")
-	case t.Flux == nil && t.Status == nil && t.Options.IsZero() && t.Token == "":
+	case !t.Options.Every.IsZero():
+		if _, err := time.ParseDuration(t.Options.Every.String()); err != nil {
+			return fmt.Errorf("every: %s is invalid", err)
+		}
+	case t.Options.Offset != nil && !t.Options.Offset.IsZero():
+		if _, err := time.ParseDuration(t.Options.Offset.String()); err != nil {
+			return fmt.Errorf("offset: %s, %s is invalid", t.Options.Offset.String(), err)
+		}
+	case t.Flux == nil && t.Status == nil && t.Options.IsZero():
 		return errors.New("cannot update task without content")
 	case t.Status != nil && *t.Status != TaskStatusActive && *t.Status != TaskStatusInactive:
 		return fmt.Errorf("invalid task status: %q", *t.Status)
@@ -225,37 +287,55 @@ func (t TaskUpdate) Validate() error {
 	return nil
 }
 
+// safeParseSource calls the Flux parser.ParseSource function
+// and is guaranteed not to panic.
+func safeParseSource(f string) (pkg *ast.Package, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &Error{
+				Code: EInternal,
+				Msg:  "internal error in flux engine; unable to parse",
+			}
+		}
+	}()
+
+	pkg = parser.ParseSource(f)
+	return pkg, err
+}
+
 // UpdateFlux updates the TaskUpdate to go from updating options to updating a flux string, that now has those updated options in it
 // It zeros the options in the TaskUpdate.
-func (t *TaskUpdate) UpdateFlux(oldFlux string) error {
+func (t *TaskUpdate) UpdateFlux(oldFlux string) (err error) {
 	if t.Flux != nil && *t.Flux != "" {
 		oldFlux = *t.Flux
 	}
 	toDelete := map[string]struct{}{}
-	parsedPKG := parser.ParseSource(oldFlux)
+	parsedPKG, err := safeParseSource(oldFlux)
+	if err != nil {
+		return err
+	}
+
 	if ast.Check(parsedPKG) > 0 {
 		return ast.GetError(parsedPKG)
 	}
 	parsed := parsedPKG.Files[0]
-	if t.Options.Every != 0 && t.Options.Cron != "" {
-		return errors.New("cannot specify both every and cron")
+	if !t.Options.Every.IsZero() && t.Options.Cron != "" {
+		return errors.New("cannot specify both cron and every")
 	}
 	op := make(map[string]ast.Expression, 4)
 
 	if t.Options.Name != "" {
 		op["name"] = &ast.StringLiteral{Value: t.Options.Name}
 	}
-	if t.Options.Every != 0 {
-		d := ast.Duration{Magnitude: int64(t.Options.Every), Unit: "ns"}
-		op["every"] = &ast.DurationLiteral{Values: []ast.Duration{d}}
+	if !t.Options.Every.IsZero() {
+		op["every"] = &t.Options.Every.Node
 	}
 	if t.Options.Cron != "" {
 		op["cron"] = &ast.StringLiteral{Value: t.Options.Cron}
 	}
 	if t.Options.Offset != nil {
-		if *t.Options.Offset != 0 {
-			d := ast.Duration{Magnitude: int64(*t.Options.Offset), Unit: "ns"}
-			op["offset"] = &ast.DurationLiteral{Values: []ast.Duration{d}}
+		if !t.Options.Offset.IsZero() {
+			op["offset"] = &t.Options.Offset.Node
 		} else {
 			toDelete["offset"] = struct{}{}
 		}
@@ -285,12 +365,12 @@ func (t *TaskUpdate) UpdateFlux(oldFlux string) error {
 				case "offset":
 					if offset, ok := op["offset"]; ok && t.Options.Offset != nil {
 						delete(op, "offset")
-						p.Value = offset
+						p.Value = offset.Copy().(*ast.DurationLiteral)
 					}
 				case "every":
-					if every, ok := op["every"]; ok && t.Options.Every != 0 {
+					if every, ok := op["every"]; ok && !t.Options.Every.IsZero() {
+						p.Value = every.Copy().(*ast.DurationLiteral)
 						delete(op, "every")
-						p.Value = every
 					} else if cron, ok := op["cron"]; ok && t.Options.Cron != "" {
 						delete(op, "cron")
 						p.Value = cron
@@ -300,10 +380,10 @@ func (t *TaskUpdate) UpdateFlux(oldFlux string) error {
 					if cron, ok := op["cron"]; ok && t.Options.Cron != "" {
 						delete(op, "cron")
 						p.Value = cron
-					} else if every, ok := op["every"]; ok && t.Options.Every != 0 {
+					} else if every, ok := op["every"]; ok && !t.Options.Every.IsZero() {
 						delete(op, "every")
 						p.Key = &ast.Identifier{Name: "every"}
-						p.Value = every
+						p.Value = every.Copy().(*ast.DurationLiteral)
 					}
 				}
 			}
@@ -335,6 +415,8 @@ func (t *TaskUpdate) UpdateFlux(oldFlux string) error {
 
 // TaskFilter represents a set of filters that restrict the returned results
 type TaskFilter struct {
+	Type           *string
+	Name           *string
 	After          *ID
 	OrganizationID *ID
 	Organization   string

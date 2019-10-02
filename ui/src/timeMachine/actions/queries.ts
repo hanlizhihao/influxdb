@@ -1,28 +1,37 @@
 // API
 import {
-  executeQueryWithVars,
-  ExecuteFluxQueryResult,
+  runQuery,
+  RunQueryResult,
+  RunQuerySuccessResult,
 } from 'src/shared/apis/query'
+import {runStatusesQuery} from 'src/alerting/utils/statusEvents'
 
 // Actions
 import {refreshVariableValues, selectValue} from 'src/variables/actions'
+import {notify} from 'src/shared/actions/notifications'
+
+// Constants
+import {rateLimitReached, resultTooLarge} from 'src/shared/copy/notifications'
 
 // Utils
-import {getActiveTimeMachine} from 'src/timeMachine/selectors'
-import {getActiveOrg} from 'src/organizations/selectors'
-import {getVariableAssignments} from 'src/variables/selectors'
-import {getTimeRangeVars} from 'src/variables/utils/getTimeRangeVars'
+import {
+  getActiveTimeMachine,
+  getVariableAssignments,
+} from 'src/timeMachine/selectors'
 import {filterUnusedVars} from 'src/shared/utils/filterUnusedVars'
 import {checkQueryResult} from 'src/shared/utils/checkQueryResult'
 import {
-  getVariablesForOrg,
+  extractVariablesList,
   getVariable,
   getHydratedVariables,
 } from 'src/variables/selectors'
+import {getWindowVars} from 'src/variables/utils/getWindowVars'
+import {buildVarsOption} from 'src/variables/utils/buildVarsOption'
+import {isFlagEnabled} from 'src/shared/utils/featureFlag'
 
 // Types
-import {WrappedCancelablePromise, CancellationError} from 'src/types/promises'
-import {RemoteDataState} from 'src/types'
+import {CancelBox} from 'src/types/promises'
+import {RemoteDataState, StatusRow} from 'src/types'
 import {GetState} from 'src/types'
 
 export type Action = SetQueryResults | SaveDraftQueriesAction
@@ -34,6 +43,7 @@ interface SetQueryResults {
     files?: string[]
     fetchDuration?: number
     errorMessage?: string
+    statuses?: StatusRow[][]
   }
 }
 
@@ -41,7 +51,8 @@ const setQueryResults = (
   status: RemoteDataState,
   files?: string[],
   fetchDuration?: number,
-  errorMessage?: string
+  errorMessage?: string,
+  statuses?: StatusRow[][]
 ): SetQueryResults => ({
   type: 'SET_QUERY_RESULTS',
   payload: {
@@ -49,6 +60,7 @@ const setQueryResults = (
     files,
     fetchDuration,
     errorMessage,
+    statuses,
   },
 })
 
@@ -64,8 +76,7 @@ export const refreshTimeMachineVariableValues = () => async (
     ...view,
     properties: {...view.properties, queries: draftQueries},
   }
-  const orgID = getActiveOrg(getState()).id
-  const variables = getVariablesForOrg(getState(), orgID)
+  const variables = extractVariablesList(getState())
   const variablesInUse = filterUnusedVars(variables, [view, draftView])
 
   // Find variables whose values have already been loaded by the TimeMachine
@@ -77,13 +88,17 @@ export const refreshTimeMachineVariableValues = () => async (
     v => variablesInUse.includes(v) || hydratedVariables.includes(v)
   )
 
-  await dispatch(refreshVariableValues(contextID, orgID, variablesToRefresh))
+  await dispatch(refreshVariableValues(contextID, variablesToRefresh))
 }
 
-let pendingResults: Array<WrappedCancelablePromise<ExecuteFluxQueryResult>> = []
+let pendingResults: Array<CancelBox<RunQueryResult>> = []
+let pendingCheckStatuses: CancelBox<StatusRow[][]> = null
 
 export const executeQueries = () => async (dispatch, getState: GetState) => {
-  const {view, timeRange} = getActiveTimeMachine(getState())
+  const {
+    view,
+    alerting: {check},
+  } = getActiveTimeMachine(getState())
   const queries = view.properties.queries.filter(({text}) => !!text.trim())
 
   if (!queries.length) {
@@ -95,32 +110,56 @@ export const executeQueries = () => async (dispatch, getState: GetState) => {
 
     await dispatch(refreshTimeMachineVariableValues())
 
-    const orgID = getActiveOrg(getState()).id
-    const queryURL = getState().links.query.self
-    const activeTimeMachineID = getState().timeMachines.activeTimeMachineID
-    const variableAssignments = [
-      ...getVariableAssignments(getState(), activeTimeMachineID),
-      ...getTimeRangeVars(timeRange),
-    ]
+    const orgID = getState().orgs.org.id
+
+    const variableAssignments = getVariableAssignments(getState())
 
     const startTime = Date.now()
 
     pendingResults.forEach(({cancel}) => cancel())
 
-    pendingResults = queries.map(({text}) =>
-      executeQueryWithVars(queryURL, orgID, text, variableAssignments)
-    )
+    pendingResults = queries.map(({text}) => {
+      const windowVars = getWindowVars(text, variableAssignments)
+      const extern = buildVarsOption([...variableAssignments, ...windowVars])
+
+      return runQuery(orgID, text, extern)
+    })
 
     const results = await Promise.all(pendingResults.map(r => r.promise))
-
     const duration = Date.now() - startTime
-    const files = results.map(r => r.csv)
 
-    files.forEach(checkQueryResult)
+    let statuses = [[]] as StatusRow[][]
+    if (check && isFlagEnabled('eventMarkers')) {
+      const extern = buildVarsOption(variableAssignments)
+      pendingCheckStatuses = runStatusesQuery(orgID, check.id, extern)
+      statuses = await pendingCheckStatuses.promise // TODO handle errors
+    }
 
-    dispatch(setQueryResults(RemoteDataState.Done, files, duration))
+    for (const result of results) {
+      if (result.type === 'UNKNOWN_ERROR') {
+        throw new Error(result.message)
+      }
+
+      if (result.type === 'RATE_LIMIT_ERROR') {
+        dispatch(notify(rateLimitReached(result.retryAfter)))
+
+        throw new Error(result.message)
+      }
+
+      if (result.didTruncate) {
+        dispatch(notify(resultTooLarge(result.bytesRead)))
+      }
+
+      checkQueryResult(result.csv)
+    }
+
+    const files = (results as RunQuerySuccessResult[]).map(r => r.csv)
+
+    dispatch(
+      setQueryResults(RemoteDataState.Done, files, duration, null, statuses)
+    )
   } catch (e) {
-    if (e instanceof CancellationError) {
+    if (e.name === 'CancellationError') {
       return
     }
 
@@ -147,7 +186,6 @@ export const addVariableToTimeMachine = (variableID: string) => async (
   getState: GetState
 ) => {
   const contextID = getState().timeMachines.activeTimeMachineID
-  const orgID = getActiveOrg(getState()).id
 
   const variable = getVariable(getState(), variableID)
   const variables = getHydratedVariables(getState(), contextID)
@@ -156,7 +194,7 @@ export const addVariableToTimeMachine = (variableID: string) => async (
     variables.push(variable)
   }
 
-  await dispatch(refreshVariableValues(contextID, orgID, variables))
+  await dispatch(refreshVariableValues(contextID, variables))
 }
 
 export const selectVariableValue = (

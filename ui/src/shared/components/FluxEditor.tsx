@@ -4,12 +4,17 @@ import {Controlled as ReactCodeMirror, IInstance} from 'react-codemirror2'
 import {EditorChange, LineWidget, Position} from 'codemirror'
 import {ShowHintOptions} from 'src/types/codemirror'
 import 'src/external/codemirror'
+
 // Components
 import {ErrorHandling} from 'src/shared/decorators/errors'
+
 // Constants
 import {EXCLUDED_KEYS} from 'src/shared/constants/fluxEditor'
+
 // Utils
 import {getSuggestions} from 'src/shared/utils/autoComplete'
+import {onTab} from 'src/shared/utils/fluxEditor'
+
 // Types
 import {OnChangeScript, Suggestion} from 'src/types/flux'
 
@@ -92,6 +97,7 @@ class FluxEditor extends PureComponent<Props, State> {
       theme: 'time-machine',
       completeSingle: false,
       gutters: ['error-gutter'],
+      extraKeys: {Tab: onTab},
     }
 
     return (

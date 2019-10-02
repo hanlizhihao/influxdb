@@ -1,5 +1,5 @@
 // Libraries
-import Client from '@influxdata/influx'
+import {Client} from '@influxdata/influx'
 import {get} from 'lodash'
 
 const basePath = '/api/v2'
@@ -13,6 +13,10 @@ export const getErrorMessage = (e: any) => {
 
   if (message === '') {
     message = get(e, 'response.headers.x-influx-error', '')
+  }
+
+  if (message === '') {
+    message = get(e, 'response.data.message', '')
   }
 
   if (message === '') {

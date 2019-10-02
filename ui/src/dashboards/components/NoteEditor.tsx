@@ -1,14 +1,14 @@
 // Libraries
-import React, {PureComponent} from 'react'
+import React, {PureComponent, MouseEvent} from 'react'
 import {connect} from 'react-redux'
 
 // Components
 import {
-  Stack,
-  Alignment,
   SlideToggle,
   ComponentSize,
-  ComponentSpacer,
+  FlexBox,
+  FlexDirection,
+  JustifyContent,
 } from '@influxdata/clockface'
 import NoteEditorText from 'src/dashboards/components/NoteEditorText'
 import NoteEditorPreview from 'src/dashboards/components/NoteEditorPreview'
@@ -38,27 +38,40 @@ interface OwnProps {}
 
 type Props = StateProps & DispatchProps & OwnProps
 
-class NoteEditor extends PureComponent<Props> {
+interface State {
+  scrollTop: number
+}
+
+class NoteEditor extends PureComponent<Props, State> {
+  public state = {scrollTop: 0}
+
   public render() {
     const {note, onSetNote} = this.props
+    const {scrollTop} = this.state
 
     return (
       <div className="note-editor">
         <div className="note-editor--controls">
           <div className="note-editor--helper">
             Need help using Markdown? Check out{' '}
-            <a
-              href="https://daringfireball.net/projects/markdown/syntax"
-              target="_blank"
-            >
+            <a href="https://www.markdownguide.org/cheat-sheet" target="_blank">
               this handy guide
             </a>
           </div>
           {this.visibilityToggle}
         </div>
         <div className="note-editor--body">
-          <NoteEditorText note={note} onChangeNote={onSetNote} />
-          <NoteEditorPreview note={note} />
+          <NoteEditorText
+            note={note}
+            onChangeNote={onSetNote}
+            onScroll={this.handleEditorScroll}
+            scrollTop={scrollTop}
+          />
+          <NoteEditorPreview
+            note={note}
+            scrollTop={scrollTop}
+            onScroll={this.handlePreviewScroll}
+          />
         </div>
       </div>
     )
@@ -68,15 +81,29 @@ class NoteEditor extends PureComponent<Props> {
     const {showNoteWhenEmpty, onToggleShowNoteWhenEmpty} = this.props
 
     return (
-      <ComponentSpacer stackChildren={Stack.Columns} align={Alignment.Right}>
+      <FlexBox
+        direction={FlexDirection.Row}
+        justifyContent={JustifyContent.FlexEnd}
+      >
         <SlideToggle.Label text="Show note when query returns no data" />
         <SlideToggle
           active={showNoteWhenEmpty}
           size={ComponentSize.ExtraSmall}
           onChange={onToggleShowNoteWhenEmpty}
         />
-      </ComponentSpacer>
+      </FlexBox>
     )
+  }
+
+  private handleEditorScroll = (scrollTop: number) => {
+    this.setState({scrollTop})
+  }
+
+  private handlePreviewScroll = (e: MouseEvent<HTMLElement>) => {
+    const target = e.target as HTMLElement
+    const {scrollTop} = target
+
+    this.setState({scrollTop})
   }
 }
 

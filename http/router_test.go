@@ -82,7 +82,7 @@ func TestRouter_NotFound(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter()
+			router := NewRouter(ErrorHandler(0))
 			router.HandlerFunc(tt.fields.method, tt.fields.path, tt.fields.handlerFn)
 
 			r := httptest.NewRequest(tt.args.method, tt.args.path, nil)
@@ -173,8 +173,7 @@ func TestRouter_Panic(t *testing.T) {
 				body: `
 {
   "code": "internal error",
-  "message": "a panic has occurred",
-  "error": "not implemented"
+  "message": "a panic has occurred: not implemented"
 }`,
 			},
 		},
@@ -190,7 +189,7 @@ func TestRouter_Panic(t *testing.T) {
 			tw := newTestLogWriter(t)
 			panicLogger = zaptest.NewLogger(tw)
 
-			router := NewRouter()
+			router := NewRouter(ErrorHandler(0))
 			router.HandlerFunc(tt.fields.method, tt.fields.path, tt.fields.handlerFn)
 
 			r := httptest.NewRequest(tt.args.method, tt.args.path, nil)
@@ -207,7 +206,7 @@ func TestRouter_Panic(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. get %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
+			if eq, diff, _ := jsonEqual(tt.wants.body, string(body)); tt.wants.body != "" && !eq {
 				t.Errorf("%q. get ***%s***", tt.name, diff)
 			}
 			if tt.wants.logged != tw.Logged() {
@@ -289,7 +288,7 @@ func TestRouter_MethodNotAllowed(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter()
+			router := NewRouter(ErrorHandler(0))
 			router.HandlerFunc(tt.fields.method, tt.fields.path, tt.fields.handlerFn)
 
 			r := httptest.NewRequest(tt.args.method, tt.args.path, nil)

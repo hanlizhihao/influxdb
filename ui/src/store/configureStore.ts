@@ -10,18 +10,16 @@ import sharedReducers from 'src/shared/reducers'
 import persistStateEnhancer from './persistStateEnhancer'
 
 // v2 reducers
-import meReducer from 'src/shared/reducers/v2/me'
+import meReducer from 'src/shared/reducers/me'
 import tasksReducer from 'src/tasks/reducers'
 import rangesReducer from 'src/dashboards/reducers/ranges'
-import dashboardsReducer from 'src/dashboards/reducers/dashboards'
+import {dashboardsReducer} from 'src/dashboards/reducers/dashboards'
 import viewsReducer from 'src/dashboards/reducers/views'
 import {timeMachinesReducer} from 'src/timeMachine/reducers'
 import orgsReducer from 'src/organizations/reducers/orgs'
-import orgViewReducer from 'src/organizations/reducers/orgView'
 import onboardingReducer from 'src/onboarding/reducers'
 import noteEditorReducer from 'src/dashboards/reducers/notes'
 import dataLoadingReducer from 'src/dataLoaders/reducers'
-import protosReducer from 'src/protos/reducers'
 import {variablesReducer} from 'src/variables/reducers'
 import {labelsReducer} from 'src/labels/reducers'
 import {bucketsReducer} from 'src/buckets/reducers'
@@ -30,6 +28,12 @@ import {authorizationsReducer} from 'src/authorizations/reducers'
 import templatesReducer from 'src/templates/reducers'
 import {scrapersReducer} from 'src/scrapers/reducers'
 import {userSettingsReducer} from 'src/userSettings/reducers'
+import {membersReducer} from 'src/members/reducers'
+import {autoRefreshReducer} from 'src/shared/reducers/autoRefresh'
+import {limitsReducer, LimitsState} from 'src/cloud/reducers/limits'
+import checksReducer from 'src/alerting/reducers/checks'
+import rulesReducer from 'src/alerting/reducers/notifications/rules'
+import endpointsReducer from 'src/alerting/reducers/notifications/endpoints'
 
 // Types
 import {LocalStorage} from 'src/types/localStorage'
@@ -40,18 +44,17 @@ type ReducerState = Pick<AppState, Exclude<keyof AppState, 'timeRange'>>
 export const rootReducer = combineReducers<ReducerState>({
   ...sharedReducers,
   ranges: rangesReducer,
+  autoRefresh: autoRefreshReducer,
   dashboards: dashboardsReducer,
   timeMachines: timeMachinesReducer,
   routing: routerReducer,
   views: viewsReducer,
   tasks: tasksReducer,
   orgs: orgsReducer,
-  orgView: orgViewReducer,
   me: meReducer,
   onboarding: onboardingReducer,
   noteEditor: noteEditorReducer,
   dataLoading: dataLoadingReducer,
-  protos: protosReducer,
   variables: variablesReducer,
   labels: labelsReducer,
   buckets: bucketsReducer,
@@ -60,6 +63,11 @@ export const rootReducer = combineReducers<ReducerState>({
   scrapers: scrapersReducer,
   templates: templatesReducer,
   userSettings: userSettingsReducer,
+  members: membersReducer,
+  cloud: combineReducers<{limits: LimitsState}>({limits: limitsReducer}),
+  checks: checksReducer,
+  rules: rulesReducer,
+  endpoints: endpointsReducer,
   VERSION: () => '',
 })
 

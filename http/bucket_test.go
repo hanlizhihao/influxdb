@@ -13,6 +13,7 @@ import (
 
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/inmem"
+	"github.com/influxdata/influxdb/kv"
 	"github.com/influxdata/influxdb/mock"
 	platformtesting "github.com/influxdata/influxdb/testing"
 	"github.com/julienschmidt/httprouter"
@@ -62,13 +63,13 @@ func TestService_handleGetBuckets(t *testing.T) {
 							{
 								ID:              platformtesting.MustIDBase16("0b501e7e557ab1ed"),
 								Name:            "hello",
-								OrganizationID:  platformtesting.MustIDBase16("50f7ba1150f7ba11"),
+								OrgID:           platformtesting.MustIDBase16("50f7ba1150f7ba11"),
 								RetentionPeriod: 2 * time.Second,
 							},
 							{
 								ID:              platformtesting.MustIDBase16("c0175f0077a77005"),
 								Name:            "example",
-								OrganizationID:  platformtesting.MustIDBase16("7e55e118dbabb1ed"),
+								OrgID:           platformtesting.MustIDBase16("7e55e118dbabb1ed"),
 								RetentionPeriod: 24 * time.Hour,
 							},
 						}, 2, nil
@@ -113,9 +114,12 @@ func TestService_handleGetBuckets(t *testing.T) {
         "owners": "/api/v2/buckets/0b501e7e557ab1ed/owners",
         "members": "/api/v2/buckets/0b501e7e557ab1ed/members",
         "write": "/api/v2/write?org=50f7ba1150f7ba11&bucket=0b501e7e557ab1ed"
-      },
+	  },
+	  "createdAt": "0001-01-01T00:00:00Z",
+	  "updatedAt": "0001-01-01T00:00:00Z",
       "id": "0b501e7e557ab1ed",
-      "organizationID": "50f7ba1150f7ba11",
+      "orgID": "50f7ba1150f7ba11",
+			"type": "user",
       "name": "hello",
       "retentionRules": [{"type": "expire", "everySeconds": 2}],
 			"labels": [
@@ -137,9 +141,12 @@ func TestService_handleGetBuckets(t *testing.T) {
         "members": "/api/v2/buckets/c0175f0077a77005/members",
         "owners": "/api/v2/buckets/c0175f0077a77005/owners",
         "write": "/api/v2/write?org=7e55e118dbabb1ed&bucket=c0175f0077a77005"
-      },
+	  },
+	  "createdAt": "0001-01-01T00:00:00Z",
+	  "updatedAt": "0001-01-01T00:00:00Z",
       "id": "c0175f0077a77005",
-      "organizationID": "7e55e118dbabb1ed",
+      "orgID": "7e55e118dbabb1ed",
+			"type": "user",
       "name": "example",
       "retentionRules": [{"type": "expire", "everySeconds": 86400}],
       "labels": [
@@ -251,7 +258,7 @@ func TestService_handleGetBucket(t *testing.T) {
 						if id == platformtesting.MustIDBase16("020f755c3c082000") {
 							return &platform.Bucket{
 								ID:              platformtesting.MustIDBase16("020f755c3c082000"),
-								OrganizationID:  platformtesting.MustIDBase16("020f755c3c082000"),
+								OrgID:           platformtesting.MustIDBase16("020f755c3c082000"),
 								Name:            "hello",
 								RetentionPeriod: 30 * time.Second,
 							}, nil
@@ -278,8 +285,11 @@ func TestService_handleGetBucket(t *testing.T) {
 		    "owners": "/api/v2/buckets/020f755c3c082000/owners",
 		    "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
 		  },
+		  "createdAt": "0001-01-01T00:00:00Z",
+		  "updatedAt": "0001-01-01T00:00:00Z",
 		  "id": "020f755c3c082000",
-		  "organizationID": "020f755c3c082000",
+		  "orgID": "020f755c3c082000",
+			"type": "user",
 		  "name": "hello",
 		  "retentionRules": [{"type": "expire", "everySeconds": 30}],
       "labels": []
@@ -311,6 +321,7 @@ func TestService_handleGetBucket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bucketBackend := NewMockBucketBackend()
+			bucketBackend.HTTPErrorHandler = ErrorHandler(0)
 			bucketBackend.BucketService = tt.fields.BucketService
 			h := NewBucketHandler(bucketBackend)
 
@@ -341,8 +352,12 @@ func TestService_handleGetBucket(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handleGetBucket() = %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
-				t.Errorf("%q. handleGetBucket() = ***%s***", tt.name, diff)
+			if tt.wants.body != "" {
+				if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+					t.Errorf("%q, handleGetBucket(). error unmarshaling json %v", tt.name, err)
+				} else if !eq {
+					t.Errorf("%q. handleGetBucket() = ***%s***", tt.name, diff)
+				}
 			}
 		})
 	}
@@ -385,8 +400,8 @@ func TestService_handlePostBucket(t *testing.T) {
 			},
 			args: args{
 				bucket: &platform.Bucket{
-					Name:           "hello",
-					OrganizationID: platformtesting.MustIDBase16("6f626f7274697320"),
+					Name:  "hello",
+					OrgID: platformtesting.MustIDBase16("6f626f7274697320"),
 				},
 			},
 			wants: wants{
@@ -403,8 +418,11 @@ func TestService_handlePostBucket(t *testing.T) {
     "owners": "/api/v2/buckets/020f755c3c082000/owners",
     "write": "/api/v2/write?org=6f626f7274697320&bucket=020f755c3c082000"
   },
+  "createdAt": "0001-01-01T00:00:00Z",
+  "updatedAt": "0001-01-01T00:00:00Z",
   "id": "020f755c3c082000",
-  "organizationID": "6f626f7274697320",
+  "orgID": "6f626f7274697320",
+	"type": "user",
   "name": "hello",
   "retentionRules": [],
   "labels": []
@@ -441,8 +459,12 @@ func TestService_handlePostBucket(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handlePostBucket() = %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
-				t.Errorf("%q. handlePostBucket() = ***%s***", tt.name, diff)
+			if tt.wants.body != "" {
+				if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+					t.Errorf("%q, handlePostBucket(). error unmarshaling json %v", tt.name, err)
+				} else if !eq {
+					t.Errorf("%q. handlePostBucket() = ***%s***", tt.name, diff)
+				}
 			}
 		})
 	}
@@ -511,6 +533,7 @@ func TestService_handleDeleteBucket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bucketBackend := NewMockBucketBackend()
+			bucketBackend.HTTPErrorHandler = ErrorHandler(0)
 			bucketBackend.BucketService = tt.fields.BucketService
 			h := NewBucketHandler(bucketBackend)
 
@@ -540,8 +563,12 @@ func TestService_handleDeleteBucket(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handleDeleteBucket() = %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
-				t.Errorf("%q. handleDeleteBucket() = ***%s***", tt.name, diff)
+			if tt.wants.body != "" {
+				if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+					t.Errorf("%q, handleDeleteBucket(). error unmarshaling json %v", tt.name, err)
+				} else if !eq {
+					t.Errorf("%q. handleDeleteBucket() = ***%s***", tt.name, diff)
+				}
 			}
 		})
 	}
@@ -575,9 +602,9 @@ func TestService_handlePatchBucket(t *testing.T) {
 					UpdateBucketFn: func(ctx context.Context, id platform.ID, upd platform.BucketUpdate) (*platform.Bucket, error) {
 						if id == platformtesting.MustIDBase16("020f755c3c082000") {
 							d := &platform.Bucket{
-								ID:             platformtesting.MustIDBase16("020f755c3c082000"),
-								Name:           "hello",
-								OrganizationID: platformtesting.MustIDBase16("020f755c3c082000"),
+								ID:    platformtesting.MustIDBase16("020f755c3c082000"),
+								Name:  "hello",
+								OrgID: platformtesting.MustIDBase16("020f755c3c082000"),
 							}
 
 							if upd.Name != nil {
@@ -614,8 +641,11 @@ func TestService_handlePatchBucket(t *testing.T) {
     "owners": "/api/v2/buckets/020f755c3c082000/owners",
     "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
   },
+  "createdAt": "0001-01-01T00:00:00Z",
+  "updatedAt": "0001-01-01T00:00:00Z",
   "id": "020f755c3c082000",
-  "organizationID": "020f755c3c082000",
+  "orgID": "020f755c3c082000",
+	"type": "user",
   "name": "example",
   "retentionRules": [{"type": "expire", "everySeconds": 2}],
   "labels": []
@@ -651,9 +681,9 @@ func TestService_handlePatchBucket(t *testing.T) {
 					UpdateBucketFn: func(ctx context.Context, id platform.ID, upd platform.BucketUpdate) (*platform.Bucket, error) {
 						if id == platformtesting.MustIDBase16("020f755c3c082000") {
 							d := &platform.Bucket{
-								ID:             platformtesting.MustIDBase16("020f755c3c082000"),
-								Name:           "hello",
-								OrganizationID: platformtesting.MustIDBase16("020f755c3c082000"),
+								ID:    platformtesting.MustIDBase16("020f755c3c082000"),
+								Name:  "hello",
+								OrgID: platformtesting.MustIDBase16("020f755c3c082000"),
 							}
 
 							if upd.Name != nil {
@@ -690,8 +720,11 @@ func TestService_handlePatchBucket(t *testing.T) {
     "owners": "/api/v2/buckets/020f755c3c082000/owners",
     "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
   },
+  "createdAt": "0001-01-01T00:00:00Z",
+  "updatedAt": "0001-01-01T00:00:00Z",
   "id": "020f755c3c082000",
-  "organizationID": "020f755c3c082000",
+  "orgID": "020f755c3c082000",
+	"type": "user",
   "name": "bucket with no retention",
   "retentionRules": [],
   "labels": []
@@ -706,9 +739,9 @@ func TestService_handlePatchBucket(t *testing.T) {
 					UpdateBucketFn: func(ctx context.Context, id platform.ID, upd platform.BucketUpdate) (*platform.Bucket, error) {
 						if id == platformtesting.MustIDBase16("020f755c3c082000") {
 							d := &platform.Bucket{
-								ID:             platformtesting.MustIDBase16("020f755c3c082000"),
-								Name:           "b1",
-								OrganizationID: platformtesting.MustIDBase16("020f755c3c082000"),
+								ID:    platformtesting.MustIDBase16("020f755c3c082000"),
+								Name:  "b1",
+								OrgID: platformtesting.MustIDBase16("020f755c3c082000"),
 							}
 
 							if upd.Name != nil {
@@ -747,8 +780,11 @@ func TestService_handlePatchBucket(t *testing.T) {
     "owners": "/api/v2/buckets/020f755c3c082000/owners",
     "write": "/api/v2/write?org=020f755c3c082000&bucket=020f755c3c082000"
   },
+  "createdAt": "0001-01-01T00:00:00Z",
+  "updatedAt": "0001-01-01T00:00:00Z",
   "id": "020f755c3c082000",
-  "organizationID": "020f755c3c082000",
+  "orgID": "020f755c3c082000",
+	"type": "user",
   "name": "b1",
   "retentionRules": [],
   "labels": []
@@ -763,9 +799,9 @@ func TestService_handlePatchBucket(t *testing.T) {
 					UpdateBucketFn: func(ctx context.Context, id platform.ID, upd platform.BucketUpdate) (*platform.Bucket, error) {
 						if id == platformtesting.MustIDBase16("020f755c3c082000") {
 							d := &platform.Bucket{
-								ID:             platformtesting.MustIDBase16("020f755c3c082000"),
-								Name:           "hello",
-								OrganizationID: platformtesting.MustIDBase16("020f755c3c082000"),
+								ID:    platformtesting.MustIDBase16("020f755c3c082000"),
+								Name:  "hello",
+								OrgID: platformtesting.MustIDBase16("020f755c3c082000"),
 							}
 
 							if upd.Name != nil {
@@ -800,6 +836,7 @@ func TestService_handlePatchBucket(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bucketBackend := NewMockBucketBackend()
+			bucketBackend.HTTPErrorHandler = ErrorHandler(0)
 			bucketBackend.BucketService = tt.fields.BucketService
 			h := NewBucketHandler(bucketBackend)
 
@@ -843,8 +880,12 @@ func TestService_handlePatchBucket(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handlePatchBucket() = %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
-				t.Errorf("%q. handlePatchBucket() = ***%s***", tt.name, diff)
+			if tt.wants.body != "" {
+				if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+					t.Errorf("%q, handlePatchBucket(). error unmarshaling json %v", tt.name, err)
+				} else if !eq {
+					t.Errorf("%q. handlePatchBucket() = ***%s***", tt.name, diff)
+				}
 			}
 		})
 	}
@@ -876,8 +917,9 @@ func TestService_handlePostBucketMember(t *testing.T) {
 				UserService: &mock.UserService{
 					FindUserByIDFn: func(ctx context.Context, id platform.ID) (*platform.User, error) {
 						return &platform.User{
-							ID:   id,
-							Name: "name",
+							ID:     id,
+							Name:   "name",
+							Status: platform.Active,
 						}, nil
 					},
 				},
@@ -899,7 +941,8 @@ func TestService_handlePostBucketMember(t *testing.T) {
   },
   "role": "member",
   "id": "6f626f7274697320",
-  "name": "name"
+	"name": "name",
+	"status": "active"
 }
 `,
 			},
@@ -933,7 +976,9 @@ func TestService_handlePostBucketMember(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handlePostBucketMember() = %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, handlePostBucketMember(). error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
 				t.Errorf("%q. handlePostBucketMember() = ***%s***", tt.name, diff)
 			}
 		})
@@ -966,8 +1011,9 @@ func TestService_handlePostBucketOwner(t *testing.T) {
 				UserService: &mock.UserService{
 					FindUserByIDFn: func(ctx context.Context, id platform.ID) (*platform.User, error) {
 						return &platform.User{
-							ID:   id,
-							Name: "name",
+							ID:     id,
+							Name:   "name",
+							Status: platform.Active,
 						}, nil
 					},
 				},
@@ -989,7 +1035,8 @@ func TestService_handlePostBucketOwner(t *testing.T) {
   },
   "role": "owner",
   "id": "6f626f7274697320",
-  "name": "name"
+	"name": "name",
+	"status": "active"
 }
 `,
 			},
@@ -1023,7 +1070,9 @@ func TestService_handlePostBucketOwner(t *testing.T) {
 			if tt.wants.contentType != "" && content != tt.wants.contentType {
 				t.Errorf("%q. handlePostBucketOwner() = %v, want %v", tt.name, content, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, handlePostBucketOwner(). error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
 				t.Errorf("%q. handlePostBucketOwner() = ***%s***", tt.name, diff)
 			}
 		})
@@ -1031,10 +1080,19 @@ func TestService_handlePostBucketOwner(t *testing.T) {
 }
 
 func initBucketService(f platformtesting.BucketFields, t *testing.T) (platform.BucketService, string, func()) {
-	svc := inmem.NewService()
+	svc := kv.NewService(inmem.NewKVStore())
 	svc.IDGenerator = f.IDGenerator
+	svc.OrgBucketIDs = f.OrgBucketIDs
+	svc.TimeGenerator = f.TimeGenerator
+	if f.TimeGenerator == nil {
+		svc.TimeGenerator = platform.RealTimeGenerator{}
+	}
 
 	ctx := context.Background()
+	if err := svc.Initialize(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, o := range f.Organizations {
 		if err := svc.PutOrganization(ctx, o); err != nil {
 			t.Fatalf("failed to populate organizations")
@@ -1047,6 +1105,7 @@ func initBucketService(f platformtesting.BucketFields, t *testing.T) (platform.B
 	}
 
 	bucketBackend := NewMockBucketBackend()
+	bucketBackend.HTTPErrorHandler = ErrorHandler(0)
 	bucketBackend.BucketService = svc
 	bucketBackend.OrganizationService = svc
 	handler := NewBucketHandler(bucketBackend)

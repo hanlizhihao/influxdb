@@ -150,8 +150,7 @@ func (i *Index) Close() error {
 	if err := i.sfile.Close(); err != nil {
 		return err
 	}
-	//return os.RemoveAll(i.rootPath)
-	return nil
+	return os.RemoveAll(i.rootPath)
 }
 
 // This benchmark compares the TagSets implementation across index types.
@@ -186,7 +185,7 @@ func BenchmarkIndex_TagSets(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	points, err := models.ParsePoints(data)
+	points, err := models.ParsePoints(data, []byte("mm"))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -269,7 +268,7 @@ func BenchmarkIndex_ConcurrentWriteQuery(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	points, err := models.ParsePoints(data)
+	points, err := models.ParsePoints(data, []byte("mm"))
 	if err != nil {
 		b.Fatal(err)
 	}

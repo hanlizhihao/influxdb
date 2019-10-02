@@ -2,8 +2,10 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	nethttp "net/http"
 	_ "net/http/pprof" // needed to add pprof to our binary.
@@ -12,48 +14,47 @@ import (
 	"sync"
 	"time"
 
-	"github.com/influxdata/flux/control"
-	"github.com/influxdata/flux/execute"
-	"github.com/influxdata/influxdb/kit/signals"
-	"github.com/influxdata/influxdb/telemetry"
-	opentracing "github.com/opentracing/opentracing-go"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/spf13/cobra"
-	jaegerconfig "github.com/uber/jaeger-client-go/config"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-
+	"github.com/influxdata/flux"
 	platform "github.com/influxdata/influxdb"
+	"github.com/influxdata/influxdb/authorizer"
 	"github.com/influxdata/influxdb/bolt"
 	"github.com/influxdata/influxdb/chronograf/server"
-	protofs "github.com/influxdata/influxdb/fs"
+	"github.com/influxdata/influxdb/cmd/influxd/inspect"
 	"github.com/influxdata/influxdb/gather"
 	"github.com/influxdata/influxdb/http"
 	"github.com/influxdata/influxdb/inmem"
 	"github.com/influxdata/influxdb/internal/fs"
 	"github.com/influxdata/influxdb/kit/cli"
 	"github.com/influxdata/influxdb/kit/prom"
+	"github.com/influxdata/influxdb/kit/signals"
 	"github.com/influxdata/influxdb/kit/tracing"
 	"github.com/influxdata/influxdb/kv"
 	influxlogger "github.com/influxdata/influxdb/logger"
 	"github.com/influxdata/influxdb/nats"
 	infprom "github.com/influxdata/influxdb/prometheus"
-	"github.com/influxdata/influxdb/proto"
 	"github.com/influxdata/influxdb/query"
-	pcontrol "github.com/influxdata/influxdb/query/control"
+	"github.com/influxdata/influxdb/query/control"
+	"github.com/influxdata/influxdb/query/stdlib/influxdata/influxdb"
 	"github.com/influxdata/influxdb/snowflake"
 	"github.com/influxdata/influxdb/source"
 	"github.com/influxdata/influxdb/storage"
+	"github.com/influxdata/influxdb/storage/reads"
 	"github.com/influxdata/influxdb/storage/readservice"
-	"github.com/influxdata/influxdb/task"
 	taskbackend "github.com/influxdata/influxdb/task/backend"
-	taskbolt "github.com/influxdata/influxdb/task/backend/bolt"
 	"github.com/influxdata/influxdb/task/backend/coordinator"
 	taskexecutor "github.com/influxdata/influxdb/task/backend/executor"
+	"github.com/influxdata/influxdb/task/backend/middleware"
+	"github.com/influxdata/influxdb/telemetry"
 	_ "github.com/influxdata/influxdb/tsdb/tsi1" // needed for tsi1
 	_ "github.com/influxdata/influxdb/tsdb/tsm1" // needed for tsm1
 	"github.com/influxdata/influxdb/vault"
 	pzap "github.com/influxdata/influxdb/zap"
+	"github.com/opentracing/opentracing-go"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spf13/cobra"
+	jaegerconfig "github.com/uber/jaeger-client-go/config"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -173,20 +174,28 @@ func buildLauncherCommand(l *Launcher, cmd *cobra.Command) {
 			Desc:    "data store for secrets (bolt or vault)",
 		},
 		{
-			DestP:   &l.protosPath,
-			Flag:    "protos-path",
-			Default: filepath.Join(dir, "protos"),
-			Desc:    "path to protos on the filesystem",
-		},
-		{
 			DestP:   &l.reportingDisabled,
 			Flag:    "reporting-disabled",
 			Default: false,
 			Desc:    "disable sending telemetry data to https://telemetry.influxdata.com every 8 hours",
 		},
+		{
+			DestP:   &l.sessionLength,
+			Flag:    "session-length",
+			Default: 60, // 60 minutes
+			Desc:    "ttl in minutes for newly created sessions",
+		},
+		{
+			DestP:   &l.sessionRenewDisabled,
+			Flag:    "session-renew-disabled",
+			Default: false,
+			Desc:    "disables automatically extending session ttl on request",
+		},
 	}
 
 	cli.BindOptions(cmd, opts)
+	cmd.AddCommand(inspect.NewCommand())
+
 }
 
 // Launcher represents the main program execution.
@@ -195,9 +204,11 @@ type Launcher struct {
 	cancel  func()
 	running bool
 
-	storeType  string
-	assetsPath string
-	testing    bool
+	storeType            string
+	assetsPath           string
+	testing              bool
+	sessionLength        int // in minutes
+	sessionRenewDisabled bool
 
 	logLevel          string
 	tracingType       string
@@ -206,7 +217,6 @@ type Launcher struct {
 	httpBindAddress string
 	boltPath        string
 	enginePath      string
-	protosPath      string
 	secretStore     string
 
 	boltClient    *bolt.Client
@@ -214,15 +224,16 @@ type Launcher struct {
 	engine        *storage.Engine
 	StorageConfig storage.Config
 
-	queryController *pcontrol.Controller
+	queryController *control.Controller
 
 	httpPort   int
 	httpServer *nethttp.Server
 
 	natsServer *nats.Server
+	natsPort   int
 
-	scheduler *taskbackend.TickScheduler
-	taskStore taskbackend.Store
+	scheduler          *taskbackend.TickScheduler
+	taskControlService taskbackend.TaskControlService
 
 	jaegerTracerCloser io.Closer
 	logger             *zap.Logger
@@ -267,6 +278,11 @@ func (m *Launcher) Logger() *zap.Logger {
 // URL returns the URL to connect to the HTTP server.
 func (m *Launcher) URL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d", m.httpPort)
+}
+
+// NatsURL returns the URL to connection to the NATS server.
+func (m *Launcher) NatsURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", m.natsPort)
 }
 
 // Engine returns a reference to the storage engine. It should only be called
@@ -392,18 +408,22 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		return err
 	}
 
+	serviceConfig := kv.ServiceConfig{
+		SessionLength: time.Duration(m.sessionLength) * time.Minute,
+	}
+
 	var flusher http.Flusher
 	switch m.storeType {
 	case BoltStore:
 		store := bolt.NewKVStore(m.boltPath)
 		store.WithDB(m.boltClient.DB())
-		m.kvService = kv.NewService(store)
+		m.kvService = kv.NewService(store, serviceConfig)
 		if m.testing {
 			flusher = store
 		}
 	case MemoryStore:
 		store := inmem.NewKVStore()
-		m.kvService = kv.NewService(store)
+		m.kvService = kv.NewService(store, serviceConfig)
 		if m.testing {
 			flusher = store
 		}
@@ -428,26 +448,27 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 	m.reg.MustRegister(m.boltClient)
 
 	var (
-		orgSvc           platform.OrganizationService             = m.kvService
-		authSvc          platform.AuthorizationService            = m.kvService
-		userSvc          platform.UserService                     = m.kvService
-		variableSvc      platform.VariableService                 = m.kvService
-		bucketSvc        platform.BucketService                   = m.kvService
-		sourceSvc        platform.SourceService                   = m.kvService
-		sessionSvc       platform.SessionService                  = m.kvService
-		passwdsSvc       platform.PasswordsService                = m.kvService
-		dashboardSvc     platform.DashboardService                = m.kvService
-		dashboardLogSvc  platform.DashboardOperationLogService    = m.kvService
-		userLogSvc       platform.UserOperationLogService         = m.kvService
-		bucketLogSvc     platform.BucketOperationLogService       = m.kvService
-		orgLogSvc        platform.OrganizationOperationLogService = m.kvService
-		onboardingSvc    platform.OnboardingService               = m.kvService
-		scraperTargetSvc platform.ScraperTargetStoreService       = m.kvService
-		telegrafSvc      platform.TelegrafConfigStore             = m.kvService
-		userResourceSvc  platform.UserResourceMappingService      = m.kvService
-		labelSvc         platform.LabelService                    = m.kvService
-		secretSvc        platform.SecretService                   = m.kvService
-		lookupSvc        platform.LookupService                   = m.kvService
+		orgSvc                  platform.OrganizationService             = m.kvService
+		authSvc                 platform.AuthorizationService            = m.kvService
+		userSvc                 platform.UserService                     = m.kvService
+		variableSvc             platform.VariableService                 = m.kvService
+		bucketSvc               platform.BucketService                   = m.kvService
+		sourceSvc               platform.SourceService                   = m.kvService
+		sessionSvc              platform.SessionService                  = m.kvService
+		passwdsSvc              platform.PasswordsService                = m.kvService
+		dashboardSvc            platform.DashboardService                = m.kvService
+		dashboardLogSvc         platform.DashboardOperationLogService    = m.kvService
+		userLogSvc              platform.UserOperationLogService         = m.kvService
+		bucketLogSvc            platform.BucketOperationLogService       = m.kvService
+		orgLogSvc               platform.OrganizationOperationLogService = m.kvService
+		onboardingSvc           platform.OnboardingService               = m.kvService
+		scraperTargetSvc        platform.ScraperTargetStoreService       = m.kvService
+		telegrafSvc             platform.TelegrafConfigStore             = m.kvService
+		userResourceSvc         platform.UserResourceMappingService      = m.kvService
+		labelSvc                platform.LabelService                    = m.kvService
+		secretSvc               platform.SecretService                   = m.kvService
+		lookupSvc               platform.LookupService                   = m.kvService
+		notificationEndpointSvc platform.NotificationEndpointService     = m.kvService
 	)
 
 	switch m.secretStore {
@@ -458,7 +479,7 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		// https://www.vaultproject.io/docs/commands/index.html#environment-variables
 		svc, err := vault.NewSecretService()
 		if err != nil {
-			m.logger.Error("failed initalizing vault secret service", zap.Error(err))
+			m.logger.Error("failed initializing vault secret service", zap.Error(err))
 			return err
 		}
 		secretSvc = svc
@@ -467,22 +488,6 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		m.logger.Error("failed setting secret service", zap.Error(err))
 		return err
 	}
-
-	// Load proto examples from the user data.
-	protoSvc := protofs.NewProtoService(m.protosPath, m.logger, dashboardSvc)
-	if err := protoSvc.Open(ctx); err != nil {
-		m.logger.Error("failed to read protos from the filesystem", zap.Error(err))
-		return err
-	}
-
-	// ... now, load the proto examples that are build with release.
-	protoData, err := proto.Load(m.logger)
-	if err != nil {
-		return err
-	}
-
-	// join the release proto examples with the user data examples.
-	protoSvc.WithProtos(protoData)
 
 	chronografSvc, err := server.NewServiceV2(ctx, m.boltClient.DB())
 	if err != nil {
@@ -504,75 +509,126 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 
 		pointsWriter = m.engine
 
+		// TODO(cwolff): Figure out a good default per-query memory limit:
+		//   https://github.com/influxdata/influxdb/issues/13642
 		const (
-			concurrencyQuota = 10
-			memoryBytesQuota = 1e6
+			concurrencyQuota         = 10
+			memoryBytesQuotaPerQuery = math.MaxInt64
+			QueueSize                = 10
 		)
 
 		cc := control.Config{
-			ExecutorDependencies: make(execute.Dependencies),
-			ConcurrencyQuota:     concurrencyQuota,
-			MemoryBytesQuota:     int64(memoryBytesQuota),
-			Logger:               m.logger.With(zap.String("service", "storage-reads")),
+			ConcurrencyQuota:         concurrencyQuota,
+			MemoryBytesQuotaPerQuery: int64(memoryBytesQuotaPerQuery),
+			QueueSize:                QueueSize,
+			Logger:                   m.logger.With(zap.String("service", "storage-reads")),
 		}
 
-		if err := readservice.AddControllerConfigDependencies(
-			&cc, m.engine, bucketSvc, orgSvc,
-		); err != nil {
-			m.logger.Error("Failed to configure query controller dependencies", zap.Error(err))
+		authBucketSvc := authorizer.NewBucketService(bucketSvc)
+		authOrgSvc := authorizer.NewOrgService(orgSvc)
+		authSecretSvc := authorizer.NewSecretService(secretSvc)
+		reader := reads.NewReader(readservice.NewStore(m.engine))
+		deps, err := influxdb.NewDependencies(reader, m.engine, authBucketSvc, authOrgSvc, authSecretSvc, cc.MetricLabelKeys)
+		if err != nil {
+			m.logger.Error("Failed to get query controller dependencies", zap.Error(err))
 			return err
 		}
+		cc.ExecutorDependencies = []flux.Dependency{deps}
 
-		m.queryController = pcontrol.New(cc)
+		c, err := control.New(cc)
+		if err != nil {
+			m.logger.Error("Failed to create query controller", zap.Error(err))
+			return err
+		}
+		m.queryController = c
 		m.reg.MustRegister(m.queryController.PrometheusCollectors()...)
 	}
 
 	var storageQueryService = readservice.NewProxyQueryService(m.queryController)
 	var taskSvc platform.TaskService
 	{
-		var (
-			store taskbackend.Store
-			err   error
-		)
-		store, err = taskbolt.New(m.boltClient.DB(), "tasks", taskbolt.NoCatchUp)
-		if err != nil {
-			m.logger.Error("failed opening task bolt", zap.Error(err))
-			return err
-		}
 
-		if m.storeType == "memory" {
-			store = taskbackend.NewInMemStore()
-		}
+		// create the task stack:
+		// validation(coordinator(analyticalstore(kv.Service)))
 
-		executor := taskexecutor.NewAsyncQueryServiceExecutor(m.logger.With(zap.String("service", "task-executor")), m.queryController, authSvc, store)
+		// define the executor and build analytical storage middleware
+		combinedTaskService := taskbackend.NewAnalyticalStorage(m.logger.With(zap.String("service", "task-analytical-store")), m.kvService, m.kvService, pointsWriter, query.QueryServiceBridge{AsyncQueryService: m.queryController})
+		executor := taskexecutor.NewAsyncQueryServiceExecutor(m.logger.With(zap.String("service", "task-executor")), m.queryController, authSvc, combinedTaskService)
 
-		lw := taskbackend.NewPointLogWriter(pointsWriter)
-		m.scheduler = taskbackend.NewScheduler(store, executor, lw, time.Now().UTC().Unix(), taskbackend.WithTicker(ctx, 100*time.Millisecond), taskbackend.WithLogger(m.logger))
+		// create the scheduler
+		m.scheduler = taskbackend.NewScheduler(combinedTaskService, executor, time.Now().UTC().Unix(), taskbackend.WithTicker(ctx, 100*time.Millisecond), taskbackend.WithLogger(m.logger))
 		m.scheduler.Start(ctx)
 		m.reg.MustRegister(m.scheduler.PrometheusCollectors()...)
 
-		queryService := query.QueryServiceBridge{AsyncQueryService: m.queryController}
-		lr := taskbackend.NewQueryLogReader(queryService)
-		taskSvc = task.PlatformAdapter(coordinator.New(m.logger.With(zap.String("service", "task-coordinator")), m.scheduler, store), lr, m.scheduler, authSvc, userResourceSvc, orgSvc)
-		taskSvc = task.NewValidator(m.logger.With(zap.String("service", "task-authz-validator")), taskSvc, bucketSvc)
-		m.taskStore = store
+		logger := m.logger.With(zap.String("service", "task-coordinator"))
+		coordinator := coordinator.New(logger, m.scheduler)
+
+		// resume existing task claims from task service
+		if err := taskbackend.NotifyCoordinatorOfExisting(ctx, combinedTaskService, coordinator, logger); err != nil {
+			logger.Error("failed to resume existing tasks", zap.Error(err))
+		}
+
+		taskSvc = middleware.New(combinedTaskService, coordinator)
+		taskSvc = authorizer.NewTaskService(m.logger.With(zap.String("service", "task-authz-validator")), taskSvc)
+		m.taskControlService = combinedTaskService
+	}
+
+	var checkSvc platform.CheckService
+	{
+		coordinator := coordinator.New(m.logger, m.scheduler)
+		checkSvc = middleware.NewCheckService(m.kvService, m.kvService, coordinator)
+	}
+
+	var notificationRuleSvc platform.NotificationRuleStore
+	{
+		coordinator := coordinator.New(m.logger, m.scheduler)
+		notificationRuleSvc = middleware.NewNotificationRuleStore(m.kvService, m.kvService, coordinator)
 	}
 
 	// NATS streaming server
-	m.natsServer = nats.NewServer()
+	natsOpts := nats.NewDefaultServerOptions()
+	nextPort := int64(4222)
+
+	// Welcome to ghetto land. It doesn't seem possible to tell NATS to initialise
+	// a random port. In some integration-style tests, this launcher gets initialised
+	// multiple times, and sometimes the port from the previous instantiation is
+	// still open.
+	//
+	// This atrocity checks if the port is free, and if it's not, moves on to the
+	// next one.
+	var total int
+	for {
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", nextPort))
+		if err == nil {
+			if err := l.Close(); err != nil {
+				return err
+			}
+			break
+		}
+		time.Sleep(time.Second)
+		nextPort++
+		total++
+		if total > 50 {
+			return errors.New("unable to find free port for Nats server")
+		}
+	}
+	natsOpts.Port = int(nextPort)
+	m.natsServer = nats.NewServer(&natsOpts)
+	m.natsPort = int(nextPort)
+
 	if err := m.natsServer.Open(); err != nil {
 		m.logger.Error("failed to start nats streaming server", zap.Error(err))
 		return err
 	}
 
-	publisher := nats.NewAsyncPublisher("nats-publisher")
+	publisher := nats.NewAsyncPublisher(fmt.Sprintf("nats-publisher-%d", m.natsPort), m.NatsURL())
 	if err := publisher.Open(); err != nil {
 		m.logger.Error("failed to connect to streaming server", zap.Error(err))
 		return err
 	}
 
 	// TODO(jm): this is an example of using a subscriber to consume from the channel. It should be removed.
-	subscriber := nats.NewQueueSubscriber("nats-subscriber")
+	subscriber := nats.NewQueueSubscriber(fmt.Sprintf("nats-subscriber-%d", m.natsPort), m.NatsURL())
 	if err := subscriber.Open(); err != nil {
 		m.logger.Error("failed to connect to streaming server", zap.Error(err))
 		return err
@@ -606,7 +662,9 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 
 	m.apibackend = &http.APIBackend{
 		AssetsPath:           m.assetsPath,
+		HTTPErrorHandler:     http.ErrorHandler(0),
 		Logger:               m.logger,
+		SessionRenewDisabled: m.sessionRenewDisabled,
 		NewBucketService:     source.NewBucketService,
 		NewQueryService:      source.NewQueryService,
 		PointsWriter:         pointsWriter,
@@ -631,14 +689,20 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 		FluxService:                     storageQueryService,
 		TaskService:                     taskSvc,
 		TelegrafService:                 telegrafSvc,
+		NotificationRuleStore:           notificationRuleSvc,
+		NotificationEndpointService:     notificationEndpointSvc,
+		CheckService:                    checkSvc,
 		ScraperTargetStoreService:       scraperTargetSvc,
 		ChronografService:               chronografSvc,
 		SecretService:                   secretSvc,
 		LookupService:                   lookupSvc,
-		ProtoService:                    protoSvc,
 		DocumentService:                 m.kvService,
 		OrgLookupService:                m.kvService,
+		WriteEventRecorder:              infprom.NewEventRecorder("write"),
+		QueryEventRecorder:              infprom.NewEventRecorder("query"),
 	}
+
+	m.reg.MustRegister(m.apibackend.PrometheusCollectors()...)
 
 	// HTTP server
 	httpLogger := m.logger.With(zap.String("service", "http"))
@@ -648,7 +712,6 @@ func (m *Launcher) run(ctx context.Context) (err error) {
 	h := http.NewHandlerFromRegistry("platform", m.reg)
 	h.Handler = platformHandler
 	h.Logger = httpLogger
-	h.Tracer = opentracing.GlobalTracer()
 
 	m.httpServer.Handler = h
 	// If we are in testing mode we allow all data to be flushed and removed.
@@ -687,7 +750,7 @@ func (m *Launcher) OrganizationService() platform.OrganizationService {
 }
 
 // QueryController returns the internal query service.
-func (m *Launcher) QueryController() *pcontrol.Controller {
+func (m *Launcher) QueryController() *control.Controller {
 	return m.queryController
 }
 
@@ -696,7 +759,7 @@ func (m *Launcher) BucketService() platform.BucketService {
 	return m.apibackend.BucketService
 }
 
-// UserService returns the internal suser service.
+// UserService returns the internal user service.
 func (m *Launcher) UserService() platform.UserService {
 	return m.apibackend.UserService
 }
@@ -706,14 +769,19 @@ func (m *Launcher) AuthorizationService() platform.AuthorizationService {
 	return m.apibackend.AuthorizationService
 }
 
+// SecretService returns the internal secret service.
+func (m *Launcher) SecretService() platform.SecretService {
+	return m.apibackend.SecretService
+}
+
 // TaskService returns the internal task service.
 func (m *Launcher) TaskService() platform.TaskService {
 	return m.apibackend.TaskService
 }
 
-// TaskStore returns the internal store service.
-func (m *Launcher) TaskStore() taskbackend.Store {
-	return m.taskStore
+// TaskControlService returns the internal store service.
+func (m *Launcher) TaskControlService() taskbackend.TaskControlService {
+	return m.taskControlService
 }
 
 // TaskScheduler returns the internal scheduler service.

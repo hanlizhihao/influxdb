@@ -3,13 +3,11 @@
   ------------------------------------------------------------------------------
 */
 
-@import 'src/style/modules';
-
 .autorefresh-dropdown {
   display: flex;
   flex-wrap: nowrap;
 
-  &.paused .dropdown--selected {
+  &.paused .cf-dropdown--selected {
     opacity: 0;
   }
 }

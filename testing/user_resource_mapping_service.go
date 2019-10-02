@@ -144,7 +144,8 @@ func CreateUserResourceMapping(
 						UserType:   platform.Member,
 					},
 				},
-				err: fmt.Errorf("<internal error> Unexpected error when assigning user to a resource: mapping for user %s already exists", userOneID),
+				//lint:ignore ST1005 Error is capitalized in the tested code.
+				err: fmt.Errorf("Unexpected error when assigning user to a resource: mapping for user %s already exists", userOneID),
 			},
 		},
 	}
@@ -216,7 +217,7 @@ func DeleteUserResourceMapping(
 			},
 		},
 		{
-			name: "deleting a non-existant user",
+			name: "deleting a non-existent user",
 			fields: UserResourceFields{
 				UserResourceMappings: []*platform.UserResourceMapping{},
 			},
@@ -226,7 +227,7 @@ func DeleteUserResourceMapping(
 			},
 			wants: wants{
 				mappings: []*platform.UserResourceMapping{},
-				err:      fmt.Errorf("<not found> user to resource mapping not found"),
+				err:      fmt.Errorf("user to resource mapping not found"),
 			},
 		},
 	}

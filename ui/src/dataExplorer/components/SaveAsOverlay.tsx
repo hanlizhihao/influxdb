@@ -5,7 +5,7 @@ import {withRouter, WithRouterProps} from 'react-router'
 import SaveAsCellForm from 'src/dataExplorer/components/SaveAsCellForm'
 import SaveAsTaskForm from 'src/dataExplorer/components/SaveAsTaskForm'
 import SaveAsVariable from 'src/dataExplorer/components/SaveAsVariable'
-import {Radio, Overlay} from 'src/clockface'
+import {Radio, Overlay} from '@influxdata/clockface'
 
 enum SaveAsOption {
   Dashboard = 'dashboard',
@@ -28,31 +28,37 @@ class SaveAsOverlay extends PureComponent<WithRouterProps, State> {
     return (
       <Overlay visible={true}>
         <Overlay.Container maxWidth={600}>
-          <Overlay.Heading title="Save As" onDismiss={this.handleHideOverlay} />
+          <Overlay.Header title="Save As" onDismiss={this.handleHideOverlay} />
           <Overlay.Body>
             <div className="save-as--options">
               <Radio>
                 <Radio.Button
+                  id="save-as-dashboard"
                   active={saveAsOption === SaveAsOption.Dashboard}
                   value={SaveAsOption.Dashboard}
                   onClick={this.handleSetSaveAsOption}
                   data-testid="cell-radio-button"
+                  titleText="Save query as a dashboard cell"
                 >
                   Dashboard Cell
                 </Radio.Button>
                 <Radio.Button
+                  id="save-as-task"
                   active={saveAsOption === SaveAsOption.Task}
                   value={SaveAsOption.Task}
                   onClick={this.handleSetSaveAsOption}
                   data-testid="task--radio-button"
+                  titleText="Save query as a task"
                 >
                   Task
                 </Radio.Button>
                 <Radio.Button
+                  id="save-as-variable"
                   active={saveAsOption === SaveAsOption.Variable}
                   value={SaveAsOption.Variable}
                   onClick={this.handleSetSaveAsOption}
                   data-testid="variable-radio-button"
+                  titleText="Save query as a variable"
                 >
                   Variable
                 </Radio.Button>

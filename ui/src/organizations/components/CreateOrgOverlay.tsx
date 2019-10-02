@@ -6,11 +6,10 @@ import {WithRouterProps, withRouter} from 'react-router'
 import _ from 'lodash'
 
 // Components
-import {Form, Input, Button} from '@influxdata/clockface'
-import {Overlay} from 'src/clockface'
+import {Form, Input, Button, Overlay} from '@influxdata/clockface'
 
 // Types
-import {Organization} from '@influxdata/influx'
+import {Bucket, Organization} from 'src/types'
 import {
   ButtonType,
   ComponentColor,
@@ -18,20 +17,23 @@ import {
 } from '@influxdata/clockface'
 
 // Actions
-import {createOrg} from 'src/organizations/actions/orgs'
+import {createOrgWithBucket} from 'src/organizations/actions/orgs'
 
 interface OwnProps {}
 
 interface DispatchProps {
-  createOrg: typeof createOrg
+  createOrgWithBucket: typeof createOrgWithBucket
 }
 
 type Props = OwnProps & DispatchProps & WithRouterProps
 
 interface State {
   org: Organization
-  nameInputStatus: ComponentStatus
-  errorMessage: string
+  bucket: Bucket
+  orgNameInputStatus: ComponentStatus
+  bucketNameInputStatus: ComponentStatus
+  orgErrorMessage: string
+  bucketErrorMessage: string
 }
 
 class CreateOrgOverlay extends PureComponent<Props, State> {
@@ -39,31 +41,58 @@ class CreateOrgOverlay extends PureComponent<Props, State> {
     super(props)
     this.state = {
       org: {name: ''},
-      nameInputStatus: ComponentStatus.Default,
-      errorMessage: '',
+      bucket: {name: '', retentionRules: []},
+      orgNameInputStatus: ComponentStatus.Default,
+      bucketNameInputStatus: ComponentStatus.Default,
+      orgErrorMessage: '',
+      bucketErrorMessage: '',
     }
   }
 
   public render() {
-    const {org, nameInputStatus, errorMessage} = this.state
+    const {
+      org,
+      orgNameInputStatus,
+      orgErrorMessage,
+      bucket,
+      bucketNameInputStatus,
+      bucketErrorMessage,
+    } = this.state
 
     return (
       <Overlay visible={true}>
         <Overlay.Container maxWidth={500}>
-          <Overlay.Heading
+          <Overlay.Header
             title="Create Organization"
             onDismiss={this.closeModal}
           />
           <Form onSubmit={this.handleCreateOrg}>
             <Overlay.Body>
-              <Form.Element label="Name" errorMessage={errorMessage}>
+              <Form.Element
+                label="Organization Name"
+                errorMessage={orgErrorMessage}
+              >
                 <Input
                   placeholder="Give your organization a name"
                   name="name"
                   autoFocus={true}
                   value={org.name}
-                  onChange={this.handleChangeInput}
-                  status={nameInputStatus}
+                  onChange={this.handleChangeOrgInput}
+                  status={orgNameInputStatus}
+                  testID="create-org-name-input"
+                />
+              </Form.Element>
+              <Form.Element
+                label="Bucket Name"
+                errorMessage={bucketErrorMessage}
+              >
+                <Input
+                  placeholder="Give your bucket a name"
+                  name="name"
+                  autoFocus={false}
+                  value={bucket.name}
+                  onChange={this.handleChangeBucketInput}
+                  status={bucketNameInputStatus}
                   testID="create-org-name-input"
                 />
               </Form.Element>
@@ -85,9 +114,9 @@ class CreateOrgOverlay extends PureComponent<Props, State> {
   }
 
   private get submitButtonStatus(): ComponentStatus {
-    const {org} = this.state
+    const {org, bucket} = this.state
 
-    if (org.name) {
+    if (org.name && bucket.name) {
       return ComponentStatus.Default
     }
 
@@ -95,18 +124,17 @@ class CreateOrgOverlay extends PureComponent<Props, State> {
   }
 
   private handleCreateOrg = async () => {
-    const {org} = this.state
-    const {createOrg} = this.props
+    const {org, bucket} = this.state
+    const {createOrgWithBucket} = this.props
 
-    await createOrg(org)
-    this.closeModal()
+    await createOrgWithBucket(org, bucket as any)
   }
 
   private closeModal = () => {
     this.props.router.goBack()
   }
 
-  private handleChangeInput = (e: ChangeEvent<HTMLInputElement>) => {
+  private handleChangeOrgInput = (e: ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
     const key = e.target.name
     const org = {...this.state.org, [key]: value}
@@ -114,24 +142,44 @@ class CreateOrgOverlay extends PureComponent<Props, State> {
     if (!value) {
       return this.setState({
         org,
-        nameInputStatus: ComponentStatus.Error,
-        errorMessage: this.randomErrorMessage(key),
+        orgNameInputStatus: ComponentStatus.Error,
+        orgErrorMessage: this.randomErrorMessage(key, 'organization'),
       })
     }
 
     this.setState({
       org,
-      nameInputStatus: ComponentStatus.Valid,
-      errorMessage: '',
+      orgNameInputStatus: ComponentStatus.Valid,
+      orgErrorMessage: '',
     })
   }
 
-  private randomErrorMessage = (key: string): string => {
+  private handleChangeBucketInput = (e: ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    const key = e.target.name
+    const bucket = {...this.state.bucket, [key]: value}
+
+    if (!value) {
+      return this.setState({
+        bucket,
+        bucketNameInputStatus: ComponentStatus.Error,
+        bucketErrorMessage: this.randomErrorMessage(key, 'bucket'),
+      })
+    }
+
+    this.setState({
+      bucket,
+      bucketNameInputStatus: ComponentStatus.Valid,
+      bucketErrorMessage: '',
+    })
+  }
+
+  private randomErrorMessage = (key: string, resource: string): string => {
     const messages = [
-      `Imagine that! An organization without a ${key}`,
-      `An organization needs a ${key}`,
+      `Imagine that! ${_.startCase(resource)} without a ${key}`,
+      `${_.startCase(resource)} needs a ${key}`,
       `You're not getting far without a ${key}`,
-      `The organization formerly known as...`,
+      `The ${resource} formerly known as...`,
       `Pick a ${key}, any ${key}`,
       `Any ${key} will do`,
     ]
@@ -141,12 +189,10 @@ class CreateOrgOverlay extends PureComponent<Props, State> {
 }
 
 const mdtp = {
-  createOrg,
+  createOrgWithBucket,
 }
 
-export default withRouter(
-  connect<{}, DispatchProps, OwnProps>(
-    null,
-    mdtp
-  )(CreateOrgOverlay)
-)
+export default connect<{}, DispatchProps, OwnProps>(
+  null,
+  mdtp
+)(withRouter<OwnProps & DispatchProps>(CreateOrgOverlay))

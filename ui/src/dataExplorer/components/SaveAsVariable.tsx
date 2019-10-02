@@ -1,44 +1,50 @@
 // Libraries
 import React, {PureComponent} from 'react'
+import {withRouter, WithRouterProps} from 'react-router'
 import {connect} from 'react-redux'
 
 // Components
-import VariableForm from 'src/organizations/components/VariableForm'
+import VariableForm from 'src/variables/components/VariableForm'
 
 // Utils
-import {getActiveOrg} from 'src/organizations/selectors'
 import {createVariable} from 'src/variables/actions'
+import {extractVariablesList} from 'src/variables/selectors'
 
 // Types
 import {AppState} from 'src/types'
-import {Variable} from '@influxdata/influx'
 import {getActiveQuery} from 'src/timeMachine/selectors'
+import {IVariable as Variable} from '@influxdata/influx'
 
 interface OwnProps {
   onHideOverlay: () => void
 }
 
 interface DispatchProps {
-  onCreateVariable: (variable: Variable) => void
+  onCreateVariable: typeof createVariable
 }
 
 interface StateProps {
   initialScript?: string
-  orgID: string
+  variables: Variable[]
 }
 
 type Props = StateProps & DispatchProps & OwnProps
 
-class SaveAsVariable extends PureComponent<Props> {
+class SaveAsVariable extends PureComponent<Props & WithRouterProps> {
   render() {
-    const {orgID, onHideOverlay, onCreateVariable, initialScript} = this.props
+    const {
+      onHideOverlay,
+      onCreateVariable,
+      initialScript,
+      variables,
+    } = this.props
 
     return (
       <VariableForm
-        orgID={orgID}
         onHideOverlay={onHideOverlay}
         onCreateVariable={onCreateVariable}
         initialScript={initialScript}
+        variables={variables}
       />
     )
   }
@@ -46,11 +52,11 @@ class SaveAsVariable extends PureComponent<Props> {
 
 const mstp = (state: AppState): StateProps => {
   const activeQuery = getActiveQuery(state)
-  const activeOrgID = getActiveOrg(state).id
+  const variables = extractVariablesList(state)
 
   return {
-    orgID: activeOrgID,
     initialScript: activeQuery.text,
+    variables,
   }
 }
 
@@ -61,4 +67,4 @@ const mdtp = {
 export default connect<StateProps, DispatchProps, OwnProps>(
   mstp,
   mdtp
-)(SaveAsVariable)
+)(withRouter<Props>(SaveAsVariable))

@@ -8,32 +8,27 @@ import {getVarAssignment} from 'src/variables/utils/getVarAssignment'
 // Types
 import {RemoteDataState} from 'src/types'
 import {VariableAssignment} from 'src/types/ast'
-import {AppState} from 'src/types'
+import {AppState, VariableArguments} from 'src/types'
 import {
   VariableValues,
   VariableValuesByID,
   ValueSelections,
 } from 'src/variables/types'
-import {Variable} from '@influxdata/influx'
+import {IVariable as Variable} from '@influxdata/influx'
 
 type VariablesState = AppState['variables']['variables']
 type ValuesState = AppState['variables']['values']['contextID']
 
-const getVariablesForOrgMemoized = memoizeOne(
-  (variablesState: VariablesState, orgID: string) => {
+const extractVariablesListMemoized = memoizeOne(
+  (variablesState: VariablesState): Variable[] => {
     return Object.values(variablesState)
-      .filter(
-        d => d.status === RemoteDataState.Done && d.variable.orgID === orgID
-      )
+      .filter(d => d.status === RemoteDataState.Done)
       .map(d => d.variable)
   }
 )
 
-export const getVariablesForOrg = (
-  state: AppState,
-  orgID: string
-): Variable[] => {
-  return getVariablesForOrgMemoized(state.variables.variables, orgID)
+export const extractVariablesList = (state: AppState): Variable[] => {
+  return extractVariablesListMemoized(state.variables.variables)
 }
 
 const getVariablesForDashboardMemoized = memoizeOne(
@@ -70,6 +65,30 @@ export const getValuesForVariable = (
   contextID: string
 ): VariableValues => {
   return get(state, `variables.values.${contextID}.values.${variableID}`)
+}
+
+export const getTypeForVariable = (
+  state: AppState,
+  variableID: string
+): VariableArguments['type'] => {
+  return get(
+    state,
+    `variables.variables.${variableID}.variable.arguments.type`,
+    ''
+  )
+}
+
+type ArgumentValues = {[key: string]: string} | string[]
+
+export const getArgumentValuesForVariable = (
+  state: AppState,
+  variableID: string
+): ArgumentValues => {
+  return get(
+    state,
+    `variables.variables.${variableID}.variable.arguments.values`,
+    {}
+  )
 }
 
 export const getValueSelections = (

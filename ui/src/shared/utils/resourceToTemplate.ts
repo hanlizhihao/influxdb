@@ -1,13 +1,17 @@
 import _ from 'lodash'
 import {getDeep} from 'src/utils/wrappers'
+
+import {defaultBuilderConfig} from 'src/shared/utils/view'
+import {viewableLabels} from 'src/labels/selectors'
+
 import {Task, Label, Dashboard, Cell, View} from 'src/types'
 import {
   TemplateType,
   DocumentCreate,
   ITemplate,
-  Variable,
+  IVariable as Variable,
 } from '@influxdata/influx'
-import {viewableLabels} from 'src/labels/selectors'
+import {DashboardQuery} from 'src/types/dashboards'
 
 const CURRENT_TEMPLATE_VERSION = '1'
 
@@ -21,11 +25,23 @@ const blankTaskTemplate = () => {
   const baseTemplate = blankTemplate()
   return {
     ...baseTemplate,
+    meta: {...baseTemplate.meta, type: TemplateType.Task},
     content: {
       ...baseTemplate.content,
       data: {...baseTemplate.content.data, type: TemplateType.Task},
     },
-    labels: [],
+  }
+}
+
+const blankVariableTemplate = () => {
+  const baseTemplate = blankTemplate()
+  return {
+    ...baseTemplate,
+    meta: {...baseTemplate.meta, type: TemplateType.Variable},
+    content: {
+      ...baseTemplate.content,
+      data: {...baseTemplate.content.data, type: TemplateType.Variable},
+    },
   }
 }
 
@@ -33,11 +49,11 @@ const blankDashboardTemplate = () => {
   const baseTemplate = blankTemplate()
   return {
     ...baseTemplate,
+    meta: {...baseTemplate.meta, type: TemplateType.Dashboard},
     content: {
       ...baseTemplate.content,
       data: {...baseTemplate.content.data, type: TemplateType.Dashboard},
     },
-    labels: [],
   }
 }
 
@@ -101,12 +117,27 @@ export const taskToTemplate = (
 }
 
 const viewToIncluded = (view: View) => {
-  const viewAttributes = _.pick(view, ['properties', 'name'])
+  let properties = view.properties
+
+  if ('queries' in properties) {
+    const sanitizedQueries = properties.queries.map((q: DashboardQuery) => {
+      return {
+        ...q,
+        editMode: 'advanced' as 'advanced',
+        builderConfig: defaultBuilderConfig(),
+      }
+    })
+
+    properties = {
+      ...properties,
+      queries: sanitizedQueries,
+    }
+  }
 
   return {
     type: TemplateType.View,
     id: view.id,
-    attributes: viewAttributes,
+    attributes: {name: view.name, properties},
   }
 }
 
@@ -138,12 +169,66 @@ const cellToRelationship = (cell: Cell) => ({
   id: cell.id,
 })
 
+export const variableToTemplate = (
+  v: Variable,
+  dependencies: Variable[],
+  baseTemplate = blankVariableTemplate()
+) => {
+  const variableName = _.get(v, 'name', '')
+  const templateName = `${variableName}-Template`
+  const variableData = variableToIncluded(v)
+  const variableRelationships = dependencies.map(d => variableToRelationship(d))
+  const includedDependencies = dependencies.map(d => variableToIncluded(d))
+  const includedLabels = v.labels.map(l => labelToIncluded(l))
+  const labelRelationships = v.labels.map(l => labelToRelationship(l))
+
+  const includedDependentLabels = _.flatMap(dependencies, d =>
+    d.labels.map(l => labelToIncluded(l))
+  )
+
+  return {
+    ...baseTemplate,
+    meta: {
+      ...baseTemplate.meta,
+      name: templateName,
+      description: `template created from variable: ${variableName}`,
+    },
+    content: {
+      ...baseTemplate.content,
+      data: {
+        ...baseTemplate.content.data,
+        ...variableData,
+        relationships: {
+          [TemplateType.Variable]: {
+            data: [...variableRelationships],
+          },
+          [TemplateType.Label]: {
+            data: [...labelRelationships],
+          },
+        },
+      },
+      included: [
+        ...includedDependencies,
+        ...includedLabels,
+        ...includedDependentLabels,
+      ],
+    },
+  }
+}
+
 const variableToIncluded = (v: Variable) => {
   const variableAttributes = _.pick(v, ['name', 'arguments', 'selected'])
+  const labelRelationships = v.labels.map(l => labelToRelationship(l))
+
   return {
     id: v.id,
     type: TemplateType.Variable,
     attributes: variableAttributes,
+    relationships: {
+      [TemplateType.Label]: {
+        data: [...labelRelationships],
+      },
+    },
   }
 }
 
@@ -163,18 +248,25 @@ export const dashboardToTemplate = (
 
   const dashboardAttributes = _.pick(dashboard, ['name', 'description'])
 
-  const labels = getDeep<Label[]>(dashboard, 'labels', [])
-  const includedLabels = labels.map(l => labelToIncluded(l))
-  const relationshipsLabels = labels.map(l => labelToRelationship(l))
+  const dashboardLabels = getDeep<Label[]>(dashboard, 'labels', [])
+  const dashboardIncludedLabels = dashboardLabels.map(l => labelToIncluded(l))
+  const relationshipsLabels = dashboardLabels.map(l => labelToRelationship(l))
 
   const cells = getDeep<Cell[]>(dashboard, 'cells', [])
   const includedCells = cells.map(c => cellToIncluded(c, views))
   const relationshipsCells = cells.map(c => cellToRelationship(c))
 
   const includedVariables = variables.map(v => variableToIncluded(v))
+  const variableIncludedLabels = _.flatMap(variables, v =>
+    v.labels.map(l => labelToIncluded(l))
+  )
   const relationshipsVariables = variables.map(v => variableToRelationship(v))
 
   const includedViews = views.map(v => viewToIncluded(v))
+  const includedLabels = _.uniqBy(
+    [...dashboardIncludedLabels, ...variableIncludedLabels],
+    'id'
+  )
 
   const template = {
     ...baseTemplate,

@@ -4,40 +4,69 @@ import {connect} from 'react-redux'
 
 // Components
 import TimeMachine from 'src/timeMachine/components/TimeMachine'
-import GetResources, {
-  ResourceTypes,
-} from 'src/configuration/components/GetResources'
+import LimitChecker from 'src/cloud/components/LimitChecker'
+import RateLimitAlert from 'src/cloud/components/RateLimitAlert'
 
 // Actions
 import {setActiveTimeMachine} from 'src/timeMachine/actions'
 
 // Utils
-import {DE_TIME_MACHINE_ID} from 'src/timeMachine/constants'
 import {HoverTimeProvider} from 'src/dashboards/utils/hoverTime'
 import {queryBuilderFetcher} from 'src/timeMachine/apis/QueryBuilderFetcher'
+import {
+  extractRateLimitResources,
+  extractRateLimitStatus,
+} from 'src/cloud/utils/limits'
+
+// Types
+import {AppState} from 'src/types'
+import {LimitStatus} from 'src/cloud/actions/limits'
+
+interface StateProps {
+  limitedResources: string[]
+  limitStatus: LimitStatus
+}
 
 interface DispatchProps {
   onSetActiveTimeMachine: typeof setActiveTimeMachine
 }
 
-class DataExplorer extends PureComponent<DispatchProps, {}> {
-  constructor(props: DispatchProps) {
+type Props = DispatchProps & StateProps
+class DataExplorer extends PureComponent<Props, {}> {
+  constructor(props: Props) {
     super(props)
 
-    props.onSetActiveTimeMachine(DE_TIME_MACHINE_ID)
+    props.onSetActiveTimeMachine('de')
     queryBuilderFetcher.clearCache()
   }
 
   public render() {
+    const {limitedResources, limitStatus} = this.props
+
     return (
-      <div className="data-explorer">
-        <HoverTimeProvider>
-          <GetResources resource={ResourceTypes.Variables}>
+      <LimitChecker>
+        <RateLimitAlert
+          resources={limitedResources}
+          limitStatus={limitStatus}
+        />
+        <div className="data-explorer">
+          <HoverTimeProvider>
             <TimeMachine />
-          </GetResources>
-        </HoverTimeProvider>
-      </div>
+          </HoverTimeProvider>
+        </div>
+      </LimitChecker>
     )
+  }
+}
+
+const mstp = (state: AppState): StateProps => {
+  const {
+    cloud: {limits},
+  } = state
+
+  return {
+    limitedResources: extractRateLimitResources(limits),
+    limitStatus: extractRateLimitStatus(limits),
   }
 }
 
@@ -45,7 +74,7 @@ const mdtp: DispatchProps = {
   onSetActiveTimeMachine: setActiveTimeMachine,
 }
 
-export default connect<{}, DispatchProps, {}>(
-  null,
+export default connect<StateProps, DispatchProps, {}>(
+  mstp,
   mdtp
 )(DataExplorer)

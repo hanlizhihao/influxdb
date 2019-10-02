@@ -3,8 +3,7 @@ import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
 
 // Components
-import {Button, ComponentColor} from '@influxdata/clockface'
-import {Overlay} from 'src/clockface'
+import {Button, ComponentColor, Overlay} from '@influxdata/clockface'
 
 // Actions
 import {
@@ -17,7 +16,7 @@ import {getActiveQuery} from 'src/timeMachine/selectors'
 import {hasQueryBeenEdited} from 'src/timeMachine/utils/queryBuilder'
 
 // Types
-import {AppState, QueryEditMode, DashboardQuery} from 'src/types'
+import {AppState, DashboardQuery} from 'src/types'
 
 interface StateProps {
   activeQuery: DashboardQuery
@@ -51,7 +50,7 @@ class TimeMachineQueriesSwitcher extends PureComponent<Props, State> {
         {this.button}
         <Overlay visible={isOverlayVisible}>
           <Overlay.Container maxWidth={400}>
-            <Overlay.Heading
+            <Overlay.Header
               title="Are you sure?"
               onDismiss={this.handleDismissOverlay}
             />
@@ -79,7 +78,7 @@ class TimeMachineQueriesSwitcher extends PureComponent<Props, State> {
     const {onEditAsFlux} = this.props
     const {editMode} = this.props.activeQuery
 
-    if (editMode !== QueryEditMode.Builder) {
+    if (editMode !== 'builder') {
       return (
         <Button
           text="Query Builder"

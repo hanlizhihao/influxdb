@@ -1,102 +1,68 @@
 // Libraries
 import React, {PureComponent} from 'react'
-import {Page} from 'src/pageLayout'
 
 // Components
-import {SlideToggle, ComponentSize} from '@influxdata/clockface'
-import {Tabs, ComponentSpacer, Alignment, Stack} from 'src/clockface'
-import TaskOrgDropdown from 'src/tasks/components/TasksOrgDropdown'
+import {
+  SlideToggle,
+  ComponentSize,
+  ComponentStatus,
+  Page,
+} from '@influxdata/clockface'
 import AddResourceDropdown from 'src/shared/components/AddResourceDropdown'
+import PageTitleWithOrg from 'src/shared/components/PageTitleWithOrg'
+
+// Types
+import {LimitStatus} from 'src/cloud/actions/limits'
 
 interface Props {
   onCreateTask: () => void
   setShowInactive: () => void
   showInactive: boolean
   onImportTask: () => void
-  showOrgDropdown?: boolean
-  isFullPage?: boolean
-  filterComponent: () => JSX.Element
+  limitStatus: LimitStatus
+  onImportFromTemplate: () => void
 }
 
 export default class TasksHeader extends PureComponent<Props> {
-  public static defaultProps: {
-    showOrgDropdown: boolean
-    isFullPage: boolean
-  } = {
-    showOrgDropdown: true,
-    isFullPage: true,
-  }
-
   public render() {
     const {
       onCreateTask,
       setShowInactive,
       showInactive,
       onImportTask,
-      isFullPage,
-      filterComponent,
+      onImportFromTemplate,
     } = this.props
 
-    if (isFullPage) {
-      return (
-        <Page.Header fullWidth={false}>
-          <Page.Header.Left>
-            <Page.Title title={this.pageTitle} />
-          </Page.Header.Left>
-          <Page.Header.Right>
-            <SlideToggle.Label text="Show Inactive" />
-            <SlideToggle
-              active={showInactive}
-              size={ComponentSize.ExtraSmall}
-              onChange={setShowInactive}
-            />
-            {this.orgDropDown}
-            <AddResourceDropdown
-              onSelectNew={onCreateTask}
-              onSelectImport={onImportTask}
-              resourceName="Task"
-            />
-          </Page.Header.Right>
-        </Page.Header>
-      )
-    }
-
     return (
-      <Tabs.TabContentsHeader>
-        {filterComponent()}
-        <ComponentSpacer align={Alignment.Right} stackChildren={Stack.Columns}>
+      <Page.Header fullWidth={false}>
+        <Page.Header.Left>
+          <PageTitleWithOrg title="Tasks" />
+        </Page.Header.Left>
+        <Page.Header.Right>
           <SlideToggle.Label text="Show Inactive" />
           <SlideToggle
             active={showInactive}
             size={ComponentSize.ExtraSmall}
             onChange={setShowInactive}
-            testID="tasks-header--toggle-active"
           />
           <AddResourceDropdown
+            canImportFromTemplate={true}
             onSelectNew={onCreateTask}
             onSelectImport={onImportTask}
+            onSelectTemplate={onImportFromTemplate}
             resourceName="Task"
+            status={this.addResourceStatus}
           />
-        </ComponentSpacer>
-      </Tabs.TabContentsHeader>
+        </Page.Header.Right>
+      </Page.Header>
     )
   }
 
-  private get pageTitle() {
-    const {showOrgDropdown} = this.props
-
-    if (showOrgDropdown) {
-      return 'Tasks'
+  private get addResourceStatus(): ComponentStatus {
+    const {limitStatus} = this.props
+    if (limitStatus === LimitStatus.EXCEEDED) {
+      return ComponentStatus.Disabled
     }
-    return ''
-  }
-
-  private get orgDropDown(): JSX.Element {
-    const {showOrgDropdown} = this.props
-
-    if (showOrgDropdown) {
-      return <TaskOrgDropdown />
-    }
-    return <></>
+    return ComponentStatus.Default
   }
 }

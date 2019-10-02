@@ -3,11 +3,13 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -18,17 +20,21 @@ import (
 	"github.com/julienschmidt/httprouter"
 )
 
+var faketime = time.Date(2006, 5, 4, 1, 2, 3, 0, time.UTC)
+
 // NewMockVariableBackend returns a VariableBackend with mock services.
 func NewMockVariableBackend() *VariableBackend {
 	return &VariableBackend{
 		Logger:          zap.NewNop().With(zap.String("handler", "variable")),
 		VariableService: mock.NewVariableService(),
+		LabelService:    mock.NewLabelService(),
 	}
 }
 
 func TestVariableService_handleGetVariables(t *testing.T) {
 	type fields struct {
 		VariableService platform.VariableService
+		LabelService    platform.LabelService
 	}
 	type args struct {
 		queryParams map[string][]string
@@ -60,6 +66,10 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 									Type:   "constant",
 									Values: platform.VariableConstantValues{"a", "b"},
 								},
+								CRUDLog: platform.CRUDLog{
+									CreatedAt: faketime,
+									UpdatedAt: faketime,
+								},
 							},
 							{
 								ID:             platformtesting.MustIDBase16("61726920617a696f"),
@@ -70,15 +80,103 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 									Type:   "map",
 									Values: platform.VariableMapValues{"a": "b", "c": "d"},
 								},
+								CRUDLog: platform.CRUDLog{
+									CreatedAt: faketime,
+									UpdatedAt: faketime,
+								},
 							},
 						}, nil
+					},
+				},
+				&mock.LabelService{
+					FindResourceLabelsFn: func(ctx context.Context, f platform.LabelMappingFilter) ([]*platform.Label, error) {
+						labels := []*platform.Label{
+							{
+								ID:   platformtesting.MustIDBase16("fc3dc670a4be9b9a"),
+								Name: "label",
+								Properties: map[string]string{
+									"color": "fff000",
+								},
+							},
+						}
+						return labels, nil
 					},
 				},
 			},
 			wants: wants{
 				statusCode:  http.StatusOK,
 				contentType: "application/json; charset=utf-8",
-				body:        `{"variables":[{"id":"6162207574726f71","orgID":"0000000000000001","name":"variable-a","selected":["b"],"arguments":{"type":"constant","values":["a","b"]},"links":{"self":"/api/v2/variables/6162207574726f71","org": "/api/v2/orgs/0000000000000001"}},{"id":"61726920617a696f","orgID":"0000000000000001","name":"variable-b","selected":["c"],"arguments":{"type":"map","values":{"a":"b","c":"d"}},"links":{"self":"/api/v2/variables/61726920617a696f","org": "/api/v2/orgs/0000000000000001"}}],"links":{"self":"/api/v2/variables?descending=false&limit=20&offset=0"}}`,
+				body: `{
+					"links":{
+					   "self":"/api/v2/variables?descending=false&limit=20&offset=0"
+					},
+					"variables":[
+					   {
+						  "arguments":{
+							 "type":"constant",
+							 "values":[
+								"a",
+								"b"
+							 ]
+						  },
+              "createdAt": "2006-05-04T01:02:03Z",
+							"updatedAt": "2006-05-04T01:02:03Z",
+						  "description":"",
+						  "id":"6162207574726f71",
+						  "labels":[
+							 {
+								"id":"fc3dc670a4be9b9a",
+								"name":"label",
+								"properties":{
+								   "color":"fff000"
+								}
+							 }
+						  ],
+						  "links":{
+							 "labels":"/api/v2/variables/6162207574726f71/labels",
+							 "org":"/api/v2/orgs/0000000000000001",
+							 "self":"/api/v2/variables/6162207574726f71"
+						  },
+						  "name":"variable-a",
+						  "orgID":"0000000000000001",
+						  "selected":[
+							 "b"
+						  ]
+					   },
+					   {
+						  "arguments":{
+							 "type":"map",
+							 "values":{
+								"a":"b",
+								"c":"d"
+							 }
+						  },
+              "createdAt": "2006-05-04T01:02:03Z",
+							"updatedAt": "2006-05-04T01:02:03Z",
+						  "description":"",
+						  "id":"61726920617a696f",
+						  "labels":[
+							 {
+								"id":"fc3dc670a4be9b9a",
+								"name":"label",
+								"properties":{
+								   "color":"fff000"
+								}
+							 }
+						  ],
+						  "links":{
+							 "labels":"/api/v2/variables/61726920617a696f/labels",
+							 "org":"/api/v2/orgs/0000000000000001",
+							 "self":"/api/v2/variables/61726920617a696f"
+						  },
+						  "name":"variable-b",
+						  "orgID":"0000000000000001",
+						  "selected":[
+							 "c"
+						  ]
+					   }
+					]
+				 }`,
 			},
 		},
 		{
@@ -87,6 +185,11 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 				&mock.VariableService{
 					FindVariablesF: func(ctx context.Context, filter platform.VariableFilter, opts ...platform.FindOptions) ([]*platform.Variable, error) {
 						return []*platform.Variable{}, nil
+					},
+				},
+				&mock.LabelService{
+					FindResourceLabelsFn: func(ctx context.Context, f platform.LabelMappingFilter) ([]*platform.Label, error) {
+						return []*platform.Label{}, nil
 					},
 				},
 			},
@@ -116,8 +219,26 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 									Type:   "constant",
 									Values: platform.VariableConstantValues{"a", "b"},
 								},
+								CRUDLog: platform.CRUDLog{
+									CreatedAt: faketime,
+									UpdatedAt: faketime,
+								},
 							},
 						}, nil
+					},
+				},
+				&mock.LabelService{
+					FindResourceLabelsFn: func(ctx context.Context, f platform.LabelMappingFilter) ([]*platform.Label, error) {
+						labels := []*platform.Label{
+							{
+								ID:   platformtesting.MustIDBase16("fc3dc670a4be9b9a"),
+								Name: "label",
+								Properties: map[string]string{
+									"color": "fff000",
+								},
+							},
+						}
+						return labels, nil
 					},
 				},
 			},
@@ -129,7 +250,45 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 			wants: wants{
 				statusCode:  http.StatusOK,
 				contentType: "application/json; charset=utf-8",
-				body:        `{"variables":[{"id":"6162207574726f71","orgID":"0000000000000001","name":"variable-a","selected":["b"],"arguments":{"type":"constant","values":["a","b"]},"links":{"self":"/api/v2/variables/6162207574726f71","org":"/api/v2/orgs/0000000000000001"}}],"links":{"self":"/api/v2/variables?descending=false&limit=20&offset=0&orgID=0000000000000001"}}`,
+				body: `{
+					"links": {
+					  "self": "/api/v2/variables?descending=false&limit=20&offset=0&orgID=0000000000000001"
+					},
+					"variables": [
+					  {
+						"arguments": {
+						  "type": "constant",
+						  "values": [
+							"a",
+							"b"
+						  ]
+						},
+		        "description": "",
+						"id": "6162207574726f71",
+						"labels": [
+						  {
+							"id": "fc3dc670a4be9b9a",
+							"name": "label",
+							"properties": {
+							  "color": "fff000"
+							}
+						  }
+						],
+						"links": {
+						  "labels": "/api/v2/variables/6162207574726f71/labels",
+						  "org": "/api/v2/orgs/0000000000000001",
+						  "self": "/api/v2/variables/6162207574726f71"
+						},
+						"name": "variable-a",
+						"orgID": "0000000000000001",
+						"selected": [
+						  "b"
+						],
+						"createdAt": "2006-05-04T01:02:03Z",
+						"updatedAt": "2006-05-04T01:02:03Z"
+					  }
+					]
+				  }`,
 			},
 		},
 	}
@@ -137,10 +296,13 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			variableBackend := NewMockVariableBackend()
+			variableBackend.HTTPErrorHandler = ErrorHandler(0)
+			variableBackend.LabelService = tt.fields.LabelService
 			variableBackend.VariableService = tt.fields.VariableService
 			h := NewVariableHandler(variableBackend)
 
 			r := httptest.NewRequest("GET", "http://howdy.tld", nil)
+
 			qp := r.URL.Query()
 			for k, vs := range tt.args.queryParams {
 				for _, v := range vs {
@@ -163,8 +325,10 @@ func TestVariableService_handleGetVariables(t *testing.T) {
 			if contentType != tt.wants.contentType {
 				t.Errorf("%q. handleGetVariables() = %v, want %v", tt.name, contentType, tt.wants.contentType)
 			}
-			if eq, diff, _ := jsonEqual(string(body), tt.wants.body); tt.wants.body != "" && !eq {
-				t.Errorf("%q. handleGetVariables() = ***%s***", tt.name, diff)
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, handleGetDashboards(). error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
+				t.Errorf("%q. handleGetDashboards() = ***%s***", tt.name, diff)
 			}
 		})
 	}
@@ -206,6 +370,10 @@ func TestVariableService_handleGetVariable(t *testing.T) {
 								Type:   "constant",
 								Values: platform.VariableConstantValues{"a", "b"},
 							},
+							CRUDLog: platform.CRUDLog{
+								CreatedAt: faketime,
+								UpdatedAt: faketime,
+							},
 						}, nil
 					},
 				},
@@ -213,12 +381,11 @@ func TestVariableService_handleGetVariable(t *testing.T) {
 			wants: wants{
 				statusCode:  200,
 				contentType: "application/json; charset=utf-8",
-				body: `{"id":"75650d0a636f6d70","orgID":"0000000000000001","name":"variable-a","selected":["b"],"arguments":{"type":"constant","values":["a","b"]},"links":{"self":"/api/v2/variables/75650d0a636f6d70","org":"/api/v2/orgs/0000000000000001"}}
-`,
+				body:        `{"id":"75650d0a636f6d70","orgID":"0000000000000001","name":"variable-a","description":"","selected":["b"],"arguments":{"type":"constant","values":["a","b"]},"createdAt":"2006-05-04T01:02:03Z","updatedAt":"2006-05-04T01:02:03Z","labels":[],"links":{"self":"/api/v2/variables/75650d0a636f6d70","labels":"/api/v2/variables/75650d0a636f6d70/labels","org":"/api/v2/orgs/0000000000000001"}}`,
 			},
 		},
 		{
-			name: "get a non-existant variable",
+			name: "get a non-existent variable",
 			args: args{
 				id: "75650d0a636f6d70",
 			},
@@ -261,6 +428,7 @@ func TestVariableService_handleGetVariable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			variableBackend := NewMockVariableBackend()
+			variableBackend.HTTPErrorHandler = ErrorHandler(0)
 			variableBackend.VariableService = tt.fields.VariableService
 			h := NewVariableHandler(variableBackend)
 			r := httptest.NewRequest("GET", "http://howdy.tld", nil)
@@ -288,10 +456,11 @@ func TestVariableService_handleGetVariable(t *testing.T) {
 			if contentType != tt.wants.contentType {
 				t.Errorf("got = %v, want %v", contentType, tt.wants.contentType)
 			}
-			if body != tt.wants.body {
-				t.Errorf("got = %v, want %v", body, tt.wants.body)
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
+				t.Errorf("%q. ***%s***", tt.name, diff)
 			}
-
 		})
 	}
 }
@@ -322,6 +491,8 @@ func TestVariableService_handlePostVariable(t *testing.T) {
 					CreateVariableF: func(ctx context.Context, m *platform.Variable) error {
 						m.ID = platformtesting.MustIDBase16("75650d0a636f6d70")
 						m.OrganizationID = platform.ID(1)
+						m.UpdatedAt = faketime
+						m.CreatedAt = faketime
 						return nil
 					},
 				},
@@ -340,14 +511,16 @@ func TestVariableService_handlePostVariable(t *testing.T) {
   },
   "selected": [
     "'foo'"
-  ]
+  ],
+	"createdAt": "2006-05-04T01:02:03Z",
+	"updatedAt": "2006-05-04T01:02:03Z"
 }
 `,
 			},
 			wants: wants{
 				statusCode:  201,
 				contentType: "application/json; charset=utf-8",
-				body: `{"id":"75650d0a636f6d70","orgID":"0000000000000001","name":"my-great-variable","selected":["'foo'"],"arguments":{"type":"constant","values":["bar","foo"]},"links":{"self":"/api/v2/variables/75650d0a636f6d70","org":"/api/v2/orgs/0000000000000001"}}
+				body: `{"id":"75650d0a636f6d70","orgID":"0000000000000001","name":"my-great-variable","description":"","selected":["'foo'"],"arguments":{"type":"constant","values":["bar","foo"]},"createdAt":"2006-05-04T01:02:03Z","updatedAt":"2006-05-04T01:02:03Z","labels":[],"links":{"self":"/api/v2/variables/75650d0a636f6d70","labels":"/api/v2/variables/75650d0a636f6d70/labels","org":"/api/v2/orgs/0000000000000001"}}
 `,
 			},
 		},
@@ -394,6 +567,7 @@ func TestVariableService_handlePostVariable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			variableBackend := NewMockVariableBackend()
+			variableBackend.HTTPErrorHandler = ErrorHandler(0)
 			variableBackend.VariableService = tt.fields.VariableService
 			h := NewVariableHandler(variableBackend)
 			r := httptest.NewRequest("GET", "http://howdy.tld", bytes.NewReader([]byte(tt.args.variable)))
@@ -412,8 +586,10 @@ func TestVariableService_handlePostVariable(t *testing.T) {
 			if contentType != tt.wants.contentType {
 				t.Errorf("got = %v, want %v", contentType, tt.wants.contentType)
 			}
-			if body != tt.wants.body {
-				t.Errorf("got = %v, want %v", body, tt.wants.body)
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
+				t.Errorf("%q. ***%s***", tt.name, diff)
 			}
 		})
 	}
@@ -453,6 +629,10 @@ func TestVariableService_handlePatchVariable(t *testing.T) {
 								Values: platform.VariableConstantValues{},
 							},
 							Selected: []string{},
+							CRUDLog: platform.CRUDLog{
+								CreatedAt: faketime,
+								UpdatedAt: faketime,
+							},
 						}, nil
 					},
 				},
@@ -464,8 +644,7 @@ func TestVariableService_handlePatchVariable(t *testing.T) {
 			wants: wants{
 				statusCode:  200,
 				contentType: "application/json; charset=utf-8",
-				body: `{"id":"75650d0a636f6d70","orgID":"0000000000000002","name":"new-name","selected":[],"arguments":{"type":"constant","values":[]},"links":{"self":"/api/v2/variables/75650d0a636f6d70","org":"/api/v2/orgs/0000000000000002"}}
-`,
+				body:        `{"id":"75650d0a636f6d70","orgID":"0000000000000002","name":"new-name","description":"","selected":[],"arguments":{"type":"constant","values":[]},"createdAt":"2006-05-04T01:02:03Z","updatedAt": "2006-05-04T01:02:03Z","labels":[],"links":{"self":"/api/v2/variables/75650d0a636f6d70","labels":"/api/v2/variables/75650d0a636f6d70/labels","org":"/api/v2/orgs/0000000000000002"}}`,
 			},
 		},
 		{
@@ -488,6 +667,7 @@ func TestVariableService_handlePatchVariable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			variableBackend := NewMockVariableBackend()
+			variableBackend.HTTPErrorHandler = ErrorHandler(0)
 			variableBackend.VariableService = tt.fields.VariableService
 			h := NewVariableHandler(variableBackend)
 			r := httptest.NewRequest("GET", "http://howdy.tld", bytes.NewReader([]byte(tt.args.update)))
@@ -515,8 +695,10 @@ func TestVariableService_handlePatchVariable(t *testing.T) {
 			if contentType != tt.wants.contentType {
 				t.Errorf("got = %v, want %v", contentType, tt.wants.contentType)
 			}
-			if body != tt.wants.body {
-				t.Errorf("got = %v, want %v", body, tt.wants.body)
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
+				t.Errorf("%q. ***%s***", tt.name, diff)
 			}
 		})
 	}
@@ -556,7 +738,7 @@ func TestVariableService_handleDeleteVariable(t *testing.T) {
 			},
 		},
 		{
-			name: "delete a non-existant variable",
+			name: "delete a non-existent variable",
 			fields: fields{
 				&mock.VariableService{
 					DeleteVariableF: func(ctx context.Context, id platform.ID) error {
@@ -579,6 +761,7 @@ func TestVariableService_handleDeleteVariable(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			variableBackend := NewMockVariableBackend()
+			variableBackend.HTTPErrorHandler = ErrorHandler(0)
 			variableBackend.VariableService = tt.fields.VariableService
 			h := NewVariableHandler(variableBackend)
 			r := httptest.NewRequest("GET", "http://howdy.tld", nil)
@@ -604,10 +787,116 @@ func TestVariableService_handleDeleteVariable(t *testing.T) {
 	}
 }
 
+func TestService_handlePostVariableLabel(t *testing.T) {
+	type fields struct {
+		LabelService platform.LabelService
+	}
+	type args struct {
+		labelMapping *platform.LabelMapping
+		variableID   platform.ID
+	}
+	type wants struct {
+		statusCode  int
+		contentType string
+		body        string
+	}
+
+	tests := []struct {
+		name   string
+		fields fields
+		args   args
+		wants  wants
+	}{
+		{
+			name: "add label to variable",
+			fields: fields{
+				LabelService: &mock.LabelService{
+					FindLabelByIDFn: func(ctx context.Context, id platform.ID) (*platform.Label, error) {
+						return &platform.Label{
+							ID:   1,
+							Name: "label",
+							Properties: map[string]string{
+								"color": "fff000",
+							},
+						}, nil
+					},
+					CreateLabelMappingFn: func(ctx context.Context, m *platform.LabelMapping) error { return nil },
+				},
+			},
+			args: args{
+				labelMapping: &platform.LabelMapping{
+					ResourceID: 100,
+					LabelID:    1,
+				},
+				variableID: 100,
+			},
+			wants: wants{
+				statusCode:  http.StatusCreated,
+				contentType: "application/json; charset=utf-8",
+				body: `
+{
+  "label": {
+    "id": "0000000000000001",
+    "name": "label",
+    "properties": {
+      "color": "fff000"
+    }
+  },
+  "links": {
+    "self": "/api/v2/labels/0000000000000001"
+  }
+}
+`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			variableBackend := NewMockVariableBackend()
+			variableBackend.HTTPErrorHandler = ErrorHandler(0)
+			variableBackend.LabelService = tt.fields.LabelService
+			h := NewVariableHandler(variableBackend)
+
+			b, err := json.Marshal(tt.args.labelMapping)
+			if err != nil {
+				t.Fatalf("failed to unmarshal label mapping: %v", err)
+			}
+
+			url := fmt.Sprintf("http://localhost:9999/api/v2/variables/%s/labels", tt.args.variableID)
+			r := httptest.NewRequest("POST", url, bytes.NewReader(b))
+			w := httptest.NewRecorder()
+
+			h.ServeHTTP(w, r)
+
+			res := w.Result()
+			content := res.Header.Get("Content-Type")
+			body, _ := ioutil.ReadAll(res.Body)
+
+			if res.StatusCode != tt.wants.statusCode {
+				t.Errorf("got %v, want %v", res.StatusCode, tt.wants.statusCode)
+			}
+			if tt.wants.contentType != "" && content != tt.wants.contentType {
+				t.Errorf("got %v, want %v", content, tt.wants.contentType)
+			}
+			if eq, diff, err := jsonEqual(string(body), tt.wants.body); err != nil {
+				t.Errorf("%q, error unmarshaling json %v", tt.name, err)
+			} else if tt.wants.body != "" && !eq {
+				t.Errorf("%q. ***%s***", tt.name, diff)
+			}
+		})
+	}
+}
+
 func initVariableService(f platformtesting.VariableFields, t *testing.T) (platform.VariableService, string, func()) {
 	t.Helper()
+
 	svc := inmem.NewService()
 	svc.IDGenerator = f.IDGenerator
+	svc.TimeGenerator = f.TimeGenerator
+	if f.TimeGenerator == nil {
+		svc.TimeGenerator = platform.RealTimeGenerator{}
+	}
 
 	ctx := context.Background()
 	for _, variable := range f.Variables {
@@ -617,6 +906,7 @@ func initVariableService(f platformtesting.VariableFields, t *testing.T) (platfo
 	}
 
 	variableBackend := NewMockVariableBackend()
+	variableBackend.HTTPErrorHandler = ErrorHandler(0)
 	variableBackend.VariableService = svc
 	handler := NewVariableHandler(variableBackend)
 	server := httptest.NewServer(handler)

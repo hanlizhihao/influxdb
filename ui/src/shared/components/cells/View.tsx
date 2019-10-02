@@ -8,16 +8,15 @@ import RefreshingView from 'src/shared/components/RefreshingView'
 
 // Types
 import {TimeRange} from 'src/types'
-import {ViewType, ViewShape, View} from 'src/types'
+import {View, Check} from 'src/types'
 
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface OwnProps {
   view: View
+  check: Partial<Check>
   timeRange: TimeRange
-  autoRefresh: number
   manualRefresh: number
-  onZoom: (range: TimeRange) => void
   onEditCell: () => void
 }
 
@@ -30,40 +29,23 @@ class ViewComponent extends Component<Props> {
   }
 
   public render() {
-    const {view, onZoom, timeRange, manualRefresh} = this.props
+    const {view, timeRange, manualRefresh, check} = this.props
     const {dashboardID} = this.props.params
 
     switch (view.properties.type) {
-      case ViewShape.Empty:
-        return this.emptyGraph
-      case ViewType.Markdown:
+      case 'markdown':
         return <Markdown text={view.properties.note} />
       default:
         return (
           <RefreshingView
-            viewID={view.id}
-            onZoom={onZoom}
             timeRange={timeRange}
+            check={check}
             properties={view.properties}
             manualRefresh={manualRefresh}
-            inView={true}
             dashboardID={dashboardID}
           />
         )
     }
-  }
-
-  private get emptyGraph(): JSX.Element {
-    return (
-      <div className="graph-empty">
-        <button
-          className="no-query--button btn btn-md btn-primary"
-          onClick={this.props.onEditCell}
-        >
-          <span className="icon plus" /> Add Data
-        </button>
-      </div>
-    )
   }
 }
 

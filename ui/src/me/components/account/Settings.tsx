@@ -3,8 +3,7 @@ import React, {PureComponent, ChangeEvent} from 'react'
 import {connect} from 'react-redux'
 
 // Components
-import {Form, Input, Button} from '@influxdata/clockface'
-import {Panel, Grid} from 'src/clockface'
+import {Form, Input, Button, Panel, Grid} from '@influxdata/clockface'
 
 // Types
 import {AppState} from 'src/types'
@@ -34,7 +33,8 @@ export class Settings extends PureComponent<StateProps, State> {
         <Grid.Row>
           <Grid.Column widthXS={Columns.Six}>
             <Panel>
-              <Panel.Header title="About Me">
+              <Panel.Header>
+                <Panel.Title>About Me</Panel.Title>
                 <Button text="Edit About Me" />
               </Panel.Header>
               <Panel.Body>
@@ -63,7 +63,7 @@ export class Settings extends PureComponent<StateProps, State> {
   }
 }
 
-const mstp = ({me}) => ({
+const mstp = ({me}: AppState) => ({
   me,
 })
 

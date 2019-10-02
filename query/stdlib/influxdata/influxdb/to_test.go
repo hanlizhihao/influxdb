@@ -8,20 +8,24 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/influxdata/flux"
 	"github.com/influxdata/flux/ast"
+	"github.com/influxdata/flux/dependencies/dependenciestest"
 	"github.com/influxdata/flux/execute"
 	"github.com/influxdata/flux/execute/executetest"
+	"github.com/influxdata/flux/interpreter"
+	"github.com/influxdata/flux/querytest"
 	"github.com/influxdata/flux/semantic"
+	"github.com/influxdata/flux/values/valuestest"
 	platform "github.com/influxdata/influxdb"
 	"github.com/influxdata/influxdb/mock"
 	"github.com/influxdata/influxdb/models"
 	_ "github.com/influxdata/influxdb/query/builtin"
-	"github.com/influxdata/influxdb/query/querytest"
+	pquerytest "github.com/influxdata/influxdb/query/querytest"
 	"github.com/influxdata/influxdb/query/stdlib/influxdata/influxdb"
 	"github.com/influxdata/influxdb/tsdb"
 )
 
 func TestTo_Query(t *testing.T) {
-	tests := []querytest.BucketAwareQueryTestCase{
+	tests := []querytest.NewQueryTestCase{
 		{
 			Name: "from with database with range",
 			Raw:  `from(bucket:"mydb") |> to(bucket:"series1", org:"fred", host:"localhost", token:"auth-token", fieldFn: (r) => ({ col: r.col }) )`,
@@ -42,22 +46,25 @@ func TestTo_Query(t *testing.T) {
 							Token:             "auth-token",
 							TimeColumn:        execute.DefaultTimeColLabel,
 							MeasurementColumn: influxdb.DefaultMeasurementColLabel,
-							FieldFn: &semantic.FunctionExpression{
-								Block: &semantic.FunctionBlock{
-									Parameters: &semantic.FunctionParameters{
-										List: []*semantic.FunctionParameter{
-											{
-												Key: &semantic.Identifier{Name: "r"},
+							FieldFn: interpreter.ResolvedFunction{
+								Scope: valuestest.NowScope(),
+								Fn: &semantic.FunctionExpression{
+									Block: &semantic.FunctionBlock{
+										Parameters: &semantic.FunctionParameters{
+											List: []*semantic.FunctionParameter{
+												{
+													Key: &semantic.Identifier{Name: "r"},
+												},
 											},
 										},
-									},
-									Body: &semantic.ObjectExpression{
-										Properties: []*semantic.Property{
-											{
-												Key: &semantic.Identifier{Name: "col"},
-												Value: &semantic.MemberExpression{
-													Object:   &semantic.IdentifierExpression{Name: "r"},
-													Property: "col",
+										Body: &semantic.ObjectExpression{
+											Properties: []*semantic.Property{
+												{
+													Key: &semantic.Identifier{Name: "col"},
+													Value: &semantic.MemberExpression{
+														Object:   &semantic.IdentifierExpression{Name: "r"},
+														Property: "col",
+													},
 												},
 											},
 										},
@@ -77,25 +84,30 @@ func TestTo_Query(t *testing.T) {
 		tc := tc
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
-			querytest.BucketAwareQueryTestHelper(t, tc)
+			querytest.NewQueryTestHelper(t, tc)
 		})
 	}
 }
 
 func TestToOpSpec_BucketsAccessed(t *testing.T) {
 	bucketName := "my_bucket"
+	bucketIDString := "ddddccccbbbbaaaa"
+	bucketID, err := platform.IDFromString(bucketIDString)
+	if err != nil {
+		t.Fatal(err)
+	}
 	orgName := "my_org"
 	orgIDString := "aaaabbbbccccdddd"
 	orgID, err := platform.IDFromString(orgIDString)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tests := []querytest.BucketAwareQueryTestCase{
+	tests := []pquerytest.BucketsAccessedTestCase{
 		{
 			Name:             "from() with bucket and to with org and bucket",
 			Raw:              fmt.Sprintf(`from(bucket:"%s") |> to(bucket:"%s", org:"%s")`, bucketName, bucketName, orgName),
 			WantReadBuckets:  &[]platform.BucketFilter{{Name: &bucketName}},
-			WantWriteBuckets: &[]platform.BucketFilter{{Name: &bucketName, Organization: &orgName}},
+			WantWriteBuckets: &[]platform.BucketFilter{{Name: &bucketName, Org: &orgName}},
 		},
 		{
 			Name:             "from() with bucket and to with orgID and bucket",
@@ -103,20 +115,26 @@ func TestToOpSpec_BucketsAccessed(t *testing.T) {
 			WantReadBuckets:  &[]platform.BucketFilter{{Name: &bucketName}},
 			WantWriteBuckets: &[]platform.BucketFilter{{Name: &bucketName, OrganizationID: orgID}},
 		},
+		{
+			Name:             "from() with bucket and to with orgID and bucketID",
+			Raw:              fmt.Sprintf(`from(bucket:"%s") |> to(bucketID:"%s", orgID:"%s")`, bucketName, bucketIDString, orgIDString),
+			WantReadBuckets:  &[]platform.BucketFilter{{Name: &bucketName}},
+			WantWriteBuckets: &[]platform.BucketFilter{{ID: bucketID, OrganizationID: orgID}},
+		},
 	}
 
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.Name, func(t *testing.T) {
 			t.Parallel()
-			querytest.BucketAwareQueryTestHelper(t, tc)
+			pquerytest.BucketsAccessedTestHelper(t, tc)
 		})
 	}
 }
 
 func TestTo_Process(t *testing.T) {
-	oid, _ := (mockOrgLookup{}).Lookup(context.Background(), "my-org")
-	bid, _ := (mockBucketLookup{}).Lookup(oid, "my-bucket")
+	oid, _ := mock.OrganizationLookup{}.Lookup(context.Background(), "my-org")
+	bid, _ := mock.BucketLookup{}.Lookup(context.Background(), oid, "my-bucket")
 	type wanted struct {
 		result *mock.PointsWriter
 		tables []*executetest.Table
@@ -156,11 +174,11 @@ func TestTo_Process(t *testing.T) {
 			})},
 			want: wanted{
 				result: &mock.PointsWriter{
-					Points: mockPoints(oid, bid, `a _value=2.0 11
-a _value=2.0 21
-b _value=1.0 21
-a _value=3.0 31
-c _value=4.0 41`),
+					Points: mockPoints(oid, bid, `a _value=2 11
+a _value=2 21
+b _value=1 21
+a _value=3 31
+c _value=4 41`),
 				},
 				tables: []*executetest.Table{{
 					ColMeta: []flux.ColMeta{
@@ -179,6 +197,107 @@ c _value=4.0 41`),
 						{execute.Time(0), execute.Time(100), execute.Time(41), "c", "_value", 4.0},
 					},
 				}},
+			},
+		},
+		{
+			name: "default with heterogeneous tag columns",
+			spec: &influxdb.ToProcedureSpec{
+				Spec: &influxdb.ToOpSpec{
+					Org:               "my-org",
+					Bucket:            "my-bucket",
+					TimeColumn:        "_time",
+					MeasurementColumn: "_measurement",
+				},
+			},
+			data: []flux.Table{executetest.MustCopyTable(&executetest.Table{
+				ColMeta: []flux.ColMeta{
+					{Label: "_time", Type: flux.TTime},
+					{Label: "_measurement", Type: flux.TString},
+					{Label: "tag1", Type: flux.TString},
+					{Label: "tag2", Type: flux.TString},
+					{Label: "_field", Type: flux.TString},
+					{Label: "_value", Type: flux.TFloat},
+				},
+				KeyCols: []string{"_measurement", "tag1", "tag2", "_field"},
+				Data: [][]interface{}{
+					{execute.Time(11), "a", "a", "aa", "_value", 2.0},
+					{execute.Time(21), "a", "a", "bb", "_value", 2.0},
+					{execute.Time(21), "a", "b", "cc", "_value", 1.0},
+					{execute.Time(31), "a", "a", "dd", "_value", 3.0},
+					{execute.Time(41), "a", "c", "ee", "_value", 4.0},
+				},
+			}),
+				executetest.MustCopyTable(&executetest.Table{
+					ColMeta: []flux.ColMeta{
+						{Label: "_time", Type: flux.TTime},
+						{Label: "_measurement", Type: flux.TString},
+						{Label: "tagA", Type: flux.TString},
+						{Label: "tagB", Type: flux.TString},
+						{Label: "tagC", Type: flux.TString},
+						{Label: "_field", Type: flux.TString},
+						{Label: "_value", Type: flux.TFloat},
+					},
+					KeyCols: []string{"_measurement", "tagA", "tagB", "tagC", "_field"},
+					Data: [][]interface{}{
+						{execute.Time(11), "b", "a", "aa", "ff", "_value", 2.0},
+						{execute.Time(21), "b", "a", "bb", "gg", "_value", 2.0},
+						{execute.Time(21), "b", "b", "cc", "hh", "_value", 1.0},
+						{execute.Time(31), "b", "a", "dd", "ii", "_value", 3.0},
+						{execute.Time(41), "b", "c", "ee", "jj", "_value", 4.0},
+					},
+				}),
+			},
+			want: wanted{
+				result: &mock.PointsWriter{
+					Points: mockPoints(oid, bid, `a,tag1=a,tag2=aa _value=2 11
+a,tag1=a,tag2=bb _value=2 21
+a,tag1=b,tag2=cc _value=1 21
+a,tag1=a,tag2=dd _value=3 31
+a,tag1=c,tag2=ee _value=4 41
+b,tagA=a,tagB=aa,tagC=ff _value=2 11
+b,tagA=a,tagB=bb,tagC=gg _value=2 21
+b,tagA=b,tagB=cc,tagC=hh _value=1 21
+b,tagA=a,tagB=dd,tagC=ii _value=3 31
+b,tagA=c,tagB=ee,tagC=jj _value=4 41`),
+				},
+				tables: []*executetest.Table{{
+					ColMeta: []flux.ColMeta{
+						{Label: "_time", Type: flux.TTime},
+						{Label: "_measurement", Type: flux.TString},
+						{Label: "tag1", Type: flux.TString},
+						{Label: "tag2", Type: flux.TString},
+						{Label: "_field", Type: flux.TString},
+						{Label: "_value", Type: flux.TFloat},
+					},
+					KeyCols: []string{"_measurement", "tag1", "tag2", "_field"},
+					Data: [][]interface{}{
+						{execute.Time(11), "a", "a", "aa", "_value", 2.0},
+						{execute.Time(21), "a", "a", "bb", "_value", 2.0},
+						{execute.Time(21), "a", "b", "cc", "_value", 1.0},
+						{execute.Time(31), "a", "a", "dd", "_value", 3.0},
+						{execute.Time(41), "a", "c", "ee", "_value", 4.0},
+					},
+				},
+					{
+						ColMeta: []flux.ColMeta{
+							{Label: "_time", Type: flux.TTime},
+							{Label: "_measurement", Type: flux.TString},
+							{Label: "tagA", Type: flux.TString},
+							{Label: "tagB", Type: flux.TString},
+							{Label: "tagC", Type: flux.TString},
+							{Label: "_field", Type: flux.TString},
+							{Label: "_value", Type: flux.TFloat},
+						},
+						KeyCols: []string{"_measurement", "tagA", "tagB", "tagC", "_field"},
+						Data: [][]interface{}{
+							{execute.Time(11), "b", "a", "aa", "ff", "_value", 2.0},
+							{execute.Time(21), "b", "a", "bb", "gg", "_value", 2.0},
+							{execute.Time(21), "b", "b", "cc", "hh", "_value", 1.0},
+							{execute.Time(31), "b", "a", "dd", "ii", "_value", 3.0},
+							{execute.Time(41), "b", "c", "ee", "jj", "_value", 4.0},
+						},
+					},
+				},
 			},
 		},
 		{
@@ -209,11 +328,11 @@ c _value=4.0 41`),
 			})},
 			want: wanted{
 				result: &mock.PointsWriter{
-					Points: mockPoints(oid, bid, `a,tag2=aa _value=2.0 11
-a,tag2=bb _value=2.0 21
-b,tag2=cc _value=1.0 21
-a,tag2=dd _value=3.0 31
-c,tag2=ee _value=4.0 41`),
+					Points: mockPoints(oid, bid, `a,tag2=aa _value=2 11
+a,tag2=bb _value=2 21
+b,tag2=cc _value=1 21
+a,tag2=dd _value=3 31
+c,tag2=ee _value=4 41`),
 				},
 				tables: []*executetest.Table{{
 					ColMeta: []flux.ColMeta{
@@ -263,11 +382,11 @@ c,tag2=ee _value=4.0 41`),
 			})},
 			want: wanted{
 				result: &mock.PointsWriter{
-					Points: mockPoints(oid, bid, `m,tag1=a,tag2=aa _value=2.0 11
-m,tag1=a,tag2=bb _value=2.0 21
-m,tag1=b,tag2=cc _value=1.0 21
-m,tag1=a,tag2=dd _value=3.0 31
-m,tag1=c,tag2=ee _value=4.0 41`),
+					Points: mockPoints(oid, bid, `m,tag1=a,tag2=aa _value=2 11
+m,tag1=a,tag2=bb _value=2 21
+m,tag1=b,tag2=cc _value=1 21
+m,tag1=a,tag2=dd _value=3 31
+m,tag1=c,tag2=ee _value=4 41`),
 				},
 				tables: []*executetest.Table{{
 					ColMeta: []flux.ColMeta{
@@ -296,22 +415,25 @@ m,tag1=c,tag2=ee _value=4.0 41`),
 					Bucket:            "my-bucket",
 					TimeColumn:        "_time",
 					MeasurementColumn: "_measurement",
-					FieldFn: &semantic.FunctionExpression{
-						Block: &semantic.FunctionBlock{
-							Parameters: &semantic.FunctionParameters{
-								List: []*semantic.FunctionParameter{
-									{
-										Key: &semantic.Identifier{Name: "r"},
+					FieldFn: interpreter.ResolvedFunction{
+						Scope: valuestest.NowScope(),
+						Fn: &semantic.FunctionExpression{
+							Block: &semantic.FunctionBlock{
+								Parameters: &semantic.FunctionParameters{
+									List: []*semantic.FunctionParameter{
+										{
+											Key: &semantic.Identifier{Name: "r"},
+										},
 									},
 								},
-							},
-							Body: &semantic.ObjectExpression{
-								Properties: []*semantic.Property{
-									{
-										Key: &semantic.Identifier{Name: "temperature"},
-										Value: &semantic.MemberExpression{
-											Object:   &semantic.IdentifierExpression{Name: "r"},
-											Property: "temperature",
+								Body: &semantic.ObjectExpression{
+									Properties: []*semantic.Property{
+										{
+											Key: &semantic.Identifier{Name: "temperature"},
+											Value: &semantic.MemberExpression{
+												Object:   &semantic.IdentifierExpression{Name: "r"},
+												Property: "temperature",
+											},
 										},
 									},
 								},
@@ -336,11 +458,11 @@ m,tag1=c,tag2=ee _value=4.0 41`),
 			})},
 			want: wanted{
 				result: &mock.PointsWriter{
-					Points: mockPoints(oid, bid, `a temperature=2.0 11
-a temperature=2.0 21
-b temperature=1.0 21
-a temperature=3.0 31
-c temperature=4.0 41`),
+					Points: mockPoints(oid, bid, `a temperature=2 11
+a temperature=2 21
+b temperature=1 21
+a temperature=3 31
+c temperature=4 41`),
 				},
 				tables: []*executetest.Table{{
 					ColMeta: []flux.ColMeta{
@@ -366,49 +488,52 @@ c temperature=4.0 41`),
 					Bucket:            "my-bucket",
 					TimeColumn:        "_time",
 					MeasurementColumn: "tag",
-					FieldFn: &semantic.FunctionExpression{
-						Block: &semantic.FunctionBlock{
-							Parameters: &semantic.FunctionParameters{
-								List: []*semantic.FunctionParameter{
-									{
-										Key: &semantic.Identifier{Name: "r"},
+					FieldFn: interpreter.ResolvedFunction{
+						Scope: valuestest.NowScope(),
+						Fn: &semantic.FunctionExpression{
+							Block: &semantic.FunctionBlock{
+								Parameters: &semantic.FunctionParameters{
+									List: []*semantic.FunctionParameter{
+										{
+											Key: &semantic.Identifier{Name: "r"},
+										},
 									},
 								},
-							},
-							Body: &semantic.ObjectExpression{
-								Properties: []*semantic.Property{
-									{
-										Key: &semantic.Identifier{Name: "day"},
-										Value: &semantic.MemberExpression{
-											Object:   &semantic.IdentifierExpression{Name: "r"},
-											Property: "day",
+								Body: &semantic.ObjectExpression{
+									Properties: []*semantic.Property{
+										{
+											Key: &semantic.Identifier{Name: "day"},
+											Value: &semantic.MemberExpression{
+												Object:   &semantic.IdentifierExpression{Name: "r"},
+												Property: "day",
+											},
 										},
-									},
-									{
-										Key: &semantic.Identifier{Name: "temperature"},
-										Value: &semantic.MemberExpression{
-											Object:   &semantic.IdentifierExpression{Name: "r"},
-											Property: "temperature",
-										},
-									},
-									{
-										Key: &semantic.Identifier{Name: "humidity"},
-										Value: &semantic.MemberExpression{
-											Object:   &semantic.IdentifierExpression{Name: "r"},
-											Property: "humidity",
-										},
-									},
-									{
-										Key: &semantic.Identifier{Name: "ratio"},
-										Value: &semantic.BinaryExpression{
-											Operator: ast.DivisionOperator,
-											Left: &semantic.MemberExpression{
+										{
+											Key: &semantic.Identifier{Name: "temperature"},
+											Value: &semantic.MemberExpression{
 												Object:   &semantic.IdentifierExpression{Name: "r"},
 												Property: "temperature",
 											},
-											Right: &semantic.MemberExpression{
+										},
+										{
+											Key: &semantic.Identifier{Name: "humidity"},
+											Value: &semantic.MemberExpression{
 												Object:   &semantic.IdentifierExpression{Name: "r"},
 												Property: "humidity",
+											},
+										},
+										{
+											Key: &semantic.Identifier{Name: "ratio"},
+											Value: &semantic.BinaryExpression{
+												Operator: ast.DivisionOperator,
+												Left: &semantic.MemberExpression{
+													Object:   &semantic.IdentifierExpression{Name: "r"},
+													Property: "temperature",
+												},
+												Right: &semantic.MemberExpression{
+													Object:   &semantic.IdentifierExpression{Name: "r"},
+													Property: "humidity",
+												},
 											},
 										},
 									},
@@ -436,11 +561,11 @@ c temperature=4.0 41`),
 			})},
 			want: wanted{
 				result: &mock.PointsWriter{
-					Points: mockPoints(oid, bid, `a day="Monday",humidity=1.0,ratio=2.0,temperature=2.0 11
-a day="Tuesday",humidity=2.0,ratio=1.0,temperature=2.0 21
-b day="Wednesday",humidity=4.0,ratio=0.25,temperature=1.0 21
-a day="Thursday",humidity=3.0,ratio=1.0,temperature=3.0 31
-c day="Friday",humidity=5.0,ratio=0.8,temperature=4.0 41`),
+					Points: mockPoints(oid, bid, `a day="Monday",humidity=1,ratio=2,temperature=2 11
+a day="Tuesday",humidity=2,ratio=1,temperature=2 21
+b day="Wednesday",humidity=4,ratio=0.25,temperature=1 21
+a day="Thursday",humidity=3,ratio=1,temperature=3 31
+c day="Friday",humidity=5,ratio=0.8,temperature=4 41`),
 				},
 				tables: []*executetest.Table{{
 					ColMeta: []flux.ColMeta{
@@ -469,29 +594,32 @@ c day="Friday",humidity=5.0,ratio=0.8,temperature=4.0 41`),
 					TimeColumn:        "_time",
 					MeasurementColumn: "tag1",
 					TagColumns:        []string{"tag2"},
-					FieldFn: &semantic.FunctionExpression{
-						Block: &semantic.FunctionBlock{
-							Parameters: &semantic.FunctionParameters{
-								List: []*semantic.FunctionParameter{
-									{
-										Key: &semantic.Identifier{Name: "r"},
-									},
-								},
-							},
-							Body: &semantic.ObjectExpression{
-								Properties: []*semantic.Property{
-									{
-										Key: &semantic.Identifier{Name: "temperature"},
-										Value: &semantic.MemberExpression{
-											Object:   &semantic.IdentifierExpression{Name: "r"},
-											Property: "temperature",
+					FieldFn: interpreter.ResolvedFunction{
+						Scope: valuestest.NowScope(),
+						Fn: &semantic.FunctionExpression{
+							Block: &semantic.FunctionBlock{
+								Parameters: &semantic.FunctionParameters{
+									List: []*semantic.FunctionParameter{
+										{
+											Key: &semantic.Identifier{Name: "r"},
 										},
 									},
-									{
-										Key: &semantic.Identifier{Name: "humidity"},
-										Value: &semantic.MemberExpression{
-											Object:   &semantic.IdentifierExpression{Name: "r"},
-											Property: "humidity",
+								},
+								Body: &semantic.ObjectExpression{
+									Properties: []*semantic.Property{
+										{
+											Key: &semantic.Identifier{Name: "temperature"},
+											Value: &semantic.MemberExpression{
+												Object:   &semantic.IdentifierExpression{Name: "r"},
+												Property: "temperature",
+											},
+										},
+										{
+											Key: &semantic.Identifier{Name: "humidity"},
+											Value: &semantic.MemberExpression{
+												Object:   &semantic.IdentifierExpression{Name: "r"},
+												Property: "humidity",
+											},
 										},
 									},
 								},
@@ -522,11 +650,11 @@ c day="Friday",humidity=5.0,ratio=0.8,temperature=4.0 41`),
 			})},
 			want: wanted{
 				result: &mock.PointsWriter{
-					Points: mockPoints(oid, bid, `a,tag2=d humidity=50i,temperature=2.0 11
-a,tag2=d humidity=50i,temperature=2.0 21
-b,tag2=d humidity=50i,temperature=1.0 21
-a,tag2=e humidity=60i,temperature=3.0 31
-c,tag2=e humidity=65i,temperature=4.0 41`),
+					Points: mockPoints(oid, bid, `a,tag2=d humidity=50i,temperature=2 11
+a,tag2=d humidity=50i,temperature=2 21
+b,tag2=d humidity=50i,temperature=1 21
+a,tag2=e humidity=60i,temperature=3 31
+c,tag2=e humidity=65i,temperature=4 41`),
 				},
 				tables: []*executetest.Table{{
 					ColMeta: []flux.ColMeta{
@@ -550,23 +678,141 @@ c,tag2=e humidity=65i,temperature=4.0 41`),
 				}},
 			},
 		},
+		{
+			name: "multiple _field",
+			spec: &influxdb.ToProcedureSpec{
+				Spec: &influxdb.ToOpSpec{
+					Org:               "my-org",
+					Bucket:            "my-bucket",
+					TimeColumn:        "_time",
+					MeasurementColumn: "_measurement",
+				},
+			},
+			data: []flux.Table{executetest.MustCopyTable(&executetest.Table{
+				ColMeta: []flux.ColMeta{
+					{Label: "_start", Type: flux.TTime},
+					{Label: "_stop", Type: flux.TTime},
+					{Label: "_time", Type: flux.TTime},
+					{Label: "_measurement", Type: flux.TString},
+					{Label: "_field", Type: flux.TString},
+					{Label: "_value", Type: flux.TFloat},
+				},
+				Data: [][]interface{}{
+					{execute.Time(0), execute.Time(100), execute.Time(11), "a", "_value", 2.0},
+					{execute.Time(0), execute.Time(100), execute.Time(21), "a", "_value", 2.0},
+					{execute.Time(0), execute.Time(100), execute.Time(21), "b", "_value", 1.0},
+					{execute.Time(0), execute.Time(100), execute.Time(31), "a", "_hello", 3.0},
+					{execute.Time(0), execute.Time(100), execute.Time(41), "c", "_hello", 4.0},
+				},
+			})},
+			want: wanted{
+				result: &mock.PointsWriter{
+					Points: mockPoints(oid, bid, `a _value=2 11
+a _value=2 21
+b _value=1 21
+a _hello=3 31
+c _hello=4 41`),
+				},
+				tables: []*executetest.Table{{
+					ColMeta: []flux.ColMeta{
+						{Label: "_start", Type: flux.TTime},
+						{Label: "_stop", Type: flux.TTime},
+						{Label: "_time", Type: flux.TTime},
+						{Label: "_measurement", Type: flux.TString},
+						{Label: "_field", Type: flux.TString},
+						{Label: "_value", Type: flux.TFloat},
+					},
+					Data: [][]interface{}{
+						{execute.Time(0), execute.Time(100), execute.Time(11), "a", "_value", 2.0},
+						{execute.Time(0), execute.Time(100), execute.Time(21), "a", "_value", 2.0},
+						{execute.Time(0), execute.Time(100), execute.Time(21), "b", "_value", 1.0},
+						{execute.Time(0), execute.Time(100), execute.Time(31), "a", "_hello", 3.0},
+						{execute.Time(0), execute.Time(100), execute.Time(41), "c", "_hello", 4.0},
+					},
+				}},
+			},
+		},
+		{
+			name: "unordered tags",
+			spec: &influxdb.ToProcedureSpec{
+				Spec: &influxdb.ToOpSpec{
+					Org:               "my-org",
+					Bucket:            "my-bucket",
+					TimeColumn:        "_time",
+					TagColumns:        []string{"tag1", "tag2"},
+					MeasurementColumn: "_measurement",
+				},
+			},
+			data: []flux.Table{executetest.MustCopyTable(&executetest.Table{
+				ColMeta: []flux.ColMeta{
+					{Label: "_time", Type: flux.TTime},
+					{Label: "_measurement", Type: flux.TString},
+					{Label: "_field", Type: flux.TString},
+					{Label: "_value", Type: flux.TFloat},
+					{Label: "tag2", Type: flux.TString},
+					{Label: "tag1", Type: flux.TString},
+				},
+				Data: [][]interface{}{
+					{execute.Time(11), "m", "_value", 2.0, "aa", "a"},
+					{execute.Time(21), "m", "_value", 2.0, "bb", "a"},
+					{execute.Time(21), "m", "_value", 1.0, "cc", "b"},
+					{execute.Time(31), "m", "_value", 3.0, "dd", "a"},
+					{execute.Time(41), "m", "_value", 4.0, "ee", "c"},
+				},
+			})},
+			want: wanted{
+				result: &mock.PointsWriter{
+					Points: mockPoints(oid, bid, `m,tag1=a,tag2=aa _value=2 11
+m,tag1=a,tag2=bb _value=2 21
+m,tag1=b,tag2=cc _value=1 21
+m,tag1=a,tag2=dd _value=3 31
+m,tag1=c,tag2=ee _value=4 41`),
+				},
+				tables: []*executetest.Table{{
+					ColMeta: []flux.ColMeta{
+						{Label: "_time", Type: flux.TTime},
+						{Label: "_measurement", Type: flux.TString},
+						{Label: "_field", Type: flux.TString},
+						{Label: "_value", Type: flux.TFloat},
+						{Label: "tag2", Type: flux.TString},
+						{Label: "tag1", Type: flux.TString},
+					},
+					Data: [][]interface{}{
+						{execute.Time(11), "m", "_value", 2.0, "aa", "a"},
+						{execute.Time(21), "m", "_value", 2.0, "bb", "a"},
+						{execute.Time(21), "m", "_value", 1.0, "cc", "b"},
+						{execute.Time(31), "m", "_value", 3.0, "dd", "a"},
+						{execute.Time(41), "m", "_value", 4.0, "ee", "c"},
+					},
+				}},
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			deps := mockDependencies()
+			deps := influxdb.Dependencies{
+				FluxDeps: dependenciestest.Default(),
+				StorageDeps: influxdb.StorageDependencies{
+					ToDeps: mockDependencies(),
+				},
+			}
 			executetest.ProcessTestHelper(
 				t,
 				tc.data,
 				tc.want.tables,
 				nil,
 				func(d execute.Dataset, c execute.TableBuilderCache) execute.Transformation {
-					newT, _ := influxdb.NewToTransformation(d, c, tc.spec, deps)
+					ctx := deps.Inject(context.Background())
+					newT, err := influxdb.NewToTransformation(ctx, d, c, tc.spec, deps.StorageDeps.ToDeps)
+					if err != nil {
+						t.Error(err)
+					}
 					return newT
 				},
 			)
-			pw := deps.PointsWriter.(*mock.PointsWriter)
+			pw := deps.StorageDeps.ToDeps.PointsWriter.(*mock.PointsWriter)
 			if len(pw.Points) != len(tc.want.result.Points) {
 				t.Errorf("Expected result values to have length of %d but got %d", len(tc.want.result.Points), len(pw.Points))
 			}
@@ -575,7 +821,6 @@ c,tag2=e humidity=65i,temperature=4.0 41`),
 			wantStr := pointsToStr(tc.want.result.Points)
 
 			if !cmp.Equal(gotStr, wantStr) {
-
 				t.Errorf("got other than expected %s", cmp.Diff(gotStr, wantStr))
 			}
 		})
@@ -584,28 +829,10 @@ c,tag2=e humidity=65i,temperature=4.0 41`),
 
 func mockDependencies() influxdb.ToDependencies {
 	return influxdb.ToDependencies{
-		BucketLookup:       mockBucketLookup{},
-		OrganizationLookup: mockOrgLookup{},
+		BucketLookup:       mock.BucketLookup{},
+		OrganizationLookup: mock.OrganizationLookup{},
 		PointsWriter:       new(mock.PointsWriter),
 	}
-}
-
-type mockBucketLookup struct{}
-
-func (mockBucketLookup) Lookup(orgID platform.ID, name string) (platform.ID, bool) {
-	if name == "my-bucket" {
-		return platform.ID(1), true
-	}
-	return platform.InvalidID(), false
-}
-
-type mockOrgLookup struct{}
-
-func (mockOrgLookup) Lookup(_ context.Context, name string) (platform.ID, bool) {
-	if name == "my-org" {
-		return platform.ID(2), true
-	}
-	return platform.InvalidID(), false
 }
 
 func pointsToStr(points []models.Point) string {
@@ -617,15 +844,10 @@ func pointsToStr(points []models.Point) string {
 }
 
 func mockPoints(org, bucket platform.ID, pointdata string) []models.Point {
-	points, err := models.ParsePoints([]byte(pointdata))
+	name := tsdb.EncodeName(org, bucket)
+	points, err := models.ParsePoints([]byte(pointdata), name[:])
 	if err != nil {
 		return nil
 	}
-
-	exploded, err := tsdb.ExplodePoints(org, bucket, points)
-	if err != nil {
-		return nil
-	}
-
-	return exploded
+	return points
 }

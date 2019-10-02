@@ -4,16 +4,14 @@ import {withRouter, WithRouterProps} from 'react-router'
 import _ from 'lodash'
 
 // Components
-import {EmptyState} from '@influxdata/clockface'
-import {ResourceList} from 'src/clockface'
+import {EmptyState, ResourceList} from '@influxdata/clockface'
 import AddResourceDropdown from 'src/shared/components/AddResourceDropdown'
-import DashboardCards, {
-  SortTypes,
-} from 'src/dashboards/components/dashboard_index/DashboardCards'
+import DashboardCards from 'src/dashboards/components/dashboard_index/DashboardCards'
 
 // Types
 import {Dashboard} from 'src/types'
 import {Sort, ComponentSize} from '@influxdata/clockface'
+import {SortTypes} from 'src/shared/utils/sort'
 
 interface OwnProps {
   searchTerm: string
@@ -22,8 +20,7 @@ interface OwnProps {
   onCloneDashboard: (dashboard: Dashboard) => void
   onUpdateDashboard: (dashboard: Dashboard) => void
   onFilterChange: (searchTerm: string) => void
-  showOwnerColumn: boolean
-  filterComponent?: () => JSX.Element
+  filterComponent?: JSX.Element
   onImportDashboard: () => void
   dashboards: Dashboard[]
 }
@@ -34,7 +31,7 @@ interface State {
   sortType: SortTypes
 }
 
-type SortKey = keyof Dashboard | 'modified' | 'owner' | 'default' // owner and modified are currently hardcoded
+type SortKey = keyof Dashboard | 'modified'
 
 type Props = OwnProps & WithRouterProps
 
@@ -52,7 +49,6 @@ class DashboardsTable extends PureComponent<Props, State> {
       onCloneDashboard,
       onDeleteDashboard,
       onUpdateDashboard,
-      showOwnerColumn,
       onFilterChange,
     } = this.props
 
@@ -67,15 +63,17 @@ class DashboardsTable extends PureComponent<Props, State> {
             sort={sortKey === this.headerKeys[0] ? sortDirection : Sort.None}
             onClick={this.handleClickColumn}
           />
-          {this.ownerSorter}
           <ResourceList.Sorter
-            name={this.headerKeys[2]}
-            sortKey={this.headerKeys[2]}
-            sort={sortKey === this.headerKeys[2] ? sortDirection : Sort.None}
+            name={this.headerKeys[1]}
+            sortKey={this.headerKeys[1]}
+            sort={sortKey === this.headerKeys[1] ? sortDirection : Sort.None}
             onClick={this.handleClickColumn}
           />
         </ResourceList.Header>
-        <ResourceList.Body emptyState={this.emptyState}>
+        <ResourceList.Body
+          emptyState={this.emptyState}
+          className="dashboards-card-grid"
+        >
           {!!dashboards.length && (
             <DashboardCards
               dashboards={dashboards}
@@ -85,7 +83,6 @@ class DashboardsTable extends PureComponent<Props, State> {
               onCloneDashboard={onCloneDashboard}
               onDeleteDashboard={onDeleteDashboard}
               onUpdateDashboard={onUpdateDashboard}
-              showOwnerColumn={showOwnerColumn}
               onFilterChange={onFilterChange}
             />
           )}
@@ -95,23 +92,7 @@ class DashboardsTable extends PureComponent<Props, State> {
   }
 
   private get headerKeys(): SortKey[] {
-    return ['name', 'owner', 'modified', 'default']
-  }
-
-  private get ownerSorter(): JSX.Element {
-    const {showOwnerColumn} = this.props
-    const {sortKey, sortDirection} = this.state
-
-    if (showOwnerColumn) {
-      return (
-        <ResourceList.Sorter
-          name={this.headerKeys[1]}
-          sortKey={this.headerKeys[1]}
-          sort={sortKey === this.headerKeys[1] ? sortDirection : Sort.None}
-          onClick={this.handleClickColumn}
-        />
-      )
-    }
+    return ['name', 'modified']
   }
 
   private handleClickColumn = (nextSort: Sort, sortKey: SortKey) => {
@@ -124,19 +105,27 @@ class DashboardsTable extends PureComponent<Props, State> {
     this.setState({sortKey, sortDirection: nextSort, sortType})
   }
 
+  private summonImportFromTemplateOverlay = (): void => {
+    const {
+      router,
+      params: {orgID},
+    } = this.props
+    router.push(`/orgs/${orgID}/dashboards/import/template`)
+  }
+
   private get emptyState(): JSX.Element {
     const {onCreateDashboard, searchTerm, onImportDashboard} = this.props
 
     if (searchTerm) {
       return (
-        <EmptyState size={ComponentSize.Large}>
+        <EmptyState size={ComponentSize.Large} testID="empty-dashboards-list">
           <EmptyState.Text text="No Dashboards match your search term" />
         </EmptyState>
       )
     }
 
     return (
-      <EmptyState size={ComponentSize.Large}>
+      <EmptyState size={ComponentSize.Large} testID="empty-dashboards-list">
         <EmptyState.Text
           text="Looks like you don’t have any Dashboards , why not create one?"
           highlightWords={['Dashboards']}
@@ -144,7 +133,9 @@ class DashboardsTable extends PureComponent<Props, State> {
         <AddResourceDropdown
           onSelectNew={onCreateDashboard}
           onSelectImport={onImportDashboard}
+          onSelectTemplate={this.summonImportFromTemplateOverlay}
           resourceName="Dashboard"
+          canImportFromTemplate={true}
         />
       </EmptyState>
     )

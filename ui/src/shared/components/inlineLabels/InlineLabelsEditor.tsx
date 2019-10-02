@@ -3,25 +3,20 @@ import React, {Component, ChangeEvent} from 'react'
 import _ from 'lodash'
 
 // Components
-import {
-  Button,
-  ButtonShape,
-  IconFont,
-  ComponentColor,
-} from '@influxdata/clockface'
+import {SquareButton, IconFont, ComponentColor} from '@influxdata/clockface'
 import InlineLabelPopover from 'src/shared/components/inlineLabels/InlineLabelPopover'
-import CreateLabelOverlay from 'src/configuration/components/CreateLabelOverlay'
+import CreateLabelOverlay from 'src/labels/components/CreateLabelOverlay'
 
 // Utils
-import {validateLabelUniqueness} from 'src/configuration/utils/labels'
+import {validateLabelUniqueness} from 'src/labels/utils/'
 
 // Types
-import {ILabel} from '@influxdata/influx'
+import {Label} from 'src/types'
 import {OverlayState} from 'src/types/overlay'
 
 // Constants
 export const ADD_NEW_LABEL_ITEM_ID = 'add-new-label'
-export const ADD_NEW_LABEL_LABEL: ILabel = {
+export const ADD_NEW_LABEL_LABEL: Label = {
   id: ADD_NEW_LABEL_ITEM_ID,
   name: '',
   properties: {
@@ -33,10 +28,10 @@ export const ADD_NEW_LABEL_LABEL: ILabel = {
 import {ErrorHandling} from 'src/shared/decorators/errors'
 
 interface Props {
-  selectedLabels: ILabel[]
-  labels: ILabel[]
-  onAddLabel: (label: ILabel) => void
-  onCreateLabel: (label: ILabel) => Promise<void>
+  selectedLabels: Label[]
+  labels: Label[]
+  onAddLabel: (label: Label) => void
+  onCreateLabel: (label: Label) => Promise<void>
 }
 
 interface State {
@@ -66,11 +61,10 @@ class InlineLabelsEditor extends Component<Props, State> {
       <>
         <div className="inline-labels--editor">
           <div className="inline-labels--add">
-            <Button
+            <SquareButton
               color={ComponentColor.Secondary}
               titleText="Add labels"
               onClick={this.handleShowPopover}
-              shape={ButtonShape.Square}
               icon={IconFont.Plus}
               testID="inline-labels--add"
             />
@@ -122,11 +116,11 @@ class InlineLabelsEditor extends Component<Props, State> {
 
     return (
       <div
-        className="label label--xs label--colorless"
+        className="cf-label cf-label--xs cf-label--colorless"
         onClick={this.handleShowPopover}
         data-testid="inline-labels--empty"
       >
-        <span className="label--name">Add a label</span>
+        <span className="cf-label--name">Add a label</span>
       </div>
     )
   }
@@ -190,7 +184,7 @@ class InlineLabelsEditor extends Component<Props, State> {
     }
   }
 
-  private filterLabels = (searchTerm: string): ILabel[] => {
+  private filterLabels = (searchTerm: string): Label[] => {
     const filteredLabels = this.availableLabels.filter(label => {
       const lowercaseName = label.name.toLowerCase()
       const lowercaseSearchTerm = searchTerm.toLowerCase()
@@ -199,7 +193,7 @@ class InlineLabelsEditor extends Component<Props, State> {
     })
 
     const searchTermHasExactMatch = filteredLabels.reduce(
-      (acc: boolean, current: ILabel) => {
+      (acc: boolean, current: Label) => {
         return acc === true || current.name === searchTerm
       },
       false
@@ -212,9 +206,7 @@ class InlineLabelsEditor extends Component<Props, State> {
     return this.filteredLabelsWithoutAddButton(filteredLabels)
   }
 
-  private filteredLabelsWithAddButton = (
-    filteredLabels: ILabel[]
-  ): ILabel[] => {
+  private filteredLabelsWithAddButton = (filteredLabels: Label[]): Label[] => {
     const {searchTerm} = this.state
 
     const updatedAddButton = {...ADD_NEW_LABEL_LABEL, name: searchTerm}
@@ -233,18 +225,18 @@ class InlineLabelsEditor extends Component<Props, State> {
   }
 
   private filteredLabelsWithoutAddButton = (
-    filteredLabels: ILabel[]
-  ): ILabel[] => {
+    filteredLabels: Label[]
+  ): Label[] => {
     return filteredLabels.filter(label => label.id !== ADD_NEW_LABEL_ITEM_ID)
   }
 
-  private get availableLabels(): ILabel[] {
+  private get availableLabels(): Label[] {
     const {selectedLabels, labels} = this.props
 
     return _.differenceBy(labels, selectedLabels, label => label.name)
   }
 
-  private handleCreateLabel = async (label: ILabel) => {
+  private handleCreateLabel = async (label: Label) => {
     const {onCreateLabel, onAddLabel} = this.props
 
     try {

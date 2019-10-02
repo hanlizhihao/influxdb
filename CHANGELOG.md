@@ -1,4 +1,218 @@
-## v2.0.0-alpha.7 [unreleased]
+## v2.0.0-alpha.19 [unreleased]
+### Bug Fixes
+1. [15295](https://github.com/influxdata/influxdb/pull/15295): Ensures users are created with an active status 
+
+## v2.0.0-alpha.18 [2019-09-26]
+
+### Features
+
+1. [15151](https://github.com/influxdata/influxdb/pull/15151): Add jsonweb package for future JWT support
+1. [15168](https://github.com/influxdata/influxdb/pull/15168): Added the JMeter Template dashboard
+1. [15152](https://github.com/influxdata/influxdb/pull/15152): Add JWT support to http auth middleware
+
+### UI Improvements
+
+1. [15211](https://github.com/influxdata/influxdb/pull/15211): Display dashboards index as a grid
+1. [15099](https://github.com/influxdata/influxdb/pull/15099): Add viewport scaling to html meta for responsive mobile scaling
+1. [15056](https://github.com/influxdata/influxdb/pull/15056): Remove rename and delete functionality from system buckets
+1. [15056](https://github.com/influxdata/influxdb/pull/15056): Prevent new buckets from being named with the reserved "\_" prefix
+1. [15056](https://github.com/influxdata/influxdb/pull/15056): Prevent user from selecting system buckets when creating Scrapers, Telegraf configurations, read/write tokens, and when saving as a task
+1. [15056](https://github.com/influxdata/influxdb/pull/15056): Limit values from draggable threshold handles to 2 decimal places
+1. [15040](https://github.com/influxdata/influxdb/pull/15040): Redesign check builder UI to fill the screen and make more room for composing message templates
+1. [14990](https://github.com/influxdata/influxdb/pull/14990): Move Tokens tab from Settings to Load Data page
+1. [14990](https://github.com/influxdata/influxdb/pull/14990): Expose all Settings tabs in navigation menu
+1. [15289](https://github.com/influxdata/influxdb/pull/15289): Added Stream and table functions to query builder
+
+### Bug Fixes
+
+1. [14931](https://github.com/influxdata/influxdb/pull/14931): Remove scrollbars blocking onboarding UI step.
+
+## v2.0.0-alpha.17 [2019-08-14]
+
+### Features
+
+1. [14809](https://github.com/influxdata/influxdb/pull/14809): Add task middleware's for checks and notifications
+1. [14495](https://github.com/influxdata/influxdb/pull/14495): optional gzip compression of the query CSV response.
+1. [14567](https://github.com/influxdata/influxdb/pull/14567): Add task types.
+1. [14604](https://github.com/influxdata/influxdb/pull/14604): When getting task runs from the API, runs will be returned in order of most recently scheduled first.
+1. [14631](https://github.com/influxdata/influxdb/pull/14631): Added Github and Apache templates
+1. [14631](https://github.com/influxdata/influxdb/pull/14631): Updated name of Local Metrics template
+1. [14631](https://github.com/influxdata/influxdb/pull/14631): Dashboards for all Telegraf config bundles now created
+1. [14694](https://github.com/influxdata/influxdb/pull/14694): Add ability to find tasks by name.
+1. [14901](https://github.com/influxdata/influxdb/pull/14901): Add ability to Peek() on reads package StreamReader types.
+
+### UI Improvements
+
+1. [14917](https://github.com/influxdata/influxdb/pull/14917): Make first steps in Monitoring & Alerting more obvious
+1. [14889](https://github.com/influxdata/influxdb/pull/14889): Make adding data to buckets more discoverable
+1. [14709](https://github.com/influxdata/influxdb/pull/14709): Move Buckets, Telgrafs, and Scrapers pages into a tab called "Load Data" for ease of discovery
+1. [14846](https://github.com/influxdata/influxdb/pull/14846): Standardize formatting of "updated at" timestamp in all resource cards
+1. [14887](https://github.com/influxdata/influxdb/pull/14887): Move no buckets warning in telegraf tab above the search box
+
+### Bug Fixes
+
+1. [14480](https://github.com/influxdata/influxdb/pull/14480): Fix authentication when updating a task with invalid org or bucket.
+1. [14497](https://github.com/influxdata/influxdb/pull/14497): Update the documentation link for Telegraf.
+1. [14492](https://github.com/influxdata/influxdb/pull/14492): Fix to surface errors properly as task notifications on create.
+1. [14569](https://github.com/influxdata/influxdb/pull/14569): Fix limiting of get runs for task.
+1. [14779](https://github.com/influxdata/influxdb/pull/14779): Refactor tasks coordinator.
+1. [14846](https://github.com/influxdata/influxdb/pull/14846): Ensure onboarding "advanced" button goes to correct location
+
+## v2.0.0-alpha.16 [2019-07-25]
+
+### Bug Fixes
+
+1. [14385](https://github.com/influxdata/influxdb/pull/14385): Add link to Documentation text in line protocol upload overlay
+1. [14344](https://github.com/influxdata/influxdb/pull/14344): Fix issue in Authorization API, can't create auth for another user.
+1. [14352](https://github.com/influxdata/influxdb/pull/14352): Fix Influx CLI ignored user flag for auth creation.
+1. [14379](https://github.com/influxdata/influxdb/pull/14379): Fix the map example in the documentation
+1. [14423](https://github.com/influxdata/influxdb/pull/14423): Ignore null/empty Flux rows which prevents a single stat/gauge crash.
+1. [14434](https://github.com/influxdata/influxdb/pull/14434): Fixes an issue where clicking on a dashboard name caused an incorrect redirect.
+1. [14441](https://github.com/influxdata/influxdb/pull/14441): Upgrade templates lib to 0.5.0
+1. [14453](https://github.com/influxdata/influxdb/pull/14453): Upgrade giraffe lib to 0.16.1
+1. [14412](https://github.com/influxdata/influxdb/pull/14412): Fix incorrect notification type for manually running a Task
+1. [14356](https://github.com/influxdata/influxdb/pull/14356): Fix an issue where canceled tasks did not resume.
+
+## v2.0.0-alpha.15 [2019-07-11]
+
+### Features
+
+1. [14256](https://github.com/influxdata/influxdb/pull/14256): Add time zone support to UI
+2. [14243](https://github.com/influxdata/influxdb/pull/14243): Addded new storage inspection tool to verify tsm files
+3. [14353](https://github.com/influxdata/influxdb/pull/14353): Require a token to be supplied for all task creation
+
+### Bug Fixes
+
+1. [14287](https://github.com/influxdata/influxdb/pull/14287): Fix incorrect reporting of task as successful when error occurs during result iteration
+1. [14412](https://github.com/influxdata/influxdb/pull/14412): Fix incorrect notification type for manually running a Task
+
+### Known Issues
+
+1. [influxdata/flux#1492](https://github.com/influxdata/flux/issues/1492): Null support in Flux was introduced in Alhpa 14. Several null issues were fixed in this release, but one known issue remains - Users may hit a panic if the first record processed by a map function has a null value.
+
+## v2.0.0-alpha.14 [2019-06-28]
+
+### Features
+
+1. [14221](https://github.com/influxdata/influxdb/pull/14221): Add influxd inspect verify-wal tool
+1. [14218](https://github.com/influxdata/influxdb/commit/4faf2a24def4f351aef5b3c0f2907c385f82fdb9): Move to Flux .34.2 - which includes new string functions and initial multi-datasource support with Sql.from()
+1. [14164](https://github.com/influxdata/influxdb/pull/14164): Only click save once to save cell
+1. [14188](https://github.com/influxdata/influxdb/pull/14188): Enable selecting more columns for line visualizations
+
+### UI Improvements
+
+1. [14194](https://github.com/influxdata/influxdb/pull/14194): Draw gauges correctly on HiDPI displays
+1. [14194](https://github.com/influxdata/influxdb/pull/14194): Clamp gauge position to gauge domain
+1. [14168](https://github.com/influxdata/influxdb/pull/14168): Improve display of error messages
+1. [14157](https://github.com/influxdata/influxdb/pull/14157): Remove rendering bottleneck when streaming Flux responses
+1. [14165](https://github.com/influxdata/influxdb/pull/14165): Prevent variable dropdown from clipping
+
+## v2.0.0-alpha.13 [2019-06-13]
+
+### Features
+
+1. [14130](https://github.com/influxdata/influxdb/pull/14130): Add static templates for system, docker, redis, kubernetes
+1. [14189](https://github.com/influxdata/influxdb/pull/14189): Add option to select a token when creating a task
+1. [14200](https://github.com/influxdata/influxdb/pull/14200): Add the ability to update a token when updating a task
+
+## v2.0.0-alpha.12 [2019-06-13]
+
+### Features
+
+1. [14059](https://github.com/influxdata/influxdb/pull/14059): Enable formatting line graph y ticks with binary prefix
+1. [14052](https://github.com/influxdata/influxdb/pull/14052): Add x and y column pickers to graph types
+1. [14128](https://github.com/influxdata/influxdb/pull/14128): Add option to shade area below line graphs
+
+### Bug Fixes
+
+1. [14085](https://github.com/influxdata/influxdb/pull/14085): Fix performance regression in graph tooltips
+
+### UI Improvements
+
+## v2.0.0-alpha.11 [2019-05-31]
+
+1. [14031](https://github.com/influxdata/influxdb/pull/14031): Correctly check if columnKeys include xColumn in heatmap
+
+## v2.0.0-alpha.10 [2019-05-30]
+
+### Features
+
+1. [13945](https://github.com/influxdata/influxdb/pull/13945): Add heatmap visualization type
+1. [13961](https://github.com/influxdata/influxdb/pull/13961): Add scatter graph visualization type
+1. [13850](https://github.com/influxdata/influxdb/pull/13850): Add description field to Tasks
+1. [13924](https://github.com/influxdata/influxdb/pull/13924): Add CLI arguments for configuring session length and renewal
+1. [13961](https://github.com/influxdata/influxdb/pull/13961): Add smooth interpolation option to line graphs
+
+### Bug Fixes
+
+1. [13753](https://github.com/influxdata/influxdb/pull/13753): Removed hardcoded bucket for Getting Started with Flux dashboard
+1. [13783](https://github.com/influxdata/influxdb/pull/13783): Ensure map type variables allow for selecting values
+1. [13800](https://github.com/influxdata/influxdb/pull/13800): Generate more idiomatic Flux in query builder
+1. [13797](https://github.com/influxdata/influxdb/pull/13797): Expand tab key presses to 2 spaces in the Flux editor
+1. [13823](https://github.com/influxdata/influxdb/pull/13823): Prevent dragging of Variable Dropdowns when dragging a scrollbar inside the dropdown
+1. [13853](https://github.com/influxdata/influxdb/pull/13853): Improve single stat computation
+1. [13945](https://github.com/influxdata/influxdb/pull/13945): Fix crash when opening histogram settings with no data
+
+### UI Improvements
+
+1. [#13835](https://github.com/influxdata/influxdb/pull/13835): Render checkboxes in query builder tag selection lists
+1. [#13856](https://github.com/influxdata/influxdb/pull/13856): Fix jumbled card text in Telegraf configuration wizard
+1. [#13888](https://github.com/influxdata/influxdb/pull/13888): Change scrapers in scrapers list to be resource cards
+1. [#13925](https://github.com/influxdata/influxdb/pull/13925): Export and download resource with formatted resource name with no spaces
+
+## v2.0.0-alpha.9 [2019-05-01]
+
+**NOTE: This will remove all tasks from your InfluxDB v2.0 instance.**
+
+### Features
+
+1. [13423](https://github.com/influxdata/influxdb/pull/13423): Set autorefresh of dashboard to pause if absolute time range is selected
+1. [13473](https://github.com/influxdata/influxdb/pull/13473): Switch task back end to a more modular and flexible system
+1. [13493](https://github.com/influxdata/influxdb/pull/13493): Add org profile tab with ability to edit organization name
+1. [13510](https://github.com/influxdata/influxdb/pull/13510): Add org name to dahboard page title
+1. [13520](https://github.com/influxdata/influxdb/pull/13520): Add cautioning to bucket renaming
+1. [13560](https://github.com/influxdata/influxdb/pull/13560): Add option to generate all access token in tokens tab
+1. [13601](https://github.com/influxdata/influxdb/pull/13601): Add option to generate read/write token in tokens tab
+1. [13715](https://github.com/influxdata/influxdb/pull/13715): Added a new Local Metrics Dashboard template that is created during Quick Start
+
+### Bug Fixes
+
+1. [13584](https://github.com/influxdata/influxdb/pull/13584): Fixed scroll clipping found in label editing flow
+1. [13585](https://github.com/influxdata/influxdb/pull/13585): Prevent overlapping text and dot in time range dropdown
+1. [13602](https://github.com/influxdata/influxdb/pull/13602): Updated link in notes cell to a more useful site
+1. [13618](https://github.com/influxdata/influxdb/pull/13618): Show error message when adding line protocol
+1. [13657](https://github.com/influxdata/influxdb/pull/13657): Update UI Flux function documentation
+1. [13718](https://github.com/influxdata/influxdb/pull/13718): Updated System template to support math with floats
+1. [13732](https://github.com/influxdata/influxdb/pull/13732): Fixed the window function documentation
+1. [13738](https://github.com/influxdata/influxdb/pull/13738): Fixed typo in the `range` Flux function example
+1. [13742](https://github.com/influxdata/influxdb/pull/13742): Updated the `systemTime` function to use `system.time`
+
+### UI Improvements
+
+1. [13424](https://github.com/influxdata/influxdb/pull/13424): Add general polish and empty states to Create Dashboard from Template overlay
+
+## v2.0.0-alpha.8 [2019-04-12]
+
+### Features
+
+1. [13024](https://github.com/influxdata/influxdb/pull/13024): Add the ability to edit token's description
+1. [13078](https://github.com/influxdata/influxdb/pull/13078): Add the option to create a Dashboard from a Template.
+1. [13161](https://github.com/influxdata/influxdb/pull/13161): Add the ability to add labels on variables
+1. [13171](https://github.com/influxdata/influxdb/pull/13171): Add switch organizations dropdown to home navigation menu item.
+1. [13173](https://github.com/influxdata/influxdb/pull/13173): Add create org to side nav
+1. [13345](https://github.com/influxdata/influxdb/pull/13345): Added a new Getting Started with Flux Template
+
+### Bug Fixes
+
+1. [13284](https://github.com/influxdata/influxdb/pull/13284): Update shift to timeShift in the flux functions side bar
+
+### UI Improvements
+
+1. [13287](https://github.com/influxdata/influxdb/pull/13287): Update cursor to grab when hovering draggable areas
+1. [13311](https://github.com/influxdata/influxdb/pull/13311): Sync note editor text and preview scrolling
+1. [13249](https://github.com/influxdata/influxdb/pull/13249): Add the ability to create a bucket when creating an organization
+
+## v2.0.0-alpha.7 [2019-03-28]
 
 ### Features
 
@@ -15,6 +229,7 @@
 1. [12888](https://github.com/influxdata/influxdb/pull/12888): Add the ability to delete a template
 1. [12901](https://github.com/influxdata/influxdb/pull/12901): Save user preference for variable control bar visibility and default to visible
 1. [12910](https://github.com/influxdata/influxdb/pull/12910): Add the ability to clone a template
+1. [12958](https://github.com/influxdata/influxdb/pull/12958): Add the ability to import a variable
 
 ### Bug Fixes
 
@@ -25,11 +240,14 @@
 1. [12793](https://github.com/influxdata/influxdb/pull/12793): Fix task creation error when switching schedule types.
 1. [12805](https://github.com/influxdata/influxdb/pull/12805): Fix hidden horizonal scrollbars in flux raw data view
 1. [12827](https://github.com/influxdata/influxdb/pull/12827): Fix screen tearing bug in Raw Data View
+1. [12961](https://github.com/influxdata/influxdb/pull/12961): Fix scroll clipping in graph legends & dropdown menus
+1. [12959](https://github.com/influxdata/influxdb/pull/12959): Fix routing loop
 
 ### UI Improvements
 
 1. [12782](https://github.com/influxdata/influxdb/pull/12782): Move bucket selection in the query builder to the first card in the list
 1. [12850](https://github.com/influxdata/influxdb/pull/12850): Ensure editor is automatically focused in note editor
+1. [12915](https://github.com/influxdata/influxdb/pull/12915): Add ability to edit a template's name.
 
 ## v2.0.0-alpha.6 [2019-03-15]
 

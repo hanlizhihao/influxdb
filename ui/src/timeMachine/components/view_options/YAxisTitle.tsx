@@ -2,8 +2,7 @@
 import React, {PureComponent, ChangeEvent} from 'react'
 
 // Components
-import {Form, Input} from '@influxdata/clockface'
-import {Grid} from 'src/clockface'
+import {Form, Input, Grid} from '@influxdata/clockface'
 
 // Types
 import {Columns} from '@influxdata/clockface'
@@ -18,7 +17,7 @@ class YAxisTitle extends PureComponent<Props> {
 
     return (
       <Grid.Column widthXS={Columns.Twelve}>
-        <Form.Element label="Title">
+        <Form.Element label="Y Axis Label">
           <Input value={label} onChange={this.handleChange} />
         </Form.Element>
       </Grid.Column>

@@ -100,12 +100,13 @@ func (b ProxyQueryServiceAsyncBridge) Query(ctx context.Context, w io.Writer, re
 	defer results.Release()
 
 	encoder := req.Dialect.Encoder()
-	if _, err := encoder.Encode(w, results); err != nil {
-		return flux.Statistics{}, tracing.LogError(span, err)
-	}
+	_, err = encoder.Encode(w, results)
+	// Release the results and collect the statistics regardless of the error.
 	results.Release()
-
 	stats := results.Statistics()
+	if err != nil {
+		return stats, tracing.LogError(span, err)
+	}
 	return stats, nil
 }
 
@@ -124,7 +125,9 @@ type REPLQuerier struct {
 	QueryService   QueryService
 }
 
-func (q *REPLQuerier) Query(ctx context.Context, compiler flux.Compiler) (flux.ResultIterator, error) {
+// Query will pack a query to be sent to a remote server for execution.  deps may be safely ignored since
+// they will be correctly initialized on the server side.
+func (q *REPLQuerier) Query(ctx context.Context, deps flux.Dependencies, compiler flux.Compiler) (flux.ResultIterator, error) {
 	req := &Request{
 		Authorization:  q.Authorization,
 		OrganizationID: q.OrganizationID,

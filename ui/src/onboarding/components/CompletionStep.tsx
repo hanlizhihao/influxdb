@@ -12,11 +12,16 @@ import FancyScrollbar from 'src/shared/components/fancy_scrollbar/FancyScrollbar
 import {
   QuickstartScraperCreationSuccess,
   QuickstartScraperCreationError,
+  QuickstartDashboardCreationSuccess,
+  QuickstartDashboardCreationError,
 } from 'src/shared/copy/notifications'
+import {ossMetricsTemplate} from 'src/templates/constants/defaultTemplates'
 
 // APIs
 import {getDashboards} from 'src/organizations/apis'
 import {client} from 'src/utils/api'
+import {createDashboardFromTemplate as createDashboardFromTemplateAJAX} from 'src/templates/api'
+import * as api from 'src/client'
 
 // Types
 import {
@@ -24,9 +29,10 @@ import {
   ComponentColor,
   ComponentSize,
   Columns,
+  Grid,
 } from '@influxdata/clockface'
-import {Grid} from 'src/clockface'
-import {Organization, Dashboard, ScraperTargetRequest} from '@influxdata/influx'
+import {Organization} from 'src/types'
+import {Dashboard, ScraperTargetRequest} from '@influxdata/influx'
 import {OnboardingStepProps} from 'src/onboarding/containers/OnboardingWizard'
 import {QUICKSTART_SCRAPER_TARGET_URL} from 'src/dataLoaders/constants/pluginConfigs'
 
@@ -35,7 +41,14 @@ interface Props extends OnboardingStepProps {
   bucketID: string
 }
 
-const getOrganizations = () => client.organizations.getAll()
+const getOrganizations = async () => {
+  const resp = await api.getOrgs({})
+  if (resp.status !== 200) {
+    throw new Error(resp.data.message)
+  }
+
+  return resp.data.orgs
+}
 
 @ErrorHandling
 class CompletionStep extends PureComponent<Props> {
@@ -118,6 +131,7 @@ class CompletionStep extends PureComponent<Props> {
                           color={ComponentColor.Success}
                           size={ComponentSize.Large}
                           onClick={onExit}
+                          testID="button--conf-later"
                         />
                         <dt>I've got this...</dt>
                         <dd>
@@ -150,7 +164,15 @@ class CompletionStep extends PureComponent<Props> {
     } catch (err) {
       this.props.notify(QuickstartScraperCreationError)
     }
-
+    try {
+      await createDashboardFromTemplateAJAX(
+        ossMetricsTemplate(),
+        this.props.orgID
+      )
+      this.props.notify(QuickstartDashboardCreationSuccess)
+    } catch (err) {
+      this.props.notify(QuickstartDashboardCreationError)
+    }
     this.props.onExit()
   }
 

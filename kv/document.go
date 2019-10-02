@@ -108,12 +108,12 @@ func (s *DocumentStore) CreateDocument(ctx context.Context, d *influxdb.Document
 			writable: true,
 		}
 		for _, opt := range opts {
-			if err := opt(d.ID, idx); err != nil {
+			if err = opt(d.ID, idx); err != nil {
 				return err
 			}
 		}
 
-		if err := s.decorateDocumentWithLabels(ctx, tx, d); err != nil {
+		if err = s.decorateDocumentWithLabels(ctx, tx, d); err != nil {
 			return err
 		}
 
@@ -157,25 +157,10 @@ func (i *DocumentIndex) RemoveDocumentLabel(docID, labelID influxdb.ID) error {
 	return nil
 }
 
-// FindLabelByName retrieves a label by name.
-func (i *DocumentIndex) FindLabelByName(name string) (influxdb.ID, error) {
-	// TODO(desa): this should be scoped by organization eventually. As of now labels are
-	// global to the application.
-	m := influxdb.LabelFilter{
-		Name: name,
-	}
-	ls, err := i.service.findLabels(i.ctx, i.tx, m)
-	if err != nil {
-		return influxdb.InvalidID(), err
-	}
-	if len(ls) != 1 {
-		return influxdb.InvalidID(), &influxdb.Error{
-			Code: influxdb.EInternal,
-			Msg:  "found multiple labels matching the name provided",
-		}
-	}
-
-	return ls[0].ID, nil
+// FindLabelByID retrieves a label by id.
+func (i *DocumentIndex) FindLabelByID(id influxdb.ID) error {
+	_, err := i.service.findLabelByID(i.ctx, i.tx, id)
+	return err
 }
 
 // AddDocumentOwner creates a urm for the document id and owner id provided.
@@ -300,6 +285,15 @@ func (i *DocumentIndex) FindOrganizationByName(org string) (influxdb.ID, error) 
 	return o.ID, nil
 }
 
+// FindOrganizationByID checks if the org existence by the org id provided.
+func (i *DocumentIndex) FindOrganizationByID(id influxdb.ID) error {
+	_, err := i.service.findOrganizationByID(i.ctx, i.tx, id)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetDocumentsAccessors retrieves the list of accessors of a document.
 func (i *DocumentIndex) GetDocumentsAccessors(docID influxdb.ID) ([]influxdb.ID, error) {
 	f := influxdb.UserResourceMappingFilter{
@@ -354,7 +348,8 @@ func (i *DocumentIndex) GetAccessorsDocuments(ownerType string, ownerID influxdb
 
 func (s *Service) createDocument(ctx context.Context, tx Tx, ns string, d *influxdb.Document) error {
 	d.ID = s.IDGenerator.ID()
-
+	d.Meta.CreatedAt = s.Now()
+	d.Meta.UpdatedAt = s.Now()
 	if err := s.putDocument(ctx, tx, ns, d); err != nil {
 		return err
 	}
@@ -363,7 +358,7 @@ func (s *Service) createDocument(ctx context.Context, tx Tx, ns string, d *influ
 }
 
 func (s *Service) putDocument(ctx context.Context, tx Tx, ns string, d *influxdb.Document) error {
-	if err := s.putDocumentMeta(ctx, tx, ns, d.ID, &d.Meta); err != nil {
+	if err := s.putDocumentMeta(ctx, tx, ns, d.ID, d.Meta); err != nil {
 		return err
 	}
 
@@ -403,7 +398,7 @@ func (s *Service) putDocumentContent(ctx context.Context, tx Tx, ns string, id i
 	return s.putAtID(ctx, tx, path.Join(ns, documentContentBucket), id, data)
 }
 
-func (s *Service) putDocumentMeta(ctx context.Context, tx Tx, ns string, id influxdb.ID, m *influxdb.DocumentMeta) error {
+func (s *Service) putDocumentMeta(ctx context.Context, tx Tx, ns string, id influxdb.ID, m influxdb.DocumentMeta) error {
 	return s.putAtID(ctx, tx, path.Join(ns, documentMetaBucket), id, m)
 }
 
@@ -435,8 +430,9 @@ func (s *Service) findDocumentByID(ctx context.Context, tx Tx, ns string, id inf
 	}
 
 	return &influxdb.Document{
-		ID:   id,
-		Meta: *m,
+		ID:     id,
+		Meta:   *m,
+		Labels: []*influxdb.Label{},
 	}, nil
 }
 
@@ -577,6 +573,13 @@ func (s *DocumentStore) FindDocuments(ctx context.Context, opts ...influxdb.Docu
 
 		return nil
 	})
+
+	if IsNotFound(err) {
+		return nil, &influxdb.Error{
+			Code: influxdb.ENotFound,
+			Msg:  influxdb.ErrDocumentNotFound,
+		}
+	}
 
 	if err != nil {
 		return nil, err
@@ -733,7 +736,7 @@ func (s *DocumentStore) UpdateDocument(ctx context.Context, d *influxdb.Document
 
 func (s *Service) updateDocument(ctx context.Context, tx Tx, ns string, d *influxdb.Document) error {
 	// TODO(desa): deindex meta
-
+	d.Meta.UpdatedAt = s.Now()
 	if err := s.putDocument(ctx, tx, ns, d); err != nil {
 		return err
 	}

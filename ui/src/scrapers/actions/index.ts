@@ -2,7 +2,7 @@
 import {client} from 'src/utils/api'
 
 // Types
-import {RemoteDataState} from 'src/types'
+import {RemoteDataState, GetState} from 'src/types'
 import {ScraperTargetResponse, ScraperTargetRequest} from '@influxdata/influx'
 import {Dispatch} from 'redux-thunk'
 
@@ -16,7 +16,7 @@ import {
   scraperDeleteSuccess,
   scraperUpdateFailed,
   scraperUpdateSuccess,
-} from 'src/shared/copy/v2/notifications'
+} from 'src/shared/copy/notifications'
 
 export type Action = SetScrapers | AddScraper | EditScraper | RemoveScraper
 
@@ -70,11 +70,18 @@ export const removeScraper = (id: string): RemoveScraper => ({
   payload: {id},
 })
 
-export const getScrapers = () => async (dispatch: Dispatch<Action>) => {
+export const getScrapers = () => async (
+  dispatch: Dispatch<Action>,
+  getState: GetState
+) => {
   try {
+    const {
+      orgs: {org},
+    } = getState()
+
     dispatch(setScrapers(RemoteDataState.Loading))
 
-    const scrapers = await client.scrapers.getAll()
+    const scrapers = await client.scrapers.getAll(org.id)
 
     dispatch(setScrapers(RemoteDataState.Done, scrapers))
   } catch (e) {

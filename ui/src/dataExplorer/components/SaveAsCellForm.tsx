@@ -1,13 +1,13 @@
 // Libraries
 import React, {PureComponent, ChangeEvent} from 'react'
 import {connect} from 'react-redux'
-
-// Utils
 import _ from 'lodash'
 
+// Utils
+import {getSaveableView} from 'src/timeMachine/selectors'
+
 // Components
-import {Form, Input, Button} from '@influxdata/clockface'
-import {Grid} from 'src/clockface'
+import {Form, Input, Button, Grid} from '@influxdata/clockface'
 import {ErrorHandling} from 'src/shared/decorators/errors'
 import DashboardsDropdown from 'src/dataExplorer/components/DashboardsDropdown'
 
@@ -25,7 +25,7 @@ import {createDashboard} from 'src/dashboards/apis'
 import {notify} from 'src/shared/actions/notifications'
 
 // Types
-import {AppState, Dashboard, View, Organization} from 'src/types'
+import {AppState, Dashboard, View} from 'src/types'
 import {
   Columns,
   InputType,
@@ -44,7 +44,7 @@ interface State {
 interface StateProps {
   dashboards: Dashboard[]
   view: View
-  orgs: Organization[]
+  orgID: string
 }
 
 interface DispatchProps {
@@ -170,7 +170,7 @@ class SaveAsCellForm extends PureComponent<Props, State> {
           } else {
             const selectedDashboard = dashboards.find(d => d.id === dashID)
             targetDashboardName = selectedDashboard.name
-            onCreateCellWithView(selectedDashboard, viewWithProps)
+            onCreateCellWithView(selectedDashboard.id, viewWithProps)
           }
           notify(cellAdded(cellName, targetDashboardName))
         } catch {
@@ -187,15 +187,15 @@ class SaveAsCellForm extends PureComponent<Props, State> {
     dashboardName: string,
     view: View
   ): Promise<void> => {
-    const {onCreateCellWithView, orgs} = this.props
+    const {onCreateCellWithView, orgID} = this.props
     try {
       const newDashboard = {
-        orgID: orgs[0].id,
+        orgID,
         name: dashboardName || DEFAULT_DASHBOARD_NAME,
         cells: [],
       }
       const dashboard = await createDashboard(newDashboard)
-      onCreateCellWithView(dashboard, view)
+      onCreateCellWithView(dashboard.id, view)
     } catch (error) {
       console.error(error)
     }
@@ -233,14 +233,13 @@ class SaveAsCellForm extends PureComponent<Props, State> {
 
 const mstp = (state: AppState): StateProps => {
   const {
-    orgs,
-    dashboards,
-    timeMachines: {
-      timeMachines: {de},
-    },
+    dashboards: {list: dashboards},
+    orgs: {org},
   } = state
-  const {view} = de
-  return {dashboards, view, orgs}
+
+  const view = getSaveableView(state)
+
+  return {dashboards, view, orgID: _.get(org, 'id', '')}
 }
 
 const mdtp: DispatchProps = {

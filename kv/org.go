@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -13,10 +14,25 @@ import (
 	"github.com/influxdata/influxdb/kit/tracing"
 )
 
+const (
+	// MaxIDGenerationN is the maximum number of times an ID generation is done before failing.
+	MaxIDGenerationN = 100
+	// ReservedIDs are the number of IDs reserved from 1 - ReservedIDs we use
+	// for our system org/buckets
+	ReservedIDs = 1000
+)
+
 var (
 	organizationBucket = []byte("organizationsv1")
 	organizationIndex  = []byte("organizationindexv1")
 )
+
+// ErrFailureGeneratingID occurs ony when the random number generator
+// cannot generate an ID in MaxIDGenerationN times.
+var ErrFailureGeneratingID = &influxdb.Error{
+	Code: influxdb.EInternal,
+	Msg:  "unable to generate valid id",
+}
 
 var _ influxdb.OrganizationService = (*Service)(nil)
 var _ influxdb.OrganizationOperationLogService = (*Service)(nil)
@@ -145,19 +161,35 @@ func (s *Service) findOrganizationByName(ctx context.Context, tx Tx, n string) (
 // Filters using ID, or Name should be efficient.
 // Other filters will do a linear scan across organizations until it finds a match.
 func (s *Service) FindOrganization(ctx context.Context, filter influxdb.OrganizationFilter) (*influxdb.Organization, error) {
+	span, ctx := tracing.StartSpanFromContext(ctx)
+	defer span.Finish()
+
+	var o *influxdb.Organization
+
+	err := s.kv.View(ctx, func(tx Tx) error {
+		org, err := s.findOrganization(ctx, tx, filter)
+		if err != nil {
+			return err
+		}
+		o = org
+		return nil
+	})
+
+	return o, err
+
+}
+
+func (s *Service) findOrganization(ctx context.Context, tx Tx, filter influxdb.OrganizationFilter) (*influxdb.Organization, error) {
 	if filter.ID != nil {
-		return s.FindOrganizationByID(ctx, *filter.ID)
+		return s.findOrganizationByID(ctx, tx, *filter.ID)
 	}
 
 	if filter.Name != nil {
-		return s.FindOrganizationByName(ctx, *filter.Name)
+		return s.findOrganizationByName(ctx, tx, *filter.Name)
 	}
 
 	// If name and ID are not set, then, this is an invalid usage of the API.
-	return nil, &influxdb.Error{
-		Code: influxdb.EInvalid,
-		Msg:  "no filter parameters provided",
-	}
+	return nil, influxdb.ErrInvalidOrgFilter
 }
 
 func filterOrganizationsFn(filter influxdb.OrganizationFilter) func(o *influxdb.Organization) bool {
@@ -245,12 +277,16 @@ func (s *Service) addOrgOwner(ctx context.Context, tx Tx, orgID influxdb.ID) err
 	return s.addResourceOwner(ctx, tx, influxdb.OrgsResourceType, orgID)
 }
 
-func (s *Service) createOrganization(ctx context.Context, tx Tx, o *influxdb.Organization) error {
-	if err := s.uniqueOrganizationName(ctx, tx, o); err != nil {
+func (s *Service) createOrganization(ctx context.Context, tx Tx, o *influxdb.Organization) (err error) {
+	if err := s.validOrganizationName(ctx, tx, o); err != nil {
 		return err
 	}
 
-	o.ID = s.IDGenerator.ID()
+	if o.ID, err = s.generateOrgID(ctx, tx); err != nil {
+		return err
+	}
+	o.CreatedAt = s.Now()
+	o.UpdatedAt = s.Now()
 	if err := s.appendOrganizationEventToLog(ctx, tx, o.ID, organizationCreatedEvent); err != nil {
 		return &influxdb.Error{
 			Err: err,
@@ -263,6 +299,10 @@ func (s *Service) createOrganization(ctx context.Context, tx Tx, o *influxdb.Org
 		}
 	}
 	return nil
+}
+
+func (s *Service) generateOrgID(ctx context.Context, tx Tx) (influxdb.ID, error) {
+	return s.generateSafeID(ctx, tx, organizationBucket)
 }
 
 // PutOrganization will put a organization without setting an ID.
@@ -344,7 +384,10 @@ func forEachOrganization(ctx context.Context, tx Tx, fn func(*influxdb.Organizat
 	return nil
 }
 
-func (s *Service) uniqueOrganizationName(ctx context.Context, tx Tx, o *influxdb.Organization) error {
+func (s *Service) validOrganizationName(ctx context.Context, tx Tx, o *influxdb.Organization) error {
+	if o.Name = strings.TrimSpace(o.Name); o.Name == "" {
+		return influxdb.ErrOrgNameisEmpty
+	}
 	key := organizationIndexKey(o.Name)
 
 	// if the name is not unique across all organizations, then, do not
@@ -392,7 +435,16 @@ func (s *Service) updateOrganization(ctx context.Context, tx Tx, id influxdb.ID,
 			}
 		}
 		o.Name = *upd.Name
+		if err := s.validOrganizationName(ctx, tx, o); err != nil {
+			return nil, err
+		}
 	}
+
+	if upd.Description != nil {
+		o.Description = *upd.Description
+	}
+
+	o.UpdatedAt = s.Now()
 
 	if err := s.appendOrganizationEventToLog(ctx, tx, o.ID, organizationUpdatedEvent); err != nil {
 		return nil, &influxdb.Error{
@@ -417,7 +469,7 @@ func (s *Service) deleteOrganizationsBuckets(ctx context.Context, tx Tx, id infl
 	}
 	for _, b := range bs {
 		if err := s.deleteBucket(ctx, tx, b.ID); err != nil {
-			s.Logger.Warn("bucket was not deleted", zap.Stringer("bucketID", b.ID), zap.Stringer("orgID", b.OrganizationID))
+			s.Logger.Warn("bucket was not deleted", zap.Stringer("bucketID", b.ID), zap.Stringer("orgID", b.OrgID))
 		}
 	}
 	return nil
@@ -566,7 +618,7 @@ func (s *Service) appendOrganizationEventToLog(ctx context.Context, tx Tx, id in
 		return err
 	}
 
-	return s.addLogEntry(ctx, tx, k, v, s.time())
+	return s.addLogEntry(ctx, tx, k, v, s.Now())
 }
 
 // FindResourceOrganizationID is used to find the organization that a resource belongs to five the id of a resource and a resource type.
@@ -583,7 +635,7 @@ func (s *Service) FindResourceOrganizationID(ctx context.Context, rt influxdb.Re
 		if err != nil {
 			return influxdb.InvalidID(), err
 		}
-		return r.OrganizationID, nil
+		return r.OrgID, nil
 	case influxdb.OrgsResourceType:
 		r, err := s.FindOrganizationByID(ctx, id)
 		if err != nil {
@@ -602,12 +654,18 @@ func (s *Service) FindResourceOrganizationID(ctx context.Context, rt influxdb.Re
 			return influxdb.InvalidID(), err
 		}
 		return r.OrganizationID, nil
+	case influxdb.TasksResourceType:
+		r, err := s.FindTaskByID(ctx, id)
+		if err != nil {
+			return influxdb.InvalidID(), err
+		}
+		return r.OrganizationID, nil
 	case influxdb.TelegrafsResourceType:
 		r, err := s.FindTelegrafConfigByID(ctx, id)
 		if err != nil {
 			return influxdb.InvalidID(), err
 		}
-		return r.OrganizationID, nil
+		return r.OrgID, nil
 	case influxdb.VariablesResourceType:
 		r, err := s.FindVariableByID(ctx, id)
 		if err != nil {

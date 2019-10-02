@@ -1,7 +1,6 @@
 import React, {PureComponent} from 'react'
 import {connect} from 'react-redux'
 import {get} from 'lodash'
-import {client} from 'src/utils/api'
 
 // Components
 import {
@@ -9,49 +8,38 @@ import {
   Button,
   SpinnerContainer,
   TechnoSpinner,
+  Overlay,
 } from '@influxdata/clockface'
-import {Overlay} from 'src/clockface'
 import {Controlled as ReactCodeMirror} from 'react-codemirror2'
 import CopyButton from 'src/shared/components/CopyButton'
 
 // Actions
-import {notify as notifyAction} from 'src/shared/actions/notifications'
-
-// Constants
-import {
-  resourceSavedAsTemplate,
-  saveResourceAsTemplateFailed,
-} from 'src/shared/copy/notifications'
+import {createTemplateFromResource} from 'src/templates/actions/'
 
 // Utils
 import {downloadTextFile} from 'src/shared/utils/download'
-import {addOrgIDToTemplate} from 'src/shared/utils/resourceToTemplate'
 
 // Types
 import {DocumentCreate} from '@influxdata/influx'
 import {ComponentColor, ComponentSize} from '@influxdata/clockface'
 import {RemoteDataState} from 'src/types'
 
-interface OwnProps extends DefaultProps {
+interface OwnProps {
   onDismissOverlay: () => void
   resource: DocumentCreate
   resourceName: string
-  orgID: string
   status: RemoteDataState
-}
-
-interface DefaultProps {
-  isVisible?: boolean
+  isVisible: boolean
 }
 
 interface DispatchProps {
-  notify: typeof notifyAction
+  onCreateTemplateFromResource: typeof createTemplateFromResource
 }
 
 type Props = OwnProps & DispatchProps
 
 class ExportOverlay extends PureComponent<Props> {
-  public static defaultProps: DefaultProps = {
+  public static defaultProps = {
     isVisible: true,
   }
 
@@ -62,7 +50,7 @@ class ExportOverlay extends PureComponent<Props> {
       <Overlay visible={isVisible}>
         <Overlay.Container maxWidth={800}>
           <Form onSubmit={this.handleExport}>
-            <Overlay.Heading
+            <Overlay.Header
               title={`Export ${resourceName}`}
               onDismiss={onDismissOverlay}
             />
@@ -148,27 +136,26 @@ class ExportOverlay extends PureComponent<Props> {
 
   private handleExport = (): void => {
     const {resource, resourceName, onDismissOverlay} = this.props
-    const name = get(resource, 'name', resourceName)
-    downloadTextFile(JSON.stringify(resource, null, 1), `${name}.json`)
+    const name = get(resource, 'content.data.attributes.name', resourceName)
+    downloadTextFile(JSON.stringify(resource, null, 1), name, '.json')
     onDismissOverlay()
   }
 
   private handleConvertToTemplate = async (): Promise<void> => {
-    const {resource, onDismissOverlay, orgID, notify, resourceName} = this.props
-    const template = addOrgIDToTemplate(resource, orgID)
+    const {
+      resource,
+      onDismissOverlay,
+      resourceName,
+      onCreateTemplateFromResource,
+    } = this.props
 
-    try {
-      await client.templates.create(template)
-      notify(resourceSavedAsTemplate(resourceName))
-    } catch (error) {
-      notify(saveResourceAsTemplateFailed(resourceName, error))
-    }
+    onCreateTemplateFromResource(resource, resourceName)
     onDismissOverlay()
   }
 }
 
 const mdtp: DispatchProps = {
-  notify: notifyAction,
+  onCreateTemplateFromResource: createTemplateFromResource,
 }
 
 export default connect<{}, DispatchProps, OwnProps>(

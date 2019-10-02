@@ -5,10 +5,8 @@ import (
 	"os"
 
 	platform "github.com/influxdata/influxdb"
-	"github.com/influxdata/influxdb/bolt"
 	"github.com/influxdata/influxdb/cmd/influx/internal"
 	"github.com/influxdata/influxdb/http"
-	"github.com/influxdata/influxdb/internal/fs"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +44,15 @@ type AuthorizationCreateFlags struct {
 
 	writeDashboardsPermission bool
 	readDashboardsPermission  bool
+
+	writeCheckPermission bool
+	readCheckPermission  bool
+
+	writeNotificationRulePermission bool
+	readNotificationRulePermission  bool
+
+	writeNotificationEndpointPermission bool
+	readNotificationEndpointPermission  bool
 }
 
 var authorizationCreateFlags AuthorizationCreateFlags
@@ -82,6 +89,15 @@ func init() {
 
 	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.writeDashboardsPermission, "write-dashboards", "", false, "Grants the permission to create dashboards")
 	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.readDashboardsPermission, "read-dashboards", "", false, "Grants the permission to read dashboards")
+
+	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.writeNotificationRulePermission, "write-notificationRules", "", false, "Grants the permission to create notificationRules")
+	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.readNotificationRulePermission, "read-notificationRules", "", false, "Grants the permission to read notificationRules")
+
+	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.writeNotificationEndpointPermission, "write-notificationEndpoints", "", false, "Grants the permission to create notificationEndpoints")
+	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.readNotificationEndpointPermission, "read-notificationEndpoints", "", false, "Grants the permission to read notificationEndpoints")
+
+	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.writeCheckPermission, "write-checks", "", false, "Grants the permission to create checks")
+	authorizationCreateCmd.Flags().BoolVarP(&authorizationCreateFlags.readCheckPermission, "read-checks", "", false, "Grants the permission to read checks")
 
 	authorizationCmd.AddCommand(authorizationCreateCmd)
 }
@@ -223,9 +239,71 @@ func authorizationCreateF(cmd *cobra.Command, args []string) error {
 		permissions = append(permissions, *p)
 	}
 
+	if authorizationCreateFlags.writeNotificationRulePermission {
+		p, err := platform.NewPermission(platform.WriteAction, platform.NotificationRuleResourceType, o.ID)
+		if err != nil {
+			return err
+		}
+		permissions = append(permissions, *p)
+	}
+
+	if authorizationCreateFlags.readNotificationRulePermission {
+		p, err := platform.NewPermission(platform.ReadAction, platform.NotificationRuleResourceType, o.ID)
+		if err != nil {
+			return err
+		}
+		permissions = append(permissions, *p)
+	}
+
+	if authorizationCreateFlags.writeNotificationEndpointPermission {
+		p, err := platform.NewPermission(platform.WriteAction, platform.NotificationEndpointResourceType, o.ID)
+		if err != nil {
+			return err
+		}
+		permissions = append(permissions, *p)
+	}
+
+	if authorizationCreateFlags.readNotificationEndpointPermission {
+		p, err := platform.NewPermission(platform.ReadAction, platform.NotificationEndpointResourceType, o.ID)
+		if err != nil {
+			return err
+		}
+		permissions = append(permissions, *p)
+	}
+
+	if authorizationCreateFlags.writeCheckPermission {
+		p, err := platform.NewPermission(platform.WriteAction, platform.ChecksResourceType, o.ID)
+		if err != nil {
+			return err
+		}
+		permissions = append(permissions, *p)
+	}
+
+	if authorizationCreateFlags.readCheckPermission {
+		p, err := platform.NewPermission(platform.ReadAction, platform.ChecksResourceType, o.ID)
+		if err != nil {
+			return err
+		}
+		permissions = append(permissions, *p)
+	}
+
 	authorization := &platform.Authorization{
 		Permissions: permissions,
 		OrgID:       o.ID,
+	}
+
+	if userName := authorizationCreateFlags.user; userName != "" {
+		userSvc, err := newUserService(flags)
+		if err != nil {
+			return err
+		}
+		user, err := userSvc.FindUser(ctx, platform.UserFilter{
+			Name: &userName,
+		})
+		if err != nil {
+			return err
+		}
+		authorization.UserID = user.ID
 	}
 
 	s, err := newAuthorizationService(flags)
@@ -268,6 +346,8 @@ func authorizationCreateF(cmd *cobra.Command, args []string) error {
 type AuthorizationFindFlags struct {
 	user   string
 	userID string
+	org    string
+	orgID  string
 	id     string
 }
 
@@ -282,6 +362,8 @@ func init() {
 
 	authorizationFindCmd.Flags().StringVarP(&authorizationFindFlags.user, "user", "u", "", "The user")
 	authorizationFindCmd.Flags().StringVarP(&authorizationFindFlags.userID, "user-id", "", "", "The user ID")
+	authorizationFindCmd.Flags().StringVarP(&authorizationFindFlags.org, "org", "o", "", "The org")
+	authorizationFindCmd.Flags().StringVarP(&authorizationFindFlags.orgID, "org-id", "", "", "The org ID")
 	authorizationFindCmd.Flags().StringVarP(&authorizationFindFlags.id, "id", "i", "", "The authorization ID")
 
 	authorizationCmd.AddCommand(authorizationFindCmd)
@@ -289,17 +371,7 @@ func init() {
 
 func newAuthorizationService(f Flags) (platform.AuthorizationService, error) {
 	if flags.local {
-		boltFile, err := fs.BoltFile()
-		if err != nil {
-			return nil, err
-		}
-		c := bolt.NewClient()
-		c.Path = boltFile
-		if err := c.Open(context.Background()); err != nil {
-			return nil, err
-		}
-
-		return c, nil
+		return newLocalKVService()
 	}
 	return &http.AuthorizationService{
 		Addr:  flags.host,
@@ -330,6 +402,16 @@ func authorizationFindF(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		filter.UserID = uID
+	}
+	if authorizationFindFlags.org != "" {
+		filter.Org = &authorizationFindFlags.org
+	}
+	if authorizationFindFlags.orgID != "" {
+		oID, err := platform.IDFromString(authorizationFindFlags.orgID)
+		if err != nil {
+			return err
+		}
+		filter.OrgID = oID
 	}
 
 	authorizations, _, err := s.FindAuthorizations(context.Background(), filter)
@@ -468,12 +550,14 @@ func authorizationActiveF(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.TODO()
-	a, err := s.FindAuthorizationByID(ctx, id)
-	if err != nil {
+	if _, err := s.FindAuthorizationByID(ctx, id); err != nil {
 		return err
 	}
 
-	if err := s.SetAuthorizationStatus(context.Background(), id, platform.Active); err != nil {
+	a, err := s.UpdateAuthorization(context.Background(), id, &platform.AuthorizationUpdate{
+		Status: platform.Active.Ptr(),
+	})
+	if err != nil {
 		return err
 	}
 
@@ -537,12 +621,14 @@ func authorizationInactiveF(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.TODO()
-	a, err := s.FindAuthorizationByID(ctx, id)
-	if err != nil {
+	if _, err = s.FindAuthorizationByID(ctx, id); err != nil {
 		return err
 	}
 
-	if err := s.SetAuthorizationStatus(ctx, id, platform.Inactive); err != nil {
+	a, err := s.UpdateAuthorization(context.Background(), id, &platform.AuthorizationUpdate{
+		Status: platform.Inactive.Ptr(),
+	})
+	if err != nil {
 		return err
 	}
 
