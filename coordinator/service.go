@@ -82,7 +82,6 @@ type Service struct {
 	masterNode  *Node
 	rpcQuery    *RpcService
 	ip          string
-	Cluster     bool
 	dbsMu       sync.RWMutex
 	databases   Databases
 	latestUsers Users
@@ -102,7 +101,6 @@ func NewService(store *tsdb.Store, etcdConfig EtcdConfig, httpConfig httpd.Confi
 		udpConfig:        udpConfig,
 		rpcQuery:         NewRpcService(mapper, nodes),
 		classDetail:      make(map[string]Node),
-		Cluster:          false,
 		classes:          new(Classes),
 		measurement:      make(map[string]map[string]interface{}),
 		otherMeasurement: make(map[string]map[string]uint64),
@@ -1068,9 +1066,11 @@ func (s *Service) watchClassCluster() {
 						}
 						return nil
 					}, func() {
-
+						s.Logger.Info("The master node update classes success")
 					}, func(err error) {
-
+						if err != nil {
+							s.Logger.Error("The master node update classes failed, err message:" + err.Error())
+						}
 					}, s.Logger)
 				}
 				s.ch.Remove(consistent.NewNode(node.Id, node.Ip, port, "host_"+strconv.FormatUint(node.ClusterId,

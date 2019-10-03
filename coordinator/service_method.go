@@ -334,8 +334,6 @@ func (s *Service) createDatabase(stmt *influxql.CreateDatabaseStatement) error {
 	s.dbsMu.Lock()
 	defer s.dbsMu.Unlock()
 	if !meta.ValidName(stmt.Name) {
-		// TODO This should probably be in `(*meta.Data).CreateDatabase`
-		// but can't go there until 1.1 is used everywhere
 		return meta.ErrInvalidName
 	}
 Retry:
@@ -381,8 +379,6 @@ func (s *Service) createRetentionPolicy(stmt *influxql.CreateRetentionPolicyStat
 	s.dbsMu.Lock()
 	defer s.dbsMu.Unlock()
 	if !meta.ValidName(stmt.Name) {
-		// TODO This should probably be in `(*meta.Data).CreateRetentionPolicy`
-		// but can't go there until 1.1 is used everywhere
 		return meta.ErrInvalidName
 	}
 	if &stmt.Duration != nil && stmt.Duration < meta.MinRetentionPolicyDuration && stmt.Duration != 0 {
