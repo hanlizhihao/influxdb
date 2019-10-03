@@ -206,7 +206,18 @@ Retry:
 	}
 	goto Retry
 }
+
+/**
+ * watchContinuesQuery In response to changes in cq, the master node of the class needs to verify whether CQ is related
+ * to the class it belongs to.Does the measurement of cq exist in class?
+ * There is only one node has cq in one class
+ */
 func (s *Service) watchContinuesQuery() {
+	// check local node is class's master node
+	var classes = *s.classes
+	if len(classes) == 0 || classes[0].ClusterIds[0] != s.MetaClient.Data().NodeID {
+		return
+	}
 	cqResp, err := s.cli.Get(context.Background(), TSDBcq)
 	s.CheckErrorExit("Get continues query from etcd failed, stop watch cq, error message", err)
 	if cqResp == nil || cqResp.Count == 0 {
