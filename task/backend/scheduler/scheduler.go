@@ -3,11 +3,12 @@ package scheduler
 import (
 	"context"
 	"time"
+
+	"github.com/influxdata/cron"
 )
 
 // ID duplicates the influxdb ID so users of the scheduler don't have to
-// import influxdb for the id.
-// TODO(lh): maybe make this its own thing sometime in the future.
+// import influxdb for the ID.
 type ID uint64
 
 // Executor is a system used by the scheduler to actually execute the scheduleable item.
@@ -21,7 +22,8 @@ type Executor interface {
 	Execute(ctx context.Context, id ID, scheduledAt time.Time) error
 }
 
-// Schedulable is the interface that encapsulates the state that is required to schedule a job.
+// Schedulable is the interface that encapsulates work that
+// is to be executed on a specified schedule.
 type Schedulable interface {
 	// ID is the unique identifier for this Schedulable
 	ID() ID
@@ -48,7 +50,26 @@ type SchedulableService interface {
 	UpdateLastScheduled(ctx context.Context, id ID, t time.Time) error
 }
 
+// NewSchedule takes a cron string
+func NewSchedule(c string) (Schedule, error) {
+	sch, err := cron.ParseUTC(c)
+	return Schedule{cron: sch}, err
+}
+
+// Schedule is an object a valid schedule of runs
 type Schedule struct {
+	cron cron.Parsed
+}
+
+// Next returns the next time after from that a schedule should trigger on.
+func (s Schedule) Next(from time.Time) (time.Time, error) {
+	return cron.Parsed(s.cron).Next(from)
+}
+
+// ValidSchedule returns an error if the cron string is invalid.
+func ValidateSchedule(c string) error {
+	_, err := cron.ParseUTC(c)
+	return err
 }
 
 // Scheduler is a example interface of a Scheduler.
@@ -60,4 +81,19 @@ type Scheduler interface {
 
 	// Release removes the specified task from the scheduler.
 	Release(taskID ID) error
+}
+
+type ErrUnrecoverable struct {
+	error
+}
+
+func (e *ErrUnrecoverable) Error() string {
+	if e.error != nil {
+		return "error unrecoverable error on task run " + e.error.Error()
+	}
+	return "error unrecoverable error on task run"
+}
+
+func (e *ErrUnrecoverable) Unwrap() error {
+	return e.error
 }
